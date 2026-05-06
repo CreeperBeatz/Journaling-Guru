@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { createBrowserRouter } from "react-router-dom";
+import { Navigate, createBrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
 import { AuthLayout } from "./components/shell/AuthLayout";
@@ -7,7 +7,6 @@ import { GuestOnly } from "./features/auth/AuthGate";
 import { AuthCardSkeleton } from "./features/auth/AuthCardSkeleton";
 import { DailyEntrySkeleton } from "./features/journal/DailyEntrySkeleton";
 import { HistoryViewSkeleton } from "./features/journal/HistoryViewSkeleton";
-import { QuestionEditorSkeleton } from "./features/journal/QuestionEditorSkeleton";
 import { SettingsSkeleton } from "./features/settings/SettingsSkeleton";
 import {
   SummariesPageSkeleton,
@@ -20,9 +19,6 @@ const DailyEntry = lazy(() =>
 );
 const HistoryView = lazy(() =>
   import("./features/journal/HistoryView").then((m) => ({ default: m.HistoryView })),
-);
-const QuestionEditor = lazy(() =>
-  import("./features/journal/QuestionEditor").then((m) => ({ default: m.QuestionEditor })),
 );
 const Settings = lazy(() =>
   import("./features/settings/Settings").then((m) => ({ default: m.Settings })),
@@ -85,7 +81,9 @@ export const router = createBrowserRouter([
       { index: true, element: withSuspense(<DailyEntry />, <DailyEntrySkeleton />) },
       { path: "history", element: withSuspense(<HistoryView />, <HistoryViewSkeleton />) },
       { path: "history/:date", element: withSuspense(<HistoryView />, <HistoryViewSkeleton />) },
-      { path: "questions", element: withSuspense(<QuestionEditor />, <QuestionEditorSkeleton />) },
+      // Phase 4.1: Questions moved into Settings as a tab. Old bookmarks
+      // redirect to /settings?tab=questions so nothing 404s.
+      { path: "questions", element: <Navigate to="/settings?tab=questions" replace /> },
       { path: "settings", element: withSuspense(<Settings />, <SettingsSkeleton />) },
       { path: "summaries", element: withSuspense(<SummariesPage />, <SummariesPageSkeleton />) },
       { path: "summaries/:id", element: withSuspense(<SummaryDetail />, <SummaryDetailSkeleton />) },

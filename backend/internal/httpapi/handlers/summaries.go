@@ -20,11 +20,17 @@ import (
 // SummaryHandler hosts /api/summaries/*. Reads come straight from the
 // `summaries` table; the regenerate endpoint flips a row in
 // `summary_jobs` back to pending so the worker picks it up next tick.
+//
+// Stats reads come from `daily_inputs` (the user-provided check-in)
+// rather than `summaries.metadata` — that way the mood line + emotion
+// bars reflect whatever the user just typed, without waiting for the
+// next morning's daily summary to fire.
 type SummaryHandler struct {
-	Summaries *store.SummaryStore
-	Jobs      *store.SummaryJobStore
-	Users     *store.UserStore
-	Logger    *slog.Logger
+	Summaries   *store.SummaryStore
+	Jobs        *store.SummaryJobStore
+	Users       *store.UserStore
+	DailyInputs *store.DailyInputStore
+	Logger      *slog.Logger
 }
 
 const (
@@ -181,13 +187,13 @@ func (h *SummaryHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		days = n
 	}
 
-	mood, err := h.Summaries.MoodSeries(r.Context(), sess.UserID, days)
+	mood, err := h.DailyInputs.MoodSeries(r.Context(), sess.UserID, days)
 	if err != nil {
 		h.Logger.Error("stats: mood", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "stats failed")
 		return
 	}
-	emotions, err := h.Summaries.TopEmotions(r.Context(), sess.UserID, days, 6)
+	emotions, err := h.DailyInputs.TopEmotions(r.Context(), sess.UserID, days, 6)
 	if err != nil {
 		h.Logger.Error("stats: emotions", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "stats failed")

@@ -21,6 +21,8 @@ import {
 } from "@/features/journal/api";
 import { STATS_KEY } from "@/features/summaries/hooks";
 import { getStats } from "@/features/summaries/api";
+import { dailyInputKey } from "@/features/daily/hooks";
+import { getDailyInput } from "@/features/daily/api";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -68,6 +70,13 @@ export function AppShell() {
       queryKey: STATS_KEY(90),
       queryFn: () => getStats(90),
       staleTime: 60_000,
+    });
+    // Today's check-in lands above the questions on /today; prefetch
+    // alongside entries to keep the cold-start waterfall flat.
+    qc.prefetchQuery({
+      queryKey: dailyInputKey(),
+      queryFn: () => getDailyInput(),
+      staleTime: 30_000,
     });
   }, [me.data?.id, qc]);
 

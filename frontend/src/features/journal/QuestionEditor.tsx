@@ -201,17 +201,11 @@ export function QuestionEditor() {
     });
   };
 
+  // Renders without a page header — designed to live inside Settings'
+  // Tabs (we moved Questions there because users don't change them
+  // often). The legacy /questions route is gone in Phase 4.1.
   return (
-    <div className="space-y-6">
-      <header className="space-y-1">
-        <p className="text-xs uppercase tracking-wider text-muted-foreground">Questions</p>
-        <h1 className="font-serif text-h1">Manage prompts</h1>
-        <p className="text-sm text-muted-foreground">
-          Reorder and archive prompts. Archived questions keep their history but
-          stop showing on Today.
-        </p>
-      </header>
-
+    <div className="space-y-4">
       <Card>
         <CardHeader>
           <CardTitle className="font-serif">Add a new question</CardTitle>

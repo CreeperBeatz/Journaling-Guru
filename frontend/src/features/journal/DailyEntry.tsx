@@ -12,6 +12,8 @@ import { minutesToHHMM } from "@/lib/dayStart";
 import { listEntries } from "./api";
 import { useEntries, useQuestions, ENTRY_DATES_KEY, entriesKey } from "./hooks";
 import { QuestionAnswer } from "./QuestionAnswer";
+import { DailyInputs } from "@/features/daily/DailyInputs";
+import { useDailyInput, useSaveDailyInput } from "@/features/daily/hooks";
 
 // useNow ticks every 30s — fine-grained enough that the clock visibly
 // matches the wall and the rollover boundary appears live, without
@@ -55,6 +57,8 @@ export function DailyEntry() {
   const me = useMe();
   const questions = useQuestions();
   const entries = useEntries();
+  const dailyInput = useDailyInput();
+  const saveDaily = useSaveDailyInput();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const now = useNow();
@@ -121,6 +125,12 @@ export function DailyEntry() {
             ) : null}
           </header>
 
+          <DailyInputs
+            input={dailyInput.data?.input ?? null}
+            onSave={(body) => saveDaily.mutate(body)}
+            isSaving={saveDaily.isPending}
+          />
+
           {questions.data && questions.data.length === 0 ? (
             <Card>
               <CardHeader>
@@ -131,7 +141,7 @@ export function DailyEntry() {
               </CardHeader>
               <CardContent>
                 <Button asChild>
-                  <Link to="/questions">Manage questions</Link>
+                  <Link to="/settings?tab=questions">Manage questions</Link>
                 </Button>
               </CardContent>
             </Card>

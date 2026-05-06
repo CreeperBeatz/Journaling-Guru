@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { listEntries } from "./api";
 import { HistoryEntryEditor } from "./HistoryEntryEditor";
 import { useEntries, useEntryDates, useQuestions, ENTRY_DATES_KEY, entriesKey } from "./hooks";
+import { HistoryDailyInputs } from "./HistoryDailyInputs";
 
 function formatHumanDate(yyyymmdd: string): string {
   const [y, m, d] = yyyymmdd.split("-").map(Number);
@@ -126,34 +127,37 @@ export function HistoryView() {
                   Couldn't load entries for {selected}.
                 </p>
               ) : (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="font-serif">
-                      {formatHumanDate(detail.data!.local_date)}
-                    </CardTitle>
-                    <CardDescription>
-                      {detail.data!.entries.length} answer
-                      {detail.data!.entries.length === 1 ? "" : "s"} · changes save
-                      on blur. Empty to delete.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    {detail.data!.entries.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        No entries left for this date.
-                      </p>
-                    ) : (
-                      detail.data!.entries.map((e) => (
-                        <HistoryEntryEditor
-                          key={e.id}
-                          entry={e}
-                          prompt={promptByQuestion.get(e.question_id) ?? "Question"}
-                          localDate={detail.data!.local_date}
-                        />
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
+                <div className="space-y-6">
+                  <HistoryDailyInputs localDate={detail.data!.local_date} />
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="font-serif">
+                        {formatHumanDate(detail.data!.local_date)}
+                      </CardTitle>
+                      <CardDescription>
+                        {detail.data!.entries.length} answer
+                        {detail.data!.entries.length === 1 ? "" : "s"} · changes save
+                        on blur. Empty to delete.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      {detail.data!.entries.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No entries on this date.
+                        </p>
+                      ) : (
+                        detail.data!.entries.map((e) => (
+                          <HistoryEntryEditor
+                            key={e.id}
+                            entry={e}
+                            prompt={promptByQuestion.get(e.question_id) ?? "Question"}
+                            localDate={detail.data!.local_date}
+                          />
+                        ))
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
               )}
             </div>
           </div>

@@ -31,6 +31,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	sessions := store.NewSessionStore(db)
 	questions := store.NewQuestionStore(db)
 	entries := store.NewEntryStore(db)
+	dailyInputs := store.NewDailyInputStore(db)
 	summaries := store.NewSummaryStore(db)
 	summaryJobs := store.NewSummaryJobStore(db)
 
@@ -83,11 +84,18 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		Logger:    logger,
 		Scheduler: scheduler,
 	}
-	summariesH := &handlers.SummaryHandler{
-		Summaries: summaries,
-		Jobs:      summaryJobs,
+	dailyInputsH := &handlers.DailyInputHandler{
+		Inputs:    dailyInputs,
 		Users:     users,
 		Logger:    logger,
+		Scheduler: scheduler,
+	}
+	summariesH := &handlers.SummaryHandler{
+		Summaries:   summaries,
+		Jobs:        summaryJobs,
+		Users:       users,
+		DailyInputs: dailyInputs,
+		Logger:      logger,
 	}
 	healthH := handlers.NewHealth(db)
 
@@ -113,7 +121,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":4}`))
+			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":4.1}`))
 		})
 
 		// Mutating endpoints: CSRF gate (X-Requested-With required).
@@ -139,6 +147,9 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 				r.Put("/entries", entriesH.Upsert)
 				r.Patch("/entries/{id}", entriesH.UpdateByID)
 
+				r.Put("/daily/inputs", dailyInputsH.Upsert)
+				r.Patch("/daily/inputs/by-date/{date}", dailyInputsH.UpdateByDate)
+
 				r.Post("/summaries/regenerate", summariesH.Regenerate)
 			})
 		})
@@ -150,6 +161,8 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 			r.Get("/questions", questionsH.List)
 			r.Get("/entries", entriesH.ListByDate)
 			r.Get("/entries/dates", entriesH.ListDates)
+
+			r.Get("/daily/inputs", dailyInputsH.Get)
 
 			r.Get("/summaries", summariesH.List)
 			r.Get("/summaries/stats", summariesH.Stats)

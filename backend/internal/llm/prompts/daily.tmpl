@@ -1,13 +1,25 @@
 Date: {{.Date}}
 
-The user's journal answers for the day:
+{{if .HasCheckin}}
+The user's check-in for the day:
+{{if .MoodScore}}- Mood: {{.MoodScore}}/10 ({{.MoodLabel}})
+{{end}}{{if .Emotions}}- Emotions felt: {{.Emotions}}
+{{end}}{{if .Notes}}- Notes: {{.Notes}}
+{{end}}
+{{end}}
+{{if .Entries}}
+Their journal answers for the day:
 
 {{range .Entries}}
 Q: {{.Prompt}}
 A: {{.Body}}
 
 {{end}}
-Reflect on the day above and return the JSON object described in the system
-message. The "body" field should weave the answers into a coherent reflection
-— don't restate them verbatim. Pick emotions and topics that are actually
-present in the writing; don't invent.
+{{end}}
+{{if not .Entries}}{{if not .HasCheckin}}
+The user logged nothing today. Acknowledge the quiet briefly.
+{{end}}{{end}}
+Write the day's reflection now and return the JSON object described in the
+system message. Weave the check-in (mood, emotions, notes) and the journal
+answers into a coherent narrative — don't enumerate them. Pick topics that
+are actually present; don't invent.

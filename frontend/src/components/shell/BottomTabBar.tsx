@@ -4,9 +4,9 @@ import { motion } from "motion/react";
 
 import { cn } from "@/lib/utils";
 
-// Bottom-tab is space-constrained on mobile — Questions moves into the
-// Settings page in Phase 4. Five core surfaces: Today, History,
-// Summaries, Settings (Questions tab inside).
+// Bottom-tab is space-constrained on mobile and Questions moved into
+// the Settings page in Phase 4.1 (rarely changed). Four surfaces:
+// Today, History, Reflect, Settings (Questions tab inside).
 const tabs = [
   { to: "/", end: true, label: "Today", icon: PenLine },
   { to: "/history", end: false, label: "History", icon: History },

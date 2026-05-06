@@ -52,6 +52,7 @@ func main() {
 
 	users := store.NewUserStore(db)
 	entries := store.NewEntryStore(db)
+	dailyInputs := store.NewDailyInputStore(db)
 	summaries := store.NewSummaryStore(db)
 	jobsStore := store.NewSummaryJobStore(db)
 
@@ -68,13 +69,14 @@ func main() {
 	}
 
 	worker := &jobs.SummaryWorker{
-		Summaries: summaries,
-		Jobs:      jobsStore,
-		Entries:   entries,
-		Users:     users,
-		Scheduler: scheduler,
-		LLM:       llmClient,
-		Logger:    logger,
+		Summaries:   summaries,
+		Jobs:        jobsStore,
+		Entries:     entries,
+		DailyInputs: dailyInputs,
+		Users:       users,
+		Scheduler:   scheduler,
+		LLM:         llmClient,
+		Logger:      logger,
 	}
 
 	workers := river.NewWorkers()

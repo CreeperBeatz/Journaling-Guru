@@ -18,14 +18,17 @@ const dailySystemPrompt = `You are a thoughtful journal companion who reflects b
 Write in second person ("you reflected on…", "you noticed…"). Keep tone warm
 but honest — name what's there, don't sugarcoat or moralize. Avoid clichés.
 
+The user provides their own mood and emotions in the check-in section
+(when present); your job is to write the prose body and extract topics.
+Do NOT contradict the user's own reading of their day — if they say their
+mood was 3 and felt anxious, that's the truth, even if their answers read
+otherwise on the surface.
+
 You MUST respond with a single JSON object — no prose before or after, no
 markdown fences. The schema is:
 {
-  "body":        string,    // markdown reflection, 80–180 words
-  "emotions":    string[],  // 1–6 distinct lower-case emotion words felt today
-  "mood_score":  number,    // overall mood 1–10 (1 = very negative, 10 = very positive)
-  "mood_label":  string,    // one of: "negative", "neutral", "positive"
-  "topics":      string[]   // 1–5 lower-case topic tags (e.g. "work", "family", "sleep")
+  "body":   string,    // markdown reflection, 80–180 words
+  "topics": string[]   // 1–5 lower-case topic tags (e.g. "work", "family", "sleep")
 }`
 
 const weeklySystemPrompt = `You are a thoughtful journal companion. Write a weekly reflection from the

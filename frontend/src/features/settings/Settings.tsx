@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -29,8 +30,12 @@ import { cn } from "@/lib/utils";
 import { ME_KEY, useInvalidateMe, useMe } from "@/features/auth/useAuth";
 import { deleteAccount, logout, type User } from "@/features/auth/api";
 import { hhmmToMinutes, minutesToHHMM } from "@/lib/dayStart";
+import { QuestionEditor } from "@/features/journal/QuestionEditor";
 
 import { updateMe, UpdateMePatch } from "./api";
+
+const VALID_TABS = ["general", "notifications", "questions", "account"] as const;
+type SettingsTab = (typeof VALID_TABS)[number];
 
 const COMMON_TIMEZONES = [
   "UTC",
@@ -72,6 +77,18 @@ export function Settings() {
   const me = useMe();
   const qc = useQueryClient();
   const invalidateMe = useInvalidateMe();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get("tab") as SettingsTab | null;
+  const tab: SettingsTab =
+    requested && (VALID_TABS as readonly string[]).includes(requested)
+      ? requested
+      : "general";
+  const setTab = (t: SettingsTab) => {
+    const next = new URLSearchParams(searchParams);
+    if (t === "general") next.delete("tab");
+    else next.set("tab", t);
+    setSearchParams(next, { replace: true });
+  };
 
   const update = useMutation<User, ApiError, UpdateMePatch>({
     mutationFn: (patch) => updateMe(patch),
@@ -144,9 +161,10 @@ export function Settings() {
         <p className="text-sm text-muted-foreground">{me.data.email}</p>
       </header>
 
-      <Tabs defaultValue="general">
-        <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as SettingsTab)}>
+        <TabsList className="grid w-full grid-cols-4 sm:inline-flex sm:w-auto">
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="questions">Questions</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="account">Account</TabsTrigger>
         </TabsList>
@@ -231,6 +249,21 @@ export function Settings() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="questions" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-serif">Daily questions</CardTitle>
+              <CardDescription>
+                Reorder and archive prompts. Archived questions keep their
+                history but stop showing on Today.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <QuestionEditor />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="notifications" className="space-y-4">
           <Card>
             <CardHeader>
@@ -310,7 +343,7 @@ export function Settings() {
         </Button>
       </div>
 
-      <p className="pt-2 text-xs text-muted-foreground">v2 · phase 3</p>
+      <p className="pt-2 text-xs text-muted-foreground">v2 · phase 4.1</p>
     </div>
   );
 }

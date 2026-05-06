@@ -36,13 +36,14 @@ const (
 type SummaryWorker struct {
 	river.WorkerDefaults[SummaryArgs]
 
-	Summaries *store.SummaryStore
-	Jobs      *store.SummaryJobStore
-	Entries   *store.EntryStore
-	Users     *store.UserStore
-	Scheduler *Scheduler
-	LLM       *llm.OpenRouter
-	Logger    *slog.Logger
+	Summaries   *store.SummaryStore
+	Jobs        *store.SummaryJobStore
+	Entries     *store.EntryStore
+	DailyInputs *store.DailyInputStore
+	Users       *store.UserStore
+	Scheduler   *Scheduler
+	LLM         *llm.OpenRouter
+	Logger      *slog.Logger
 }
 
 // Work is River's entrypoint. We catch errors at this boundary so we
@@ -129,16 +130,21 @@ func (w *SummaryWorker) process(ctx context.Context, job *domain.SummaryJob, use
 // ---------------- Daily ----------------
 
 type dailyTemplateData struct {
-	Date    string
-	Entries []dailyEntry
+	Date       string
+	Entries    []dailyEntry
+	HasCheckin bool
+	MoodScore  string
+	MoodLabel  string
+	Emotions   string
+	Notes      string
 }
 
+// dailyLLMResponse is what we ask the LLM for now: body + topics. Mood
+// and emotions come from the user's check-in (DailyInputStore), so the
+// model doesn't need to guess at them.
 type dailyLLMResponse struct {
-	Body      string   `json:"body"`
-	Emotions  []string `json:"emotions"`
-	MoodScore *float64 `json:"mood_score"`
-	MoodLabel string   `json:"mood_label"`
-	Topics    []string `json:"topics"`
+	Body   string   `json:"body"`
+	Topics []string `json:"topics"`
 }
 
 func (w *SummaryWorker) runDaily(
@@ -148,7 +154,16 @@ func (w *SummaryWorker) runDaily(
 	if err != nil {
 		return fmt.Errorf("load entries: %w", err)
 	}
-	if len(rows) == 0 {
+	checkin, err := w.DailyInputs.GetByDate(ctx, user.ID, period.Start)
+	if err != nil {
+		return fmt.Errorf("load daily input: %w", err)
+	}
+	hasCheckin := checkin != nil &&
+		(checkin.MoodScore != nil || len(checkin.Emotions) > 0 || strings.TrimSpace(checkin.Notes) != "")
+
+	// Skip only when *both* sources are empty — a "just notes" or
+	// "just mood" day still warrants a daily summary.
+	if len(rows) == 0 && !hasCheckin {
 		return w.skip(ctx, job)
 	}
 
@@ -156,10 +171,23 @@ func (w *SummaryWorker) runDaily(
 	for _, r := range rows {
 		entries = append(entries, dailyEntry{Prompt: r.Prompt, Body: r.Body})
 	}
-	userPrompt, err := renderTemplate("daily.tmpl", dailyTemplateData{
-		Date:    period.Start.Format("2006-01-02"),
-		Entries: entries,
-	})
+	tmplData := dailyTemplateData{
+		Date:       period.Start.Format("2006-01-02"),
+		Entries:    entries,
+		HasCheckin: hasCheckin,
+	}
+	if checkin != nil {
+		if checkin.MoodScore != nil {
+			tmplData.MoodScore = fmt.Sprintf("%d", *checkin.MoodScore)
+			tmplData.MoodLabel = domain.MoodLabel(checkin.MoodScore)
+		}
+		if len(checkin.Emotions) > 0 {
+			tmplData.Emotions = strings.Join(checkin.Emotions, ", ")
+		}
+		tmplData.Notes = strings.TrimSpace(checkin.Notes)
+	}
+
+	userPrompt, err := renderTemplate("daily.tmpl", tmplData)
 	if err != nil {
 		return err
 	}
@@ -177,13 +205,23 @@ func (w *SummaryWorker) runDaily(
 		return fmt.Errorf("parse daily LLM response: %w (content: %s)", err, truncate(resp.Content, 300))
 	}
 
+	// Compose metadata: mood/emotions are user-truth (when present),
+	// topics are LLM-extracted, mood_label is derived from the score.
 	meta := domain.SummaryMetadata{
-		Emotions:   normalizeStringList(parsed.Emotions, 6),
-		MoodScore:  parsed.MoodScore,
-		MoodLabel:  strings.ToLower(strings.TrimSpace(parsed.MoodLabel)),
 		Topics:     normalizeStringList(parsed.Topics, 5),
-		EntryCount: len(rows),
+		EntryCount: dailyEntryCount(len(rows), hasCheckin),
 	}
+	if checkin != nil {
+		if checkin.MoodScore != nil {
+			f := float64(*checkin.MoodScore)
+			meta.MoodScore = &f
+			meta.MoodLabel = domain.MoodLabel(checkin.MoodScore)
+		}
+		if len(checkin.Emotions) > 0 {
+			meta.Emotions = append([]string{}, checkin.Emotions...)
+		}
+	}
+
 	if _, err := w.Summaries.Upsert(
 		ctx, user.ID, string(domain.PeriodDay),
 		period.Start, period.End,
@@ -195,6 +233,19 @@ func (w *SummaryWorker) runDaily(
 		return fmt.Errorf("upsert summary: %w", err)
 	}
 	return w.complete(ctx, job)
+}
+
+// dailyEntryCount expresses "what to put in metadata.entry_count" so
+// higher periods can weight or count days. A day with no question
+// answers but with a check-in still counts as "1 logged day".
+func dailyEntryCount(entries int, hasCheckin bool) int {
+	if entries > 0 {
+		return entries
+	}
+	if hasCheckin {
+		return 1
+	}
+	return 0
 }
 
 // ---------------- Weekly / Monthly / Yearly (text-only LLM, computed metadata) ----------------
@@ -236,7 +287,10 @@ func (w *SummaryWorker) runWeekly(
 	if err != nil {
 		return err
 	}
-	meta := aggregateMetadata(dailies)
+	meta, err := w.aggregateMetadataForRange(ctx, user.ID, period.Start, period.End, dailies)
+	if err != nil {
+		return err
+	}
 	if _, err := w.Summaries.Upsert(
 		ctx, user.ID, string(domain.PeriodWeek),
 		period.Start, period.End,
@@ -283,7 +337,10 @@ func (w *SummaryWorker) runMonthly(
 	if err != nil {
 		return err
 	}
-	meta := aggregateMetadata(weeklies)
+	meta, err := w.aggregateMetadataForRange(ctx, user.ID, period.Start, period.End, weeklies)
+	if err != nil {
+		return err
+	}
 	if _, err := w.Summaries.Upsert(
 		ctx, user.ID, string(domain.PeriodMonth),
 		period.Start, period.End,
@@ -329,7 +386,10 @@ func (w *SummaryWorker) runYearly(
 	if err != nil {
 		return err
 	}
-	meta := aggregateMetadata(monthlies)
+	meta, err := w.aggregateMetadataForRange(ctx, user.ID, period.Start, period.End, monthlies)
+	if err != nil {
+		return err
+	}
 	if _, err := w.Summaries.Upsert(
 		ctx, user.ID, string(domain.PeriodYear),
 		period.Start, period.End,
@@ -365,54 +425,42 @@ func (w *SummaryWorker) skip(ctx context.Context, job *domain.SummaryJob) error 
 
 // ---------------- Aggregation ----------------
 
-// aggregateMetadata rolls per-child metadata into the parent period's
-// metadata. Mood is a weighted average by entry count; emotions/topics
-// are top-N by frequency. We compute these in code rather than asking
-// the LLM to do arithmetic over invisible numeric fields.
-func aggregateMetadata(children []domain.Summary) domain.SummaryMetadata {
-	emotionFreq := map[string]int{}
+// aggregateMetadataForRange composes the parent-period metadata for a
+// week/month/year. Mood and emotions come from `daily_inputs` SQL
+// aggregation across the whole range — that's the user's source of
+// truth, computed without round-tripping through child summaries.
+// Topics are aggregated from the constituent child summaries because
+// they're LLM-extracted (no daily_inputs equivalent) — top-N by
+// frequency.
+//
+// Mood label for the parent period is derived from the average score
+// using domain.MoodLabel (same buckets as daily).
+func (w *SummaryWorker) aggregateMetadataForRange(
+	ctx context.Context, userID string, start, end time.Time, children []domain.Summary,
+) (domain.SummaryMetadata, error) {
+	agg, err := w.DailyInputs.AggregateForRange(ctx, userID, start, end, 6)
+	if err != nil {
+		return domain.SummaryMetadata{}, fmt.Errorf("aggregate daily inputs: %w", err)
+	}
 	topicFreq := map[string]int{}
-	var totalScore, totalWeight float64
-	totalEntries := 0
-	posCount, negCount, neuCount := 0, 0, 0
-
 	for _, c := range children {
-		for _, e := range c.Metadata.Emotions {
-			emotionFreq[strings.ToLower(strings.TrimSpace(e))]++
-		}
 		for _, t := range c.Metadata.Topics {
 			topicFreq[strings.ToLower(strings.TrimSpace(t))]++
 		}
-		w := float64(c.Metadata.EntryCount)
-		if w == 0 {
-			w = 1
-		}
-		if c.Metadata.MoodScore != nil {
-			totalScore += *c.Metadata.MoodScore * w
-			totalWeight += w
-		}
-		switch c.Metadata.MoodLabel {
-		case "positive":
-			posCount++
-		case "negative":
-			negCount++
-		case "neutral":
-			neuCount++
-		}
-		totalEntries += c.Metadata.EntryCount
 	}
 
 	out := domain.SummaryMetadata{
-		Emotions:   topNByFrequency(emotionFreq, 6),
+		Emotions:   agg.Emotions,
 		Topics:     topNByFrequency(topicFreq, 5),
-		EntryCount: totalEntries,
+		EntryCount: agg.EntryCount,
+		MoodScore:  agg.MoodScore,
 	}
-	if totalWeight > 0 {
-		avg := totalScore / totalWeight
-		out.MoodScore = &avg
+	// Derive label from the average via the shared 1-4/5-6/7-10 buckets.
+	if agg.MoodScore != nil {
+		rounded := int(*agg.MoodScore + 0.5)
+		out.MoodLabel = domain.MoodLabel(&rounded)
 	}
-	out.MoodLabel = pickLabel(posCount, neuCount, negCount)
-	return out
+	return out, nil
 }
 
 func topNByFrequency(freq map[string]int, n int) []string {
@@ -441,19 +489,6 @@ func topNByFrequency(freq map[string]int, n int) []string {
 		out = append(out, p.k)
 	}
 	return out
-}
-
-func pickLabel(pos, neu, neg int) string {
-	if pos == 0 && neu == 0 && neg == 0 {
-		return ""
-	}
-	if pos >= neu && pos >= neg {
-		return "positive"
-	}
-	if neg >= pos && neg >= neu {
-		return "negative"
-	}
-	return "neutral"
 }
 
 // ---------------- JSON helpers ----------------
