@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { History, MessageSquare, PenLine, Settings as SettingsIcon } from "lucide-react";
+import { History, MessageSquare, PenLine, Settings as SettingsIcon, Sparkles } from "lucide-react";
 import { LogOut } from "lucide-react";
 import { motion } from "motion/react";
 
@@ -11,6 +11,7 @@ import type { User } from "@/features/auth/api";
 const navItems = [
   { to: "/", end: true, label: "Today", icon: PenLine },
   { to: "/history", end: false, label: "History", icon: History },
+  { to: "/summaries", end: false, label: "Summaries", icon: Sparkles },
   { to: "/questions", end: false, label: "Questions", icon: MessageSquare },
   { to: "/settings", end: false, label: "Settings", icon: SettingsIcon },
 ];

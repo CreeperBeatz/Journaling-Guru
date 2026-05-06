@@ -1,0 +1,14 @@
+Week of {{.PeriodStart}} – {{.PeriodEnd}}
+
+{{if .DailySummaries}}
+Daily summaries this week:
+
+{{range .DailySummaries}}
+**{{.Date}}** ({{.MoodLabel}}, mood {{.MoodScore}}/10){{if .Topics}} — topics: {{.Topics}}{{end}}
+{{.Body}}
+
+{{end}}
+{{else}}
+The user has not journaled this week.
+{{end}}
+Write the weekly reflection now.

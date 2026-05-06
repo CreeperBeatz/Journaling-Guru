@@ -1,13 +1,16 @@
 import { NavLink } from "react-router-dom";
-import { History, MessageSquare, PenLine, Settings as SettingsIcon } from "lucide-react";
+import { History, PenLine, Settings as SettingsIcon, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
 
 import { cn } from "@/lib/utils";
 
+// Bottom-tab is space-constrained on mobile — Questions moves into the
+// Settings page in Phase 4. Five core surfaces: Today, History,
+// Summaries, Settings (Questions tab inside).
 const tabs = [
   { to: "/", end: true, label: "Today", icon: PenLine },
   { to: "/history", end: false, label: "History", icon: History },
-  { to: "/questions", end: false, label: "Questions", icon: MessageSquare },
+  { to: "/summaries", end: false, label: "Reflect", icon: Sparkles },
   { to: "/settings", end: false, label: "Settings", icon: SettingsIcon },
 ];
 

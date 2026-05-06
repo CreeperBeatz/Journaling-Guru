@@ -19,6 +19,8 @@ import {
   listEntryDates,
   listQuestions,
 } from "@/features/journal/api";
+import { STATS_KEY } from "@/features/summaries/hooks";
+import { getStats } from "@/features/summaries/api";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -29,6 +31,7 @@ import { AppShellSkeleton } from "./AppShellSkeleton";
 function pageTitle(pathname: string): string {
   if (pathname === "/") return "Today";
   if (pathname.startsWith("/history")) return "History";
+  if (pathname.startsWith("/summaries")) return "Reflections";
   if (pathname.startsWith("/questions")) return "Questions";
   if (pathname.startsWith("/settings")) return "Settings";
   return "JournAI";
@@ -57,6 +60,13 @@ export function AppShell() {
     qc.prefetchQuery({
       queryKey: ENTRY_DATES_KEY,
       queryFn: async () => (await listEntryDates(180)).dates,
+      staleTime: 60_000,
+    });
+    // Stats panel powers /summaries; warm it so the page paints from
+    // cache when the user navigates there. Cheap GET — one ~6KB JSON.
+    qc.prefetchQuery({
+      queryKey: STATS_KEY(90),
+      queryFn: () => getStats(90),
       staleTime: 60_000,
     });
   }, [me.data?.id, qc]);

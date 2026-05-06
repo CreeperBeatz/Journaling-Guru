@@ -43,6 +43,60 @@ func scanEntry(row pgx.Row) (*domain.JournalEntry, error) {
 	return &e, nil
 }
 
+// EntryWithPrompt is "the question and the answer" for one row. Used by
+// the daily-summary worker to compose its LLM prompt — joining at the
+// store keeps the worker free of SQL.
+type EntryWithPrompt struct {
+	QuestionID string `json:"question_id"`
+	Prompt     string `json:"prompt"`
+	Body       string `json:"body"`
+}
+
+// ListByDateWithPrompts joins journal_entries to questions for one
+// calendar day, returning each (question text, body) pair the user
+// answered. Archived questions are still joined — historical entries
+// against archived questions stay readable.
+func (s *EntryStore) ListByDateWithPrompts(
+	ctx context.Context,
+	userID string,
+	localDate time.Time,
+) ([]EntryWithPrompt, error) {
+	const q = `SELECT e.question_id, q.prompt, e.body
+	             FROM journal_entries e
+	             JOIN questions q ON q.id = e.question_id
+	            WHERE e.user_id = $1 AND e.local_date = $2
+	         ORDER BY q.position ASC, q.created_at ASC`
+	rows, err := s.DB.Query(ctx, q, userID, localDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]EntryWithPrompt, 0)
+	for rows.Next() {
+		var e EntryWithPrompt
+		if err := rows.Scan(&e.QuestionID, &e.Prompt, &e.Body); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// HasEntryOnDate is a cheap probe used by the lazy-seed path: was today
+// already the user's first-write-of-the-day for this period? If so,
+// scheduling is skipped to avoid INSERT churn on every keystroke save.
+func (s *EntryStore) HasEntryOnDate(ctx context.Context, userID string, localDate time.Time) (bool, error) {
+	const q = `SELECT EXISTS(
+	    SELECT 1 FROM journal_entries
+	     WHERE user_id = $1 AND local_date = $2
+	)`
+	var exists bool
+	if err := s.DB.QueryRow(ctx, q, userID, localDate).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // ListByDate returns all entries for one calendar day. Used by DailyEntry
 // (today=`localDate`) and HistoryView (any past day).
 func (s *EntryStore) ListByDate(ctx context.Context, userID string, localDate time.Time) ([]domain.JournalEntry, error) {

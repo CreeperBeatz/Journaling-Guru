@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -16,12 +17,21 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/timezone"
 )
 
+// SummaryScheduler is the interface the entries handler uses to lazy-seed
+// summary_jobs on each successful write. Phase 4's *jobs.Scheduler
+// implements it; using an interface here keeps the httpapi package
+// decoupled from River's transitive deps.
+type SummaryScheduler interface {
+	LazySeed(ctx context.Context, userID string, at time.Time) error
+}
+
 // EntryHandler hosts /api/entries. Today is computed server-side from the
 // user's stored timezone — never from a date the client sends.
 type EntryHandler struct {
-	Entries *store.EntryStore
-	Users   *store.UserStore
-	Logger  *slog.Logger
+	Entries   *store.EntryStore
+	Users     *store.UserStore
+	Logger    *slog.Logger
+	Scheduler SummaryScheduler // nil-safe: phase-1 callers (tests) can omit
 }
 
 const maxEntryBodyLen = 16_000
@@ -147,6 +157,19 @@ func (h *EntryHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "save failed")
 		return
 	}
+
+	// Lazy-seed summary jobs for the four periods this write lands in.
+	// ON CONFLICT DO NOTHING absorbs duplicates so calling it on every
+	// keystroke save is safe — it's only an INSERT per period when the
+	// row is new. Skip on empty-body deletes (mutated=true, entry=nil)
+	// because creating the entry was undone.
+	if entry != nil && h.Scheduler != nil {
+		if err := h.Scheduler.LazySeed(r.Context(), sess.UserID, time.Now()); err != nil {
+			// Log only — schedule churn must never block the user save.
+			h.Logger.Warn("lazy seed", "err", err, "user_id", sess.UserID)
+		}
+	}
+
 	if entry == nil {
 		// Empty body → delete path. Return a tiny ack so the client can
 		// distinguish "saved" from "cleared".

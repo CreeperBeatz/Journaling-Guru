@@ -14,6 +14,7 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/config"
 	"github.com/cosmosthrace/journai/backend/internal/httpapi/handlers"
 	mw "github.com/cosmosthrace/journai/backend/internal/httpapi/middleware"
+	"github.com/cosmosthrace/journai/backend/internal/jobs"
 	"github.com/cosmosthrace/journai/backend/internal/mail"
 	"github.com/cosmosthrace/journai/backend/internal/store"
 )
@@ -30,6 +31,8 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	sessions := store.NewSessionStore(db)
 	questions := store.NewQuestionStore(db)
 	entries := store.NewEntryStore(db)
+	summaries := store.NewSummaryStore(db)
+	summaryJobs := store.NewSummaryJobStore(db)
 
 	magicSvc := auth.NewMagicLinkService(auth.MagicLinkConfig{
 		TTL:         cfg.MagicLinkTTL(),
@@ -44,6 +47,16 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	}, sessions)
 
 	mailer := mail.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
+
+	// Lazy-seed scheduler — invoked from the entries handler on every
+	// successful write. ScheduleNext is the worker's responsibility, not
+	// the api's, but the api owns the LazySeed lifecycle.
+	scheduler := &jobs.Scheduler{
+		Jobs:           summaryJobs,
+		Users:          users,
+		Logger:         logger,
+		InactivityDays: cfg.SummaryInactivityDays,
+	}
 
 	authH := &handlers.AuthHandler{
 		Magic:         magicSvc,
@@ -64,7 +77,18 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		CookieSecure: cfg.CookieSecure,
 	}
 	questionsH := &handlers.QuestionHandler{Questions: questions, Logger: logger}
-	entriesH := &handlers.EntryHandler{Entries: entries, Users: users, Logger: logger}
+	entriesH := &handlers.EntryHandler{
+		Entries:   entries,
+		Users:     users,
+		Logger:    logger,
+		Scheduler: scheduler,
+	}
+	summariesH := &handlers.SummaryHandler{
+		Summaries: summaries,
+		Jobs:      summaryJobs,
+		Users:     users,
+		Logger:    logger,
+	}
 	healthH := handlers.NewHealth(db)
 
 	r := chi.NewRouter()
@@ -89,7 +113,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":3}`))
+			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":4}`))
 		})
 
 		// Mutating endpoints: CSRF gate (X-Requested-With required).
@@ -114,6 +138,8 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 
 				r.Put("/entries", entriesH.Upsert)
 				r.Patch("/entries/{id}", entriesH.UpdateByID)
+
+				r.Post("/summaries/regenerate", summariesH.Regenerate)
 			})
 		})
 
@@ -124,6 +150,10 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 			r.Get("/questions", questionsH.List)
 			r.Get("/entries", entriesH.ListByDate)
 			r.Get("/entries/dates", entriesH.ListDates)
+
+			r.Get("/summaries", summariesH.List)
+			r.Get("/summaries/stats", summariesH.Stats)
+			r.Get("/summaries/{id}", summariesH.Get)
 		})
 	})
 

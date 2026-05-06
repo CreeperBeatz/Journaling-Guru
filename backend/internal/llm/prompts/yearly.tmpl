@@ -1,0 +1,14 @@
+{{.Year}}
+
+{{if .MonthlySummaries}}
+Monthly summaries this year:
+
+{{range .MonthlySummaries}}
+**{{.MonthLabel}}**
+{{.Body}}
+
+{{end}}
+{{else}}
+The user has not journaled this year.
+{{end}}
+Write the year-in-review now.

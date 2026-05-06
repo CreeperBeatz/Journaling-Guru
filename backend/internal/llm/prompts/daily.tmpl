@@ -1,0 +1,13 @@
+Date: {{.Date}}
+
+The user's journal answers for the day:
+
+{{range .Entries}}
+Q: {{.Prompt}}
+A: {{.Body}}
+
+{{end}}
+Reflect on the day above and return the JSON object described in the system
+message. The "body" field should weave the answers into a coherent reflection
+— don't restate them verbatim. Pick emotions and topics that are actually
+present in the writing; don't invent.

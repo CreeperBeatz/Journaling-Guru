@@ -9,6 +9,10 @@ import { DailyEntrySkeleton } from "./features/journal/DailyEntrySkeleton";
 import { HistoryViewSkeleton } from "./features/journal/HistoryViewSkeleton";
 import { QuestionEditorSkeleton } from "./features/journal/QuestionEditorSkeleton";
 import { SettingsSkeleton } from "./features/settings/SettingsSkeleton";
+import {
+  SummariesPageSkeleton,
+  SummaryDetailSkeleton,
+} from "./features/summaries/SummariesPageSkeleton";
 
 // Lazy-loaded route components — each ships in its own chunk.
 const DailyEntry = lazy(() =>
@@ -22,6 +26,12 @@ const QuestionEditor = lazy(() =>
 );
 const Settings = lazy(() =>
   import("./features/settings/Settings").then((m) => ({ default: m.Settings })),
+);
+const SummariesPage = lazy(() =>
+  import("./features/summaries/SummariesPage").then((m) => ({ default: m.SummariesPage })),
+);
+const SummaryDetail = lazy(() =>
+  import("./features/summaries/SummaryDetail").then((m) => ({ default: m.SummaryDetail })),
 );
 const MagicLinkRequest = lazy(() =>
   import("./features/auth/MagicLinkRequest").then((m) => ({ default: m.MagicLinkRequest })),
@@ -77,6 +87,8 @@ export const router = createBrowserRouter([
       { path: "history/:date", element: withSuspense(<HistoryView />, <HistoryViewSkeleton />) },
       { path: "questions", element: withSuspense(<QuestionEditor />, <QuestionEditorSkeleton />) },
       { path: "settings", element: withSuspense(<Settings />, <SettingsSkeleton />) },
+      { path: "summaries", element: withSuspense(<SummariesPage />, <SummariesPageSkeleton />) },
+      { path: "summaries/:id", element: withSuspense(<SummaryDetail />, <SummaryDetailSkeleton />) },
     ],
   },
 ]);

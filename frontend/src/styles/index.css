@@ -88,3 +88,49 @@
     font-feature-settings: "tnum";
   }
 }
+
+@layer components {
+  /* Reading typography for AI-generated summary bodies. We don't pull in
+     @tailwindcss/typography because the markdown shape we render is
+     narrow (paragraphs, occasional ## subheading, occasional list).
+     Mirrors the warm-paper aesthetic — generous line-height, serif
+     subheads, no underline-on-link clutter. */
+  .prose-journal {
+    @apply text-body-prose leading-prose text-foreground;
+    max-width: 68ch;
+  }
+  .prose-journal > * + * {
+    @apply mt-4;
+  }
+  .prose-journal h1,
+  .prose-journal h2 {
+    @apply font-serif text-h2 mt-8 mb-2 leading-tight tracking-tight;
+  }
+  .prose-journal h3 {
+    @apply font-serif text-h3 mt-6 mb-1 leading-snug;
+  }
+  .prose-journal p {
+    @apply leading-prose;
+  }
+  .prose-journal strong {
+    @apply font-semibold text-foreground;
+  }
+  .prose-journal em {
+    @apply italic;
+  }
+  .prose-journal a {
+    @apply text-accent underline-offset-4 hover:underline;
+  }
+  .prose-journal ul {
+    @apply list-disc pl-5 space-y-1;
+  }
+  .prose-journal ol {
+    @apply list-decimal pl-5 space-y-1;
+  }
+  .prose-journal blockquote {
+    @apply border-l-2 border-accent/40 pl-4 italic text-muted-foreground;
+  }
+  .prose-journal code {
+    @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.92em];
+  }
+}

@@ -1,0 +1,14 @@
+{{.MonthLabel}} ({{.PeriodStart}} – {{.PeriodEnd}})
+
+{{if .WeeklySummaries}}
+Weekly summaries this month:
+
+{{range .WeeklySummaries}}
+**Week of {{.PeriodStart}}**
+{{.Body}}
+
+{{end}}
+{{else}}
+The user has not journaled this month.
+{{end}}
+Write the monthly reflection now.

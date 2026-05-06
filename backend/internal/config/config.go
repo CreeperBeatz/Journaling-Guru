@@ -42,6 +42,14 @@ type Config struct {
 	OpenRouterKey   string `env:"OPENROUTER_API_KEY"`
 	OpenRouterModel string `env:"OPENROUTER_MODEL" envDefault:"anthropic/claude-sonnet-4-5"`
 
+	// Worker tick + dormancy. SummaryDispatchInterval controls how often the
+	// worker scans summary_jobs for due rows. SummaryInactivityDays is the
+	// "haven't journaled in N days → stop scheduling new daily/weekly/monthly
+	// jobs" threshold (yearly always continues). When the user resumes
+	// journaling, lazy-seed re-engages the cadence.
+	SummaryDispatchInterval int `env:"SUMMARY_DISPATCH_INTERVAL_SECONDS" envDefault:"60"`
+	SummaryInactivityDays   int `env:"SUMMARY_INACTIVITY_DAYS" envDefault:"30"`
+
 	OpenAIKey           string `env:"OPENAI_API_KEY"`
 	OpenAIRealtimeModel string `env:"OPENAI_REALTIME_MODEL" envDefault:"gpt-realtime"`
 
