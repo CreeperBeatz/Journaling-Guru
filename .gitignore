@@ -24,6 +24,9 @@ frontend/stats.html
 .DS_Store
 Thumbs.db
 
+# Per-developer Claude Code settings
+.claude/settings.local.json
+
 # Local volumes
 .docker/
 postgres-data/

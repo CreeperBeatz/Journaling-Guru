@@ -39,7 +39,11 @@ echo "[start] applying migrations…"
 ( cd backend && go run ./cmd/migrate up )
 
 if command -v overmind >/dev/null 2>&1; then
-  echo "[start] launching overmind (Procfile)…"
+  # /mnt/c (DrvFs) doesn't support AF_UNIX bind, so put overmind's control
+  # socket on the Linux-native filesystem. Use the same OVERMIND_SOCKET when
+  # running `overmind connect` / `overmind kill` against this session.
+  export OVERMIND_SOCKET="${OVERMIND_SOCKET:-/tmp/overmind-journai.sock}"
+  echo "[start] launching overmind (Procfile, socket=${OVERMIND_SOCKET})…"
   exec overmind start -f Procfile
 elif command -v concurrently >/dev/null 2>&1 || npx --no -- concurrently --version >/dev/null 2>&1; then
   echo "[start] overmind not found — falling back to npx concurrently."
