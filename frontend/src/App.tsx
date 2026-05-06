@@ -8,7 +8,7 @@ export function App() {
           <Link to="/" className="font-semibold tracking-tight">
             JournAI
           </Link>
-          <span className="text-xs text-muted-foreground">v2 · phase 1</span>
+          <span className="text-xs text-muted-foreground">v2 · phase 2</span>
         </div>
       </header>
       <main className="flex-1">

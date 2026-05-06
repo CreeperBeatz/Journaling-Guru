@@ -7,7 +7,7 @@
     "dev": "vite --host --port 5173",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host --port 5173",
-    "lint": "tsc -b --noEmit",
+    "lint": "tsc --noEmit -p tsconfig.json",
     "format": "prettier --write src"
   },
   "dependencies": {

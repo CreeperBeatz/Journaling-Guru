@@ -10,20 +10,62 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/cosmosthrace/journai/backend/internal/auth"
 	"github.com/cosmosthrace/journai/backend/internal/config"
 	"github.com/cosmosthrace/journai/backend/internal/httpapi/handlers"
 	mw "github.com/cosmosthrace/journai/backend/internal/httpapi/middleware"
+	"github.com/cosmosthrace/journai/backend/internal/mail"
+	"github.com/cosmosthrace/journai/backend/internal/store"
 )
 
 // NewRouter wires the HTTP surface for the api binary.
 //
-// Phase 1 ships /healthz and /readyz only; auth/journal/voice/summary/push
-// routes are added in their own phases. The middleware stack here is the
-// one Phase 2 will hang authenticated routes off of.
+// Construction order: stores → services → handlers → routes. Anything that
+// needs the DB pool or external creds is built once here and reused across
+// requests; chi composes the per-route middleware stack (CSRF + RequireAuth)
+// on top.
 func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Handler {
+	users := store.NewUserStore(db)
+	links := store.NewMagicLinkStore(db)
+	sessions := store.NewSessionStore(db)
+
+	magicSvc := auth.NewMagicLinkService(auth.MagicLinkConfig{
+		TTL:         cfg.MagicLinkTTL(),
+		PerEmail15m: cfg.MagicLinkPerEmail15m,
+		PerEmailDay: cfg.MagicLinkPerEmailDay,
+		PerIPHour:   cfg.MagicLinkPerIPHour,
+	}, users, links)
+	sessionSvc := auth.NewSessionService(auth.SessionConfig{
+		CookieName:   cfg.SessionCookieName,
+		TTL:          cfg.SessionTTL(),
+		CookieSecure: cfg.CookieSecure,
+	}, sessions)
+
+	mailer := mail.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
+
+	authH := &handlers.AuthHandler{
+		Magic:         magicSvc,
+		Sessions:      sessionSvc,
+		Mailer:        mailer,
+		Logger:        logger,
+		PublicBaseURL: cfg.PublicBaseURL,
+		CookieName:    cfg.SessionCookieName,
+		CookieSecure:  cfg.CookieSecure,
+		CookieTTL:     cfg.SessionTTL(),
+		MagicTTL:      cfg.MagicLinkTTL(),
+	}
+	meH := &handlers.MeHandler{Users: users}
+	acctH := &handlers.AccountHandler{
+		Users:        users,
+		Logger:       logger,
+		CookieName:   cfg.SessionCookieName,
+		CookieSecure: cfg.CookieSecure,
+	}
+	healthH := handlers.NewHealth(db)
+
 	r := chi.NewRouter()
 
-	// AllowCredentials=true because Phase 2 ships cookie-based sessions; that
+	// AllowCredentials=true because the cookie carries the session; that
 	// means AllowedOrigins must be an explicit list, not "*".
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSAllowedOrigins,
@@ -32,24 +74,40 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-
 	r.Use(mw.RequestID)
 	r.Use(mw.Recoverer(logger))
 	r.Use(mw.AccessLog(logger))
 	r.Use(chimw.Timeout(30 * time.Second))
 
-	health := handlers.NewHealth(db)
-	r.Get("/healthz", health.Healthz)
-	r.Get("/readyz", health.Readyz)
+	r.Get("/healthz", healthH.Healthz)
+	r.Get("/readyz", healthH.Readyz)
 
 	r.Route("/api", func(r chi.Router) {
-		// Auth, journal, voice, summaries, push, and account endpoints land
-		// here in subsequent phases. Keep this block minimal until then so
-		// that misrouted requests fail loudly with 404 instead of silently
-		// matching a half-implemented handler.
 		r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":1}`))
+			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":2}`))
+		})
+
+		// Mutating endpoints: CSRF gate (X-Requested-With required).
+		r.Group(func(r chi.Router) {
+			r.Use(mw.CSRF)
+
+			// Public auth endpoints — no session required.
+			r.Post("/auth/magic-link", authH.MagicLinkRequest)
+			r.Post("/auth/verify", authH.MagicLinkVerify)
+			r.Post("/auth/logout", authH.Logout)
+
+			// Authenticated mutators.
+			r.Group(func(r chi.Router) {
+				r.Use(mw.RequireAuth(sessionSvc, cfg.SessionCookieName))
+				r.Delete("/account", acctH.Delete)
+			})
+		})
+
+		// Authenticated reads.
+		r.Group(func(r chi.Router) {
+			r.Use(mw.RequireAuth(sessionSvc, cfg.SessionCookieName))
+			r.Get("/me", meH.Get)
 		})
 	})
 

@@ -17,6 +17,11 @@ frontend/dist/
 frontend/dev-dist/
 frontend/.vite/
 frontend/stats.html
+# tsc -b emits these next to vite.config.ts (composite project artifacts).
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend/*.tsbuildinfo
+frontend/**/*.tsbuildinfo
 
 # IDE / OS
 .idea/

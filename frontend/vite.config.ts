@@ -36,12 +36,10 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
+      // /auth/* lives on the SPA (login + verify pages). Backend mounts
+      // its auth endpoints under /api/auth/*, so only /api needs proxying.
       proxy: {
         "/api": {
-          target: apiBase,
-          changeOrigin: true,
-        },
-        "/auth": {
           target: apiBase,
           changeOrigin: true,
         },
