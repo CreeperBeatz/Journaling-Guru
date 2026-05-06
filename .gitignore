@@ -1,0 +1,29 @@
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Backend
+backend/bin/
+backend/tmp/
+backend/.air.tmp/
+*.test
+*.out
+coverage.txt
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dev-dist/
+frontend/.vite/
+frontend/stats.html
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local volumes
+.docker/
+postgres-data/
