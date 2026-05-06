@@ -20,6 +20,8 @@ type Config struct {
 	HTTPAddr      string `env:"HTTP_ADDR" envDefault:":8080"`
 	PublicBaseURL string `env:"PUBLIC_BASE_URL" envDefault:"http://localhost:5173"`
 
+	CORSAllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envDefault:"http://localhost:5173" envSeparator:","`
+
 	DatabaseURL string `env:"DATABASE_URL,required"`
 
 	SessionCookieName string `env:"SESSION_COOKIE_NAME" envDefault:"session"`

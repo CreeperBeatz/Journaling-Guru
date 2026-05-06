@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cosmosthrace/journai/backend/internal/config"
@@ -21,6 +22,16 @@ import (
 // one Phase 2 will hang authenticated routes off of.
 func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	r := chi.NewRouter()
+
+	// AllowCredentials=true because Phase 2 ships cookie-based sessions; that
+	// means AllowedOrigins must be an explicit list, not "*".
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   cfg.CORSAllowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Requested-With"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
 
 	r.Use(mw.RequestID)
 	r.Use(mw.Recoverer(logger))
