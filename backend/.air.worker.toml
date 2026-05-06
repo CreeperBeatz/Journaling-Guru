@@ -1,0 +1,16 @@
+root = "."
+tmp_dir = ".air.tmp/worker"
+
+[build]
+  cmd = "go build -o ./.air.tmp/worker/worker ./cmd/worker"
+  bin = "./.air.tmp/worker/worker"
+  include_ext = ["go"]
+  exclude_dir = [".air.tmp", "bin", "tmp"]
+  delay = 500
+  stop_on_error = true
+
+[log]
+  time = false
+
+[misc]
+  clean_on_exit = true

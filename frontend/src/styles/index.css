@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 4%;
+    --foreground: 240 5% 96%;
+    --muted: 240 6% 12%;
+    --muted-foreground: 240 4% 64%;
+    --border: 240 6% 18%;
+    --input: 240 6% 18%;
+    --ring: 252 100% 70%;
+    --primary: 252 100% 70%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 6% 14%;
+    --secondary-foreground: 240 5% 96%;
+    --accent: 252 80% 60%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --card: 240 8% 8%;
+    --card-foreground: 240 5% 96%;
+    --radius: 0.75rem;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    font-feature-settings: "cv11", "ss01", "ss02";
+  }
+}
