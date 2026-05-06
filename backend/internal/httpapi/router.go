@@ -28,6 +28,8 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	users := store.NewUserStore(db)
 	links := store.NewMagicLinkStore(db)
 	sessions := store.NewSessionStore(db)
+	questions := store.NewQuestionStore(db)
+	entries := store.NewEntryStore(db)
 
 	magicSvc := auth.NewMagicLinkService(auth.MagicLinkConfig{
 		TTL:         cfg.MagicLinkTTL(),
@@ -54,13 +56,15 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		CookieTTL:     cfg.SessionTTL(),
 		MagicTTL:      cfg.MagicLinkTTL(),
 	}
-	meH := &handlers.MeHandler{Users: users}
+	meH := &handlers.MeHandler{Users: users, Logger: logger}
 	acctH := &handlers.AccountHandler{
 		Users:        users,
 		Logger:       logger,
 		CookieName:   cfg.SessionCookieName,
 		CookieSecure: cfg.CookieSecure,
 	}
+	questionsH := &handlers.QuestionHandler{Questions: questions, Logger: logger}
+	entriesH := &handlers.EntryHandler{Entries: entries, Users: users, Logger: logger}
 	healthH := handlers.NewHealth(db)
 
 	r := chi.NewRouter()
@@ -85,7 +89,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":2}`))
+			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":3}`))
 		})
 
 		// Mutating endpoints: CSRF gate (X-Requested-With required).
@@ -101,6 +105,15 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 			r.Group(func(r chi.Router) {
 				r.Use(mw.RequireAuth(sessionSvc, cfg.SessionCookieName))
 				r.Delete("/account", acctH.Delete)
+				r.Patch("/me", meH.Update)
+
+				r.Post("/questions", questionsH.Create)
+				r.Patch("/questions/{id}", questionsH.Update)
+				r.Delete("/questions/{id}", questionsH.Archive)
+				r.Post("/questions/reorder", questionsH.Reorder)
+
+				r.Put("/entries", entriesH.Upsert)
+				r.Patch("/entries/{id}", entriesH.UpdateByID)
 			})
 		})
 
@@ -108,6 +121,9 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		r.Group(func(r chi.Router) {
 			r.Use(mw.RequireAuth(sessionSvc, cfg.SessionCookieName))
 			r.Get("/me", meH.Get)
+			r.Get("/questions", questionsH.List)
+			r.Get("/entries", entriesH.ListByDate)
+			r.Get("/entries/dates", entriesH.ListDates)
 		})
 	})
 

@@ -12,6 +12,7 @@ export interface User {
   timezone: string;
   reminder_time: string;
   reminder_enabled: boolean;
+  day_start_minutes: number;
   created_at: string;
   updated_at: string;
 }

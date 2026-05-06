@@ -15,7 +15,7 @@ Development is bash-native on Ubuntu (or WSL2). You'll need:
 | Go            | 1.22+         | Backend                                        |
 | Node          | 20 or 22      | Frontend toolchain                             |
 | pnpm          | 9+            | Frontend package manager                       |
-| Docker + Compose v2 | latest  | Postgres + Mailhog for dev                     |
+| Docker + Compose v2 | latest  | Postgres for dev                               |
 | `goose` CLI   | optional      | Hand-running migrations; `make migrate-*` wraps |
 | `air`         | latest        | Go hot reload (`go install github.com/air-verse/air@latest`) |
 | `overmind`    | optional      | Process multiplexer; falls back to `npx concurrently` |
@@ -43,19 +43,23 @@ go install github.com/DarthSim/overmind/v2@latest
 ## First run
 
 ```bash
-cp .env.example .env       # fill SMTP_FROM and any keys you have
+cp .env.example .env       # fill SMTP_* (external provider) and any keys you have
 cd frontend && pnpm install && cd ..
 cd backend && go mod tidy && cd ..
-./start.sh
+./start-dev.sh
 ```
 
-`start.sh` brings up Postgres + Mailhog, applies migrations, and multiplexes:
+`start-dev.sh` brings up Postgres, applies migrations, and multiplexes the
+dev processes (with hot reload via `air` and Vite HMR):
 
-- **api**    — Go HTTP server on `:8080`
+- **api**    — Go HTTP server on `:8080` (rebuilds on `.go` changes)
 - **worker** — River-backed job runner (Phase 1 stub; idles until Phase 4)
 - **web**    — Vite dev server on `:5173` (proxies `/api/*` to the backend)
 
-Mailhog UI: <http://localhost:8025>
+Magic-link emails go through whatever `SMTP_*` you configure in `.env`
+(external provider — Postmark, Resend, your own server, etc.).
+
+Production tooling (`docker-compose.prod.yml`, Caddy, backups) lands in Phase 7.
 
 ## Verifying Phase 1
 

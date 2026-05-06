@@ -3,11 +3,11 @@
 help:
 	@awk 'BEGIN{FS=":.*##"; printf "Targets:\n"} /^[a-zA-Z_-]+:.*##/ { printf "  %-22s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-dev: ## Start the full dev stack (postgres + mailhog + api + worker + web)
+dev: ## Start the dev stack with hot reload (postgres + api + worker + web)
 	./start.sh
 
-up: ## Start backing services only (postgres + mailhog)
-	docker compose up -d postgres mailhog
+up: ## Start backing services only (postgres)
+	docker compose up -d postgres
 
 down: ## Stop and remove backing services
 	docker compose down
@@ -15,8 +15,8 @@ down: ## Stop and remove backing services
 ps: ## Show docker compose status
 	docker compose ps
 
-logs: ## Tail postgres + mailhog logs
-	docker compose logs -f postgres mailhog
+logs: ## Tail postgres logs
+	docker compose logs -f postgres
 
 psql: ## Open psql against the dev database
 	docker compose exec postgres psql -U journai -d journai

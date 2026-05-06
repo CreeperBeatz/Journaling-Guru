@@ -16,12 +16,5 @@ services:
       timeout: 3s
       retries: 30
 
-  mailhog:
-    image: mailhog/mailhog:latest
-    container_name: journai-mailhog
-    ports:
-      - "1025:1025"   # SMTP
-      - "8025:8025"   # web UI
-
 volumes:
   postgres-data:

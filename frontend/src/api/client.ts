@@ -20,11 +20,9 @@ export class ApiError extends Error {
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
-type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
-
 interface RequestOpts {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
-  body?: Json;
+  body?: unknown;
   signal?: AbortSignal;
   headers?: Record<string, string>;
 }

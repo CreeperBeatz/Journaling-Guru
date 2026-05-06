@@ -3,25 +3,74 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light — paper / cream. Warm, never #FFF. */
   :root {
-    --background: 240 10% 4%;
-    --foreground: 240 5% 96%;
-    --muted: 240 6% 12%;
-    --muted-foreground: 240 4% 64%;
-    --border: 240 6% 18%;
-    --input: 240 6% 18%;
-    --ring: 252 100% 70%;
-    --primary: 252 100% 70%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 240 6% 14%;
-    --secondary-foreground: 240 5% 96%;
-    --accent: 252 80% 60%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 70% 55%;
-    --destructive-foreground: 0 0% 100%;
-    --card: 240 8% 8%;
-    --card-foreground: 240 5% 96%;
+    --background: 39 38% 96%;
+    --foreground: 30 12% 14%;
+    --muted: 36 22% 92%;
+    --muted-foreground: 30 8% 42%;
+    --border: 36 18% 84%;
+    --input: 36 22% 90%;
+    --ring: 252 70% 56%;
+    --primary: 252 70% 50%;
+    --primary-foreground: 39 38% 98%;
+    --secondary: 36 24% 88%;
+    --secondary-foreground: 30 12% 14%;
+    --accent: 18 70% 52%;
+    --accent-foreground: 39 38% 98%;
+    --destructive: 0 65% 48%;
+    --destructive-foreground: 39 38% 98%;
+    --card: 39 44% 98%;
+    --card-foreground: 30 12% 14%;
+    --popover: 39 44% 98%;
+    --popover-foreground: 30 12% 14%;
+    --success: 152 50% 38%;
+    --warning: 36 84% 44%;
+
     --radius: 0.75rem;
+    --radius-sm: 0.375rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+    --radius-2xl: 1.5rem;
+
+    /* Real drop shadows — paper has weight. Tinted with foreground hue. */
+    --shadow-xs: 0 1px 2px hsl(30 12% 14% / 0.04);
+    --shadow-sm: 0 2px 4px -1px hsl(30 12% 14% / 0.06), 0 1px 2px hsl(30 12% 14% / 0.04);
+    --shadow-md: 0 8px 16px -6px hsl(30 12% 14% / 0.10), 0 2px 4px hsl(30 12% 14% / 0.06);
+    --shadow-lg: 0 20px 40px -12px hsl(30 12% 14% / 0.15);
+  }
+
+  /* Dark — warm near-black, ember undertone. NOT cool blue-slate. */
+  .dark {
+    --background: 30 8% 6%;
+    --foreground: 36 12% 92%;
+    --muted: 30 6% 11%;
+    --muted-foreground: 36 6% 62%;
+    --border: 30 5% 16%;
+    --input: 30 5% 14%;
+    --ring: 252 90% 72%;
+    --primary: 252 88% 72%;
+    --primary-foreground: 30 10% 8%;
+    --secondary: 30 5% 13%;
+    --secondary-foreground: 36 12% 92%;
+    --accent: 18 78% 64%;
+    --accent-foreground: 30 10% 8%;
+    --destructive: 0 70% 60%;
+    --destructive-foreground: 36 12% 92%;
+    --card: 30 7% 9%;
+    --card-foreground: 36 12% 92%;
+    --popover: 30 7% 9%;
+    --popover-foreground: 36 12% 92%;
+    --success: 152 55% 56%;
+    --warning: 36 84% 62%;
+
+    /* Inset top-edge highlight + low ambient — sells elevation on OLED
+       without a visible drop that would disappear against dark page. */
+    --shadow-xs: 0 1px 0 hsl(36 12% 92% / 0.03) inset, 0 1px 1px hsl(0 0% 0% / 0.3);
+    --shadow-sm: 0 1px 0 hsl(36 12% 92% / 0.04) inset, 0 1px 2px hsl(0 0% 0% / 0.4);
+    --shadow-md: 0 1px 0 hsl(36 12% 92% / 0.05) inset, 0 8px 24px -8px hsl(0 0% 0% / 0.6);
+    --shadow-lg: 0 1px 0 hsl(36 12% 92% / 0.06) inset, 0 20px 50px -12px hsl(0 0% 0% / 0.75);
   }
 
   html,
@@ -31,6 +80,11 @@
   }
 
   body {
-    font-feature-settings: "cv11", "ss01", "ss02";
+    /* Geist single-storey g + contextual alternates. */
+    font-feature-settings: "ss01", "cv01";
+  }
+
+  .tabular-nums {
+    font-feature-settings: "tnum";
   }
 }

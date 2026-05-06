@@ -3,12 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0b0b10" />
+    <!-- Theme-color per scheme so iOS PWA chrome matches the active theme. -->
+    <meta name="theme-color" content="#f5efe2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#100e0b" media="(prefers-color-scheme: dark)" />
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Same-origin in dev (Vite proxies /api). In prod, /api is behind the
+         same Caddy host, so a plain dns-prefetch hint is the right shape. -->
+    <link rel="preconnect" href="/" crossorigin />
+    <link rel="dns-prefetch" href="/" />
     <title>JournAI</title>
+    <!-- Anti-flash: read theme preference and apply class before React hydrates.
+         Mirrors the strategy next-themes documents for class-attribute mode. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("theme");
+          var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var resolved = stored === "light" || stored === "dark"
+            ? stored
+            : prefersDark ? "dark" : "light";
+          if (resolved === "dark") document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
   </head>
-  <body class="bg-background text-foreground antialiased">
+  <body class="bg-background text-foreground antialiased font-sans">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

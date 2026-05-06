@@ -1,5 +1,8 @@
+import animate from "tailwindcss-animate";
+
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: "class",
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
@@ -33,15 +36,30 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
+        success: "hsl(var(--success))",
+        warning: "hsl(var(--warning))",
       },
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+        lg: "var(--radius-lg)",
+        xl: "var(--radius-xl)",
+        "2xl": "var(--radius-2xl)",
+      },
+      boxShadow: {
+        xs: "var(--shadow-xs)",
+        sm: "var(--shadow-sm)",
+        DEFAULT: "var(--shadow-sm)",
+        md: "var(--shadow-md)",
+        lg: "var(--shadow-lg)",
       },
       fontFamily: {
         sans: [
-          "Inter",
+          '"Geist Variable"',
           "ui-sans-serif",
           "system-ui",
           "-apple-system",
@@ -49,8 +67,56 @@ export default {
           "Roboto",
           "sans-serif",
         ],
+        serif: [
+          '"Instrument Serif"',
+          "ui-serif",
+          "Georgia",
+          "Cambria",
+          "Times New Roman",
+          "serif",
+        ],
+        mono: [
+          '"JetBrains Mono Variable"',
+          "ui-monospace",
+          "SFMono-Regular",
+          "Menlo",
+          "Consolas",
+          "monospace",
+        ],
+      },
+      fontSize: {
+        // [size, { lineHeight, letterSpacing }]
+        display: ["3rem", { lineHeight: "1.05", letterSpacing: "-0.03em" }],
+        h1: ["2rem", { lineHeight: "1.1", letterSpacing: "-0.02em" }],
+        h2: ["1.5rem", { lineHeight: "1.2", letterSpacing: "-0.015em" }],
+        h3: ["1.125rem", { lineHeight: "1.3", letterSpacing: "-0.01em" }],
+        body: ["1rem", { lineHeight: "1.65", letterSpacing: "0" }],
+        "body-prose": ["1.0625rem", { lineHeight: "1.75", letterSpacing: "0.005em" }],
+        small: ["0.875rem", { lineHeight: "1.5", letterSpacing: "0" }],
+        caption: ["0.75rem", { lineHeight: "1.4", letterSpacing: "0.04em" }],
+      },
+      lineHeight: {
+        relaxed: "1.7",
+        prose: "1.75",
+      },
+      maxWidth: {
+        prose: "68ch",
+        measure: "72ch",
+      },
+      spacing: {
+        "safe-bottom": "env(safe-area-inset-bottom)",
+        "safe-top": "env(safe-area-inset-top)",
+      },
+      keyframes: {
+        shimmer: {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(100%)" },
+        },
+      },
+      animation: {
+        shimmer: "shimmer 1.6s infinite",
       },
     },
   },
-  plugins: [],
+  plugins: [animate],
 };
