@@ -159,7 +159,9 @@ func (w *SummaryWorker) runDaily(
 		return fmt.Errorf("load daily input: %w", err)
 	}
 	hasCheckin := checkin != nil &&
-		(checkin.MoodScore != nil || len(checkin.Emotions) > 0 || strings.TrimSpace(checkin.Notes) != "")
+		(checkin.MoodScore != nil ||
+			strings.TrimSpace(checkin.EmotionsText) != "" ||
+			strings.TrimSpace(checkin.Notes) != "")
 
 	// Skip only when *both* sources are empty — a "just notes" or
 	// "just mood" day still warrants a daily summary.
@@ -181,8 +183,19 @@ func (w *SummaryWorker) runDaily(
 			tmplData.MoodScore = fmt.Sprintf("%d", *checkin.MoodScore)
 			tmplData.MoodLabel = domain.MoodLabel(checkin.MoodScore)
 		}
-		if len(checkin.Emotions) > 0 {
-			tmplData.Emotions = strings.Join(checkin.Emotions, ", ")
+		// Prefer the classifier's subtypes for the LLM context — they
+		// frame the emotional tone with consistent vocabulary. Fall
+		// back to the raw text if the classifier hasn't run yet (race:
+		// user just saved and the daily summary fired before the
+		// classifier worker did).
+		if len(checkin.ClassifiedEmotions) > 0 {
+			subs := make([]string, 0, len(checkin.ClassifiedEmotions))
+			for _, c := range checkin.ClassifiedEmotions {
+				subs = append(subs, c.Subtype)
+			}
+			tmplData.Emotions = strings.Join(subs, ", ")
+		} else if s := strings.TrimSpace(checkin.EmotionsText); s != "" {
+			tmplData.Emotions = s
 		}
 		tmplData.Notes = strings.TrimSpace(checkin.Notes)
 	}
@@ -217,8 +230,19 @@ func (w *SummaryWorker) runDaily(
 			meta.MoodScore = &f
 			meta.MoodLabel = domain.MoodLabel(checkin.MoodScore)
 		}
-		if len(checkin.Emotions) > 0 {
-			meta.Emotions = append([]string{}, checkin.Emotions...)
+		// SummaryDetail's "Emotions" pills and the stats panel's
+		// EmotionBars both consume meta.Emotions as []string. Populate
+		// from classifier subtypes (deduped, order-preserved) — the
+		// raw user text is intentionally kept off this surface.
+		if len(checkin.ClassifiedEmotions) > 0 {
+			seen := map[string]struct{}{}
+			for _, c := range checkin.ClassifiedEmotions {
+				if _, ok := seen[c.Subtype]; ok {
+					continue
+				}
+				seen[c.Subtype] = struct{}{}
+				meta.Emotions = append(meta.Emotions, c.Subtype)
+			}
 		}
 	}
 

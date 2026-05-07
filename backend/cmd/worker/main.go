@@ -19,15 +19,17 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/store"
 )
 
-// Phase 4 worker: River-backed summary pipeline.
+// Phase 4 worker: River-backed summary pipeline + Phase 4.1 emotion
+// classifier.
 //
 // Two cooperating loops:
 //   - dispatcher tick: every SUMMARY_DISPATCH_INTERVAL_SECONDS, atomically
-//     claim due summary_jobs rows (pending + fire_at <= now) and enqueue
-//     a River SummaryArgs job per row. Single source of truth for "what
+//     claim due rows from BOTH summary_jobs and emotion_classify_jobs and
+//     enqueue a River job per row. Single source of truth for "what
 //     should run."
-//   - River worker pool: consumes SummaryArgs, runs the per-period LLM
-//     call, writes the summaries row, and schedules the next period.
+//   - River worker pool: consumes SummaryArgs / EmotionClassifyArgs,
+//     runs the LLM call, writes the row, and (for summaries) schedules
+//     the next period.
 //
 // Phase 5 will add a push-dispatch tick alongside this one.
 func main() {
@@ -55,6 +57,7 @@ func main() {
 	dailyInputs := store.NewDailyInputStore(db)
 	summaries := store.NewSummaryStore(db)
 	jobsStore := store.NewSummaryJobStore(db)
+	emotionJobs := store.NewEmotionClassifyJobStore(db)
 
 	llmClient := llm.NewOpenRouter(
 		cfg.OpenRouterKey, cfg.OpenRouterModel,
@@ -78,9 +81,17 @@ func main() {
 		LLM:         llmClient,
 		Logger:      logger,
 	}
+	emotionWorker := &jobs.EmotionClassifyWorker{
+		DailyInputs: dailyInputs,
+		EmotionJobs: emotionJobs,
+		Users:       users,
+		LLM:         llmClient,
+		Logger:      logger,
+	}
 
 	workers := river.NewWorkers()
 	river.AddWorker(workers, worker)
+	river.AddWorker(workers, emotionWorker)
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues: map[string]river.QueueConfig{
@@ -105,7 +116,7 @@ func main() {
 		"openrouter_key_set", cfg.OpenRouterKey != "",
 	)
 
-	go runDispatchLoop(rootCtx, logger, jobsStore, riverClient, time.Duration(cfg.SummaryDispatchInterval)*time.Second)
+	go runDispatchLoop(rootCtx, logger, jobsStore, emotionJobs, riverClient, time.Duration(cfg.SummaryDispatchInterval)*time.Second)
 
 	<-rootCtx.Done()
 	logger.Info("worker shutting down")
@@ -116,13 +127,14 @@ func main() {
 	}
 }
 
-// runDispatchLoop is the every-N-seconds tick that claims due summary_jobs
-// rows and converts each into a River insert. Atomic claim (FOR UPDATE
-// SKIP LOCKED) means concurrent worker replicas can't double-enqueue.
+// runDispatchLoop is the every-N-seconds tick that drains both job
+// queues. Atomic claim (FOR UPDATE SKIP LOCKED) means concurrent worker
+// replicas can't double-enqueue.
 func runDispatchLoop(
 	ctx context.Context,
 	logger *slog.Logger,
 	jobsStore *store.SummaryJobStore,
+	emotionJobs *store.EmotionClassifyJobStore,
 	riverClient *river.Client[pgx.Tx],
 	interval time.Duration,
 ) {
@@ -134,14 +146,14 @@ func runDispatchLoop(
 
 	// Run once immediately so a freshly-restarted worker doesn't sit
 	// idle for a full interval if there's a backlog.
-	tick(ctx, logger, jobsStore, riverClient)
+	tick(ctx, logger, jobsStore, emotionJobs, riverClient)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tick(ctx, logger, jobsStore, riverClient)
+			tick(ctx, logger, jobsStore, emotionJobs, riverClient)
 		}
 	}
 }
@@ -150,24 +162,37 @@ func tick(
 	ctx context.Context,
 	logger *slog.Logger,
 	jobsStore *store.SummaryJobStore,
+	emotionJobs *store.EmotionClassifyJobStore,
 	riverClient *river.Client[pgx.Tx],
 ) {
 	const batch = 100
+
 	claimed, err := jobsStore.ClaimDue(ctx, batch)
 	if err != nil {
-		logger.Warn("claim due", "err", err)
+		logger.Warn("claim due summaries", "err", err)
+	} else if len(claimed) > 0 {
+		logger.Info("dispatching summary jobs", "count", len(claimed))
+		for _, c := range claimed {
+			if _, err := riverClient.Insert(ctx, jobs.SummaryArgs{JobID: c.ID}, nil); err != nil {
+				logger.Warn("river insert (summary)", "err", err, "job_id", c.ID)
+				_ = jobsStore.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
+			}
+		}
+	}
+
+	claimedEmotions, err := emotionJobs.ClaimDue(ctx, batch)
+	if err != nil {
+		logger.Warn("claim due emotions", "err", err)
 		return
 	}
-	if len(claimed) == 0 {
+	if len(claimedEmotions) == 0 {
 		return
 	}
-	logger.Info("dispatching summary jobs", "count", len(claimed))
-	for _, c := range claimed {
-		_, err := riverClient.Insert(ctx, jobs.SummaryArgs{JobID: c.ID}, nil)
-		if err != nil {
-			logger.Warn("river insert", "err", err, "job_id", c.ID)
-			// Release back to pending so next tick retries.
-			_ = jobsStore.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
+	logger.Info("dispatching emotion classify jobs", "count", len(claimedEmotions))
+	for _, c := range claimedEmotions {
+		if _, err := riverClient.Insert(ctx, jobs.EmotionClassifyArgs{JobID: c.ID}, nil); err != nil {
+			logger.Warn("river insert (emotion)", "err", err, "job_id", c.ID)
+			_ = emotionJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
 		}
 	}
 }

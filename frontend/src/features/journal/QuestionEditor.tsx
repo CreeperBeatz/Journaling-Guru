@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Archive, ChevronDown, ChevronUp, GripVertical, Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +35,10 @@ interface RowProps {
   onMove: (delta: -1 | 1) => void;
 }
 
+// QuestionRow is rendered as a motion.div role="listitem" rather than
+// motion.li because the outer wrapper is a div role="list" — keeps the
+// HTML valid when we interleave <Separator /> siblings between rows.
+// `layout="position"` preserves the FLIP reorder animation.
 function QuestionRow({ question, isFirst, isLast, onMove }: RowProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(question.prompt);
@@ -56,10 +60,11 @@ function QuestionRow({ question, isFirst, isLast, onMove }: RowProps) {
   };
 
   return (
-    <motion.li
+    <motion.div
+      role="listitem"
       layout={reduce ? false : "position"}
       transition={{ type: "spring", stiffness: 500, damping: 38 }}
-      className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 shadow-xs transition-shadow hover:shadow-sm"
+      className="flex flex-wrap items-center gap-2 px-4 py-3 transition-colors hover:bg-muted/40"
     >
       <GripVertical
         className="h-4 w-4 shrink-0 text-muted-foreground/50"
@@ -174,10 +179,15 @@ function QuestionRow({ question, isFirst, isLast, onMove }: RowProps) {
           </>
         )}
       </div>
-    </motion.li>
+    </motion.div>
   );
 }
 
+// QuestionEditor renders the daily-question list inside the outer
+// Settings tab Card with no card-of-its-own — the list rows and the
+// "add new" affordance sit inside one card, separated by horizontal
+// rules. Settings.tsx supplies CardContent className="p-0" so the
+// separators run edge-to-edge of the outer card.
 export function QuestionEditor() {
   const questions = useQuestions();
   const create = useCreateQuestion();
@@ -201,51 +211,47 @@ export function QuestionEditor() {
     });
   };
 
-  // Renders without a page header — designed to live inside Settings'
-  // Tabs (we moved Questions there because users don't change them
-  // often). The legacy /questions route is gone in Phase 4.1.
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-serif">Add a new question</CardTitle>
-          <CardDescription>Up to 500 characters. Appears at the bottom of Today.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 sm:flex-row">
-          <Input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submit();
-            }}
-            placeholder="What's a question you want to ask yourself daily?"
-            maxLength={500}
-          />
-          <Button onClick={submit} disabled={create.isPending || draft.trim() === ""}>
-            {create.isPending ? "Adding…" : "Add"}
-          </Button>
-        </CardContent>
-      </Card>
+  const items = questions.data ?? [];
 
+  return (
+    <div className="flex flex-col">
       {questions.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="px-4 py-3 text-sm text-muted-foreground">Loading…</p>
       ) : questions.isError ? (
-        <p className="text-sm text-destructive">Couldn't load questions.</p>
-      ) : (questions.data ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">No questions yet.</p>
+        <p className="px-4 py-3 text-sm text-destructive">Couldn't load questions.</p>
+      ) : items.length === 0 ? (
+        <p className="px-4 py-3 text-sm text-muted-foreground">No questions yet.</p>
       ) : (
-        <ul className="space-y-2">
-          {(questions.data ?? []).map((q, idx, all) => (
-            <QuestionRow
-              key={q.id}
-              question={q}
-              isFirst={idx === 0}
-              isLast={idx === all.length - 1}
-              onMove={(delta) => move(q.id, delta)}
-            />
+        <div role="list" className="flex flex-col">
+          {items.map((q, idx, all) => (
+            <Fragment key={q.id}>
+              <QuestionRow
+                question={q}
+                isFirst={idx === 0}
+                isLast={idx === all.length - 1}
+                onMove={(delta) => move(q.id, delta)}
+              />
+              {idx < all.length - 1 ? <Separator /> : null}
+            </Fragment>
           ))}
-        </ul>
+        </div>
       )}
+      <Separator />
+      <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+          }}
+          placeholder="Add a new question…"
+          maxLength={500}
+          className="flex-1"
+        />
+        <Button onClick={submit} disabled={create.isPending || draft.trim() === ""}>
+          {create.isPending ? "Adding…" : "Add"}
+        </Button>
+      </div>
     </div>
   );
 }

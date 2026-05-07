@@ -33,6 +33,7 @@ import { hhmmToMinutes, minutesToHHMM } from "@/lib/dayStart";
 import { QuestionEditor } from "@/features/journal/QuestionEditor";
 
 import { updateMe, UpdateMePatch } from "./api";
+import { AppearanceCard } from "./AppearanceCard";
 
 const VALID_TABS = ["general", "notifications", "questions", "account"] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
@@ -170,6 +171,8 @@ export function Settings() {
         </TabsList>
 
         <TabsContent value="general" className="space-y-4">
+          <AppearanceCard />
+
           <Card>
             <CardHeader>
               <CardTitle className="font-serif">Profile</CardTitle>
@@ -254,11 +257,14 @@ export function Settings() {
             <CardHeader>
               <CardTitle className="font-serif">Daily questions</CardTitle>
               <CardDescription>
-                Reorder and archive prompts. Archived questions keep their
-                history but stop showing on Today.
+                Reorder, edit, and archive prompts — add new ones at the
+                bottom. Archived questions keep their history but stop
+                showing on Today.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            {/* p-0: let the QuestionEditor's row gutters and separators
+                run edge-to-edge of the card, like a settings list. */}
+            <CardContent className="p-0">
               <QuestionEditor />
             </CardContent>
           </Card>

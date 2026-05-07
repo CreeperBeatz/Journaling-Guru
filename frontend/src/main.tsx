@@ -10,11 +10,13 @@ import "@fontsource-variable/jetbrains-mono";
 import { router } from "./router";
 import { queryClient } from "./lib/queryClient";
 import { ThemeProvider } from "./components/ui/theme-provider";
+import { PaletteSync } from "./components/ui/palette-sync";
 import "./styles/index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ThemeProvider>
+      <PaletteSync />
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>

@@ -1,5 +1,16 @@
 import { api } from "@/api/client";
 
+// ClassifiedEmotion is one entry from the LLM Plutchik classifier.
+// Base is one of the 8 wheel base emotions; subtype is one of the 24
+// intensity-leveled subtypes. Surfaced via SummaryDetail / stats panel,
+// NOT echoed back into the DailyInputs textarea — the user sees only
+// their own raw text on the check-in surface.
+export interface ClassifiedEmotion {
+  base: string;
+  subtype: string;
+  raw_phrase: string;
+}
+
 // DailyInput is the user-provided per-day check-in. Distinct from
 // JournalEntry (one row per question per day) — exactly one DailyInput
 // per (user, local_date). Mood is a 1..10 score (null = unset).
@@ -7,7 +18,8 @@ export interface DailyInput {
   id: string;
   local_date: string; // YYYY-MM-DD
   mood_score: number | null;
-  emotions: string[];
+  emotions_text: string;
+  classified_emotions: ClassifiedEmotion[];
   notes: string;
   created_at: string;
   updated_at: string;
@@ -20,7 +32,7 @@ export interface DailyInputResponse {
 
 export interface DailyInputUpsertBody {
   mood_score: number | null;
-  emotions: string[];
+  emotions_text: string;
   notes: string;
 }
 

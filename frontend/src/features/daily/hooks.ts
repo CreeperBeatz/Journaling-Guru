@@ -49,7 +49,7 @@ export function useSaveDailyInput() {
       qc.setQueryData<DailyInputResponse>(dailyInputKey(), (old) => {
         if (!old) return old;
         const isEmpty =
-          body.mood_score === null && body.emotions.length === 0 && body.notes === "";
+          body.mood_score === null && body.emotions_text === "" && body.notes === "";
         if (isEmpty) return { ...old, input: null };
         const baseId =
           (old.input?.id as string | undefined) ?? `temp-${old.local_date}`;
@@ -59,7 +59,12 @@ export function useSaveDailyInput() {
             id: baseId,
             local_date: old.local_date,
             mood_score: body.mood_score,
-            emotions: body.emotions,
+            emotions_text: body.emotions_text,
+            // Preserve the existing classifier output until the worker
+            // re-runs and the server refetch lands. Stats and
+            // SummaryDetail then update on the next ["summaries","stats"]
+            // tick.
+            classified_emotions: old.input?.classified_emotions ?? [],
             notes: body.notes,
             created_at: old.input?.created_at ?? new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -97,7 +102,7 @@ export function useUpdateDailyInput(localDate: string) {
       qc.setQueryData<DailyInputResponse>(dailyInputKey(localDate), (old) => {
         if (!old) return old;
         const isEmpty =
-          body.mood_score === null && body.emotions.length === 0 && body.notes === "";
+          body.mood_score === null && body.emotions_text === "" && body.notes === "";
         if (isEmpty) return { ...old, input: null };
         const baseId =
           (old.input?.id as string | undefined) ?? `temp-${old.local_date}`;
@@ -107,7 +112,8 @@ export function useUpdateDailyInput(localDate: string) {
             id: baseId,
             local_date: old.local_date,
             mood_score: body.mood_score,
-            emotions: body.emotions,
+            emotions_text: body.emotions_text,
+            classified_emotions: old.input?.classified_emotions ?? [],
             notes: body.notes,
             created_at: old.input?.created_at ?? new Date().toISOString(),
             updated_at: new Date().toISOString(),

@@ -3,8 +3,15 @@
 @tailwind utilities;
 
 @layer base {
-  /* Light — paper / cream. Warm, never #FFF. */
-  :root {
+  /* Token system: HSL triplets (no hsl() wrapper) so we can compose alpha at
+     consumption sites. The bare :root and .dark blocks below define the
+     default "paper" palette. Alternate palettes override via [data-palette]
+     and .dark[data-palette] selectors further down. */
+
+  /* ---------- PAPER (default) — warm cream + ink violet ---------- */
+
+  :root,
+  :root[data-palette="paper"] {
     --background: 39 38% 96%;
     --foreground: 30 12% 14%;
     --muted: 36 22% 92%;
@@ -27,22 +34,15 @@
     --success: 152 50% 38%;
     --warning: 36 84% 44%;
 
-    --radius: 0.75rem;
-    --radius-sm: 0.375rem;
-    --radius-md: 0.5rem;
-    --radius-lg: 0.75rem;
-    --radius-xl: 1rem;
-    --radius-2xl: 1.5rem;
+    /* iOS PWA chrome — palette-aware via JS but defaulted here for SSR/no-JS. */
+    --theme-color: 245 239 226;
 
     /* Real drop shadows — paper has weight. Tinted with foreground hue. */
-    --shadow-xs: 0 1px 2px hsl(30 12% 14% / 0.04);
-    --shadow-sm: 0 2px 4px -1px hsl(30 12% 14% / 0.06), 0 1px 2px hsl(30 12% 14% / 0.04);
-    --shadow-md: 0 8px 16px -6px hsl(30 12% 14% / 0.10), 0 2px 4px hsl(30 12% 14% / 0.06);
-    --shadow-lg: 0 20px 40px -12px hsl(30 12% 14% / 0.15);
+    --shadow-tint: 30 12% 14%;
   }
 
-  /* Dark — warm near-black, ember undertone. NOT cool blue-slate. */
-  .dark {
+  .dark,
+  .dark[data-palette="paper"] {
     --background: 30 8% 6%;
     --foreground: 36 12% 92%;
     --muted: 30 6% 11%;
@@ -65,12 +65,251 @@
     --success: 152 55% 56%;
     --warning: 36 84% 62%;
 
-    /* Inset top-edge highlight + low ambient — sells elevation on OLED
-       without a visible drop that would disappear against dark page. */
-    --shadow-xs: 0 1px 0 hsl(36 12% 92% / 0.03) inset, 0 1px 1px hsl(0 0% 0% / 0.3);
-    --shadow-sm: 0 1px 0 hsl(36 12% 92% / 0.04) inset, 0 1px 2px hsl(0 0% 0% / 0.4);
-    --shadow-md: 0 1px 0 hsl(36 12% 92% / 0.05) inset, 0 8px 24px -8px hsl(0 0% 0% / 0.6);
-    --shadow-lg: 0 1px 0 hsl(36 12% 92% / 0.06) inset, 0 20px 50px -12px hsl(0 0% 0% / 0.75);
+    --theme-color: 16 14 11;
+    --shadow-tint: 36 12% 92%;
+  }
+
+  /* ---------- EMBER — peach cream + burnt orange + deep teal ---------- */
+
+  :root[data-palette="ember"] {
+    --background: 24 44% 95%;
+    --foreground: 22 18% 13%;
+    --muted: 24 26% 90%;
+    --muted-foreground: 22 10% 40%;
+    --border: 24 22% 82%;
+    --input: 24 26% 88%;
+    --ring: 22 78% 50%;
+    --primary: 22 80% 44%;
+    --primary-foreground: 24 50% 97%;
+    --secondary: 24 28% 87%;
+    --secondary-foreground: 22 18% 13%;
+    --accent: 190 60% 36%;
+    --accent-foreground: 24 50% 97%;
+    --destructive: 0 65% 48%;
+    --destructive-foreground: 24 50% 97%;
+    --card: 24 50% 97%;
+    --card-foreground: 22 18% 13%;
+    --popover: 24 50% 97%;
+    --popover-foreground: 22 18% 13%;
+    --success: 152 50% 38%;
+    --warning: 36 84% 44%;
+    --theme-color: 248 241 237;
+    --shadow-tint: 22 18% 13%;
+  }
+
+  .dark[data-palette="ember"] {
+    --background: 22 14% 7%;
+    --foreground: 24 14% 92%;
+    --muted: 22 10% 12%;
+    --muted-foreground: 24 10% 60%;
+    --border: 22 8% 18%;
+    --input: 22 8% 15%;
+    --ring: 22 90% 64%;
+    --primary: 22 90% 62%;
+    --primary-foreground: 22 14% 7%;
+    --secondary: 22 8% 14%;
+    --secondary-foreground: 24 14% 92%;
+    --accent: 190 70% 60%;
+    --accent-foreground: 22 14% 7%;
+    --destructive: 0 70% 60%;
+    --destructive-foreground: 24 14% 92%;
+    --card: 22 12% 10%;
+    --card-foreground: 24 14% 92%;
+    --popover: 22 12% 10%;
+    --popover-foreground: 24 14% 92%;
+    --success: 152 55% 56%;
+    --warning: 36 84% 62%;
+    --theme-color: 20 17 15;
+    --shadow-tint: 24 14% 92%;
+  }
+
+  /* ---------- FOREST — sage cream + deep moss + rust accent ---------- */
+
+  :root[data-palette="forest"] {
+    --background: 80 24% 94%;
+    --foreground: 90 14% 12%;
+    --muted: 84 18% 89%;
+    --muted-foreground: 90 8% 38%;
+    --border: 84 14% 80%;
+    --input: 84 18% 88%;
+    --ring: 152 55% 36%;
+    --primary: 152 55% 30%;
+    --primary-foreground: 80 30% 97%;
+    --secondary: 84 20% 86%;
+    --secondary-foreground: 90 14% 12%;
+    --accent: 352 60% 46%;
+    --accent-foreground: 80 30% 97%;
+    --destructive: 0 65% 46%;
+    --destructive-foreground: 80 30% 97%;
+    --card: 80 32% 97%;
+    --card-foreground: 90 14% 12%;
+    --popover: 80 32% 97%;
+    --popover-foreground: 90 14% 12%;
+    --success: 152 55% 32%;
+    --warning: 36 80% 40%;
+    --theme-color: 235 240 222;
+    --shadow-tint: 90 14% 12%;
+  }
+
+  .dark[data-palette="forest"] {
+    --background: 90 12% 6%;
+    --foreground: 80 14% 92%;
+    --muted: 90 8% 11%;
+    --muted-foreground: 80 8% 60%;
+    --border: 90 6% 17%;
+    --input: 90 6% 14%;
+    --ring: 152 60% 64%;
+    --primary: 152 60% 58%;
+    --primary-foreground: 90 14% 6%;
+    --secondary: 90 6% 13%;
+    --secondary-foreground: 80 14% 92%;
+    --accent: 352 70% 64%;
+    --accent-foreground: 90 14% 6%;
+    --destructive: 0 70% 60%;
+    --destructive-foreground: 80 14% 92%;
+    --card: 90 10% 9%;
+    --card-foreground: 80 14% 92%;
+    --popover: 90 10% 9%;
+    --popover-foreground: 80 14% 92%;
+    --success: 152 60% 56%;
+    --warning: 36 80% 60%;
+    --theme-color: 14 16 12;
+    --shadow-tint: 80 14% 92%;
+  }
+
+  /* ---------- OCEAN — pale sea + deep teal + warm coral accent ---------- */
+
+  :root[data-palette="ocean"] {
+    --background: 200 38% 95%;
+    --foreground: 215 22% 14%;
+    --muted: 200 26% 90%;
+    --muted-foreground: 215 12% 40%;
+    --border: 200 22% 82%;
+    --input: 200 26% 88%;
+    --ring: 195 70% 38%;
+    --primary: 195 75% 32%;
+    --primary-foreground: 200 38% 98%;
+    --secondary: 200 28% 86%;
+    --secondary-foreground: 215 22% 14%;
+    --accent: 42 90% 46%;
+    --accent-foreground: 215 22% 10%;
+    --destructive: 0 65% 48%;
+    --destructive-foreground: 200 38% 98%;
+    --card: 200 44% 97%;
+    --card-foreground: 215 22% 14%;
+    --popover: 200 44% 97%;
+    --popover-foreground: 215 22% 14%;
+    --success: 162 55% 36%;
+    --warning: 36 84% 44%;
+    --theme-color: 224 236 240;
+    --shadow-tint: 215 22% 14%;
+  }
+
+  .dark[data-palette="ocean"] {
+    --background: 215 25% 7%;
+    --foreground: 200 18% 92%;
+    --muted: 215 18% 12%;
+    --muted-foreground: 200 12% 62%;
+    --border: 215 14% 18%;
+    --input: 215 14% 15%;
+    --ring: 195 80% 64%;
+    --primary: 195 80% 60%;
+    --primary-foreground: 215 25% 7%;
+    --secondary: 215 14% 14%;
+    --secondary-foreground: 200 18% 92%;
+    --accent: 42 95% 60%;
+    --accent-foreground: 215 25% 7%;
+    --destructive: 0 70% 60%;
+    --destructive-foreground: 200 18% 92%;
+    --card: 215 22% 10%;
+    --card-foreground: 200 18% 92%;
+    --popover: 215 22% 10%;
+    --popover-foreground: 200 18% 92%;
+    --success: 162 60% 56%;
+    --warning: 36 84% 62%;
+    --theme-color: 13 18 24;
+    --shadow-tint: 200 18% 92%;
+  }
+
+  /* ---------- SLATE — cool modern, for users who want a utility look ---------- */
+
+  :root[data-palette="slate"] {
+    --background: 220 16% 96%;
+    --foreground: 222 30% 12%;
+    --muted: 220 14% 91%;
+    --muted-foreground: 222 12% 42%;
+    --border: 220 14% 84%;
+    --input: 220 14% 89%;
+    --ring: 252 70% 56%;
+    --primary: 252 70% 50%;
+    --primary-foreground: 220 24% 98%;
+    --secondary: 220 14% 88%;
+    --secondary-foreground: 222 30% 12%;
+    --accent: 330 72% 52%;
+    --accent-foreground: 220 24% 98%;
+    --destructive: 0 65% 48%;
+    --destructive-foreground: 220 24% 98%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 30% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 30% 12%;
+    --success: 152 50% 38%;
+    --warning: 36 84% 44%;
+    --theme-color: 240 242 246;
+    --shadow-tint: 222 30% 12%;
+  }
+
+  .dark[data-palette="slate"] {
+    --background: 222 18% 7%;
+    --foreground: 220 14% 92%;
+    --muted: 222 12% 13%;
+    --muted-foreground: 220 10% 62%;
+    --border: 222 10% 18%;
+    --input: 222 10% 15%;
+    --ring: 252 90% 72%;
+    --primary: 252 88% 72%;
+    --primary-foreground: 222 18% 7%;
+    --secondary: 222 10% 14%;
+    --secondary-foreground: 220 14% 92%;
+    --accent: 330 80% 66%;
+    --accent-foreground: 222 18% 7%;
+    --destructive: 0 70% 60%;
+    --destructive-foreground: 220 14% 92%;
+    --card: 222 14% 10%;
+    --card-foreground: 220 14% 92%;
+    --popover: 222 14% 10%;
+    --popover-foreground: 220 14% 92%;
+    --success: 152 55% 56%;
+    --warning: 36 84% 62%;
+    --theme-color: 14 16 21;
+    --shadow-tint: 220 14% 92%;
+  }
+
+  /* ---------- Shared (palette-independent) ---------- */
+
+  :root {
+    --radius: 0.75rem;
+    --radius-sm: 0.375rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+    --radius-2xl: 1.5rem;
+  }
+
+  /* Shadows derive their tint from each palette's --shadow-tint, so a single
+     declaration covers every palette. Light = real drop shadow; dark = inset
+     top-edge highlight + low ambient (sells elevation on OLED). */
+  :root {
+    --shadow-xs: 0 1px 2px hsl(var(--shadow-tint) / 0.04);
+    --shadow-sm: 0 2px 4px -1px hsl(var(--shadow-tint) / 0.06), 0 1px 2px hsl(var(--shadow-tint) / 0.04);
+    --shadow-md: 0 8px 16px -6px hsl(var(--shadow-tint) / 0.10), 0 2px 4px hsl(var(--shadow-tint) / 0.06);
+    --shadow-lg: 0 20px 40px -12px hsl(var(--shadow-tint) / 0.15);
+  }
+  .dark {
+    --shadow-xs: 0 1px 0 hsl(var(--shadow-tint) / 0.03) inset, 0 1px 1px hsl(0 0% 0% / 0.3);
+    --shadow-sm: 0 1px 0 hsl(var(--shadow-tint) / 0.04) inset, 0 1px 2px hsl(0 0% 0% / 0.4);
+    --shadow-md: 0 1px 0 hsl(var(--shadow-tint) / 0.05) inset, 0 8px 24px -8px hsl(0 0% 0% / 0.6);
+    --shadow-lg: 0 1px 0 hsl(var(--shadow-tint) / 0.06) inset, 0 20px 50px -12px hsl(0 0% 0% / 0.75);
   }
 
   html,

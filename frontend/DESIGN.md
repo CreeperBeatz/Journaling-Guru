@@ -19,7 +19,9 @@ Cool primary (ink-violet) against warm neutrals (paper) is the central tension: 
 
 ## Tokens
 
-All HSL triplets. Defined in `frontend/src/styles/index.css` as `:root` (light) + `.dark`.
+All HSL triplets. Defined in `frontend/src/styles/index.css`. Each palette declares both modes via `:root[data-palette="<name>"]` (light) and `.dark[data-palette="<name>"]` (dark). The unqualified `:root` and `.dark` blocks are aliased to **paper** so the default palette works without the attribute being set.
+
+Shadows derive their tint from a per-palette `--shadow-tint` var, so a single shadow declaration covers every palette.
 
 ### Light — paper / cream
 
@@ -68,6 +70,26 @@ Hue 30° (warm) for neutrals — *not* the previous 240° cool slate. Foreground
 | `--popover` | `30 7% 9%` | |
 | `--success` | `152 55% 56%` | |
 | `--warning` | `36 84% 62%` | |
+
+### Palettes
+
+The user picks a palette in **Settings → General → Appearance**. Selection is persisted to `localStorage["journai.palette"]` and applied to `<html data-palette="...">` by an anti-flash script in `index.html` *before* React hydrates, so first paint matches.
+
+Both halves — light/dark mode and palette — live on `<html>`: `class="dark"` (driven by next-themes) crosses with `data-palette="..."` (driven by `usePalette()` in `src/lib/palette.ts`). Every palette ships both halves.
+
+| Palette | Page | Ink (primary) | Accent | Feel |
+|---|---|---|---|---|
+| **paper** *(default)* | warm cream `39 38% 96%` | ink-violet `252 70% 50%` | terracotta `18 70% 52%` | canonical journal — paper under lamplight |
+| **ember** | peach cream `24 44% 95%` | burnt orange `22 80% 44%` | deep teal `190 60% 36%` | embers in candlelight — fired earth, warm hearth |
+| **forest** | sage cream `80 24% 94%` | deep moss `152 55% 30%` | cranberry `352 60% 46%` | leather notebook in a study |
+| **ocean** | sea-foam `200 38% 95%` | deep teal `195 75% 32%` | sun gold `42 90% 46%` | calm, breezy |
+| **slate** | cool gray `220 16% 96%` | ink-violet `252 70% 50%` | magenta `330 72% 52%` | modern, saturated — the "anti-paper" option |
+
+Accents are deliberately spread around the wheel (18° / 190° / 352° / 42° / 330°) so palettes read as visibly distinct identities even on small accented elements (question heading bars, link underlines, the `text-accent` mood label). Ember is the only palette where the *primary* itself is a warm orange (22°) — every other palette uses a cool/neutral primary against a warm accent.
+
+**Primary vs accent in components.** Use `--primary` for the dominant interactive ink — buttons, slider Range/Thumb, focus ring. Use `--accent` for sparing flourishes (margin-pen left bars, link underlines, today-pill). Don't lean on accent for large filled surfaces; it's the spice, not the dish.
+
+Each palette also defines `--theme-color` (an `R G B` triplet) which `syncThemeColorMeta()` reads and writes into the single `<meta name="theme-color">` on every palette/mode change. Old dual `media`-keyed metas were replaced because we need the chrome to follow the *user-selected* palette, not the OS preference alone.
 
 ### Radius
 
@@ -172,8 +194,8 @@ Every variant goes through `useReducedMotion()` from `motion/react`. Falls back 
 ## Anti-patterns
 
 Don't:
-- Use blue-slate dark (240° hue) — JournAI's dark is warm 30°.
-- Use cool gray light (gray-100) — light is warm cream 39° at lower lightness than `#FFF`.
+- Hardcode any color value in components — all colors flow through CSS vars (`bg-background`, `text-foreground`, `border-border`, etc.) so palette switches stay coherent. The only colors in JS are the palette-picker swatches in `src/lib/palette.ts`.
+- Add another palette without a clear identity. Each existing palette has a distinct *page hue* (warm cream / peach cream / sage / sea-foam / cool gray) plus a deliberate ink/accent pairing — don't ship a near-duplicate.
 - Animate via `style={{ background: ... }}` through motion — always go through CSS vars so theme-swap remains instant.
 - Re-render the shell on theme toggle — colocate `useTheme()` into the toggle, not the shell.
 - Add inline status text on save (`"Saving…"/"Saved"/"Unsaved"`) — cache update is the feedback; reserve the textual indicator for the >300ms slow-network path.

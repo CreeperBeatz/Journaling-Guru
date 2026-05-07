@@ -16,20 +16,28 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/timezone"
 )
 
+// EmotionClassifyScheduler is the queue interface the handler uses to
+// arm the async Plutchik classifier on every save. Implemented by
+// *store.EmotionClassifyJobStore. Wrapped behind an interface so the
+// handler tests can pass a fake.
+type EmotionClassifyScheduler interface {
+	Schedule(ctx context.Context, userID string, localDate time.Time, fireAt time.Time) (bool, error)
+}
+
 // DailyInputHandler hosts /api/daily/inputs/*. The check-in surface for
 // mood, emotions, and notes — paralleling the journal_entries handlers
 // but per-day instead of per-question.
 type DailyInputHandler struct {
-	Inputs    *store.DailyInputStore
-	Users     *store.UserStore
-	Logger    *slog.Logger
-	Scheduler SummaryScheduler // shares the interface with EntryHandler — same lazy-seed contract
+	Inputs      *store.DailyInputStore
+	Users       *store.UserStore
+	Logger      *slog.Logger
+	Scheduler   SummaryScheduler         // shares the interface with EntryHandler — same lazy-seed contract
+	EmotionJobs EmotionClassifyScheduler // armed on every save with non-empty emotions_text
 }
 
 const (
-	maxNotesLen     = 4_000
-	maxEmotionsList = 8
-	maxEmotionLen   = 32
+	maxNotesLen         = 4_000
+	maxEmotionsTextLen  = 1_000
 )
 
 // resolveDate is the same convention used by EntryHandler: empty/"today"
@@ -83,14 +91,14 @@ func (h *DailyInputHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 type upsertDailyInputRequest struct {
-	MoodScore *int     `json:"mood_score"`
-	Emotions  []string `json:"emotions"`
-	Notes     string   `json:"notes"`
+	MoodScore    *int   `json:"mood_score"`
+	EmotionsText string `json:"emotions_text"`
+	Notes        string `json:"notes"`
 }
 
 // Upsert handles PUT /api/daily/inputs — write today's check-in.
-// Empty (mood=null, emotions=[], notes="") deletes the row, matching
-// the journal_entries empty-deletes convention.
+// Empty (mood=null, emotions_text="", notes="") deletes the row,
+// matching the journal_entries empty-deletes convention.
 func (h *DailyInputHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 	sess := middleware.SessionFromCtx(r.Context())
 	if sess == nil {
@@ -144,7 +152,7 @@ func (h *DailyInputHandler) write(
 ) {
 	row, mutated, err := h.Inputs.Upsert(
 		ctx, userID, localDate,
-		req.MoodScore, req.Emotions, req.Notes,
+		req.MoodScore, req.EmotionsText, req.Notes,
 	)
 	if err != nil {
 		h.Logger.Error("upsert daily input", "err", err, "user_id", userID)
@@ -157,6 +165,22 @@ func (h *DailyInputHandler) write(
 	if lazySeed && row != nil && h.Scheduler != nil {
 		if err := h.Scheduler.LazySeed(ctx, userID, time.Now()); err != nil {
 			h.Logger.Warn("lazy seed (daily input)", "err", err, "user_id", userID)
+		}
+	}
+	// Arm the Plutchik classifier whenever emotions_text has content.
+	// When the user clears the text, write an empty classified_emotions
+	// synchronously so SummaryDetail/EmotionBars stop showing stale
+	// pills before the worker would have run. (Skipping this would let
+	// the previous classification linger forever for that day.)
+	if h.EmotionJobs != nil {
+		if row != nil && strings.TrimSpace(row.EmotionsText) != "" {
+			if _, err := h.EmotionJobs.Schedule(ctx, userID, localDate, time.Now()); err != nil {
+				h.Logger.Warn("schedule emotion classify", "err", err, "user_id", userID)
+			}
+		} else {
+			if err := h.Inputs.WriteClassifiedEmotions(ctx, userID, localDate, nil); err != nil {
+				h.Logger.Warn("clear classified_emotions", "err", err, "user_id", userID)
+			}
 		}
 	}
 	if row == nil {
@@ -179,13 +203,8 @@ func decodeUpsert(r *http.Request) (*upsertDailyInputRequest, error) {
 			return nil, errors.New("mood_score must be 1-10")
 		}
 	}
-	if len(req.Emotions) > maxEmotionsList {
-		return nil, errors.New("too many emotions")
-	}
-	for _, e := range req.Emotions {
-		if len(e) > maxEmotionLen {
-			return nil, errors.New("emotion too long")
-		}
+	if len(req.EmotionsText) > maxEmotionsTextLen {
+		return nil, errors.New("emotions text too long")
 	}
 	if len(req.Notes) > maxNotesLen {
 		return nil, errors.New("notes too long")

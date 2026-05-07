@@ -200,6 +200,30 @@ func (s *SummaryJobStore) ResetForRegeneration(
 	return true, nil
 }
 
+// LatestForPeriod returns the summary_jobs row for (user, period_type,
+// period_start), or ErrSummaryJobNotFound when nothing has ever been
+// scheduled. The FE polls this on SummaryDetail to render the
+// regenerating-now banner and confirm the worker actually picks the
+// job up — without it, a 202 from /regenerate is silent.
+//
+// At most one row ever exists per period thanks to the UNIQUE
+// (user_id, period_type, period_start) constraint.
+func (s *SummaryJobStore) LatestForPeriod(
+	ctx context.Context,
+	userID, periodType string,
+	periodStart time.Time,
+) (*domain.SummaryJob, error) {
+	const q = `SELECT ` + summaryJobColumns + `
+	             FROM summary_jobs
+	            WHERE user_id = $1 AND period_type = $2 AND period_start = $3`
+	row := s.DB.QueryRow(ctx, q, userID, periodType, periodStart)
+	out, err := scanSummaryJob(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrSummaryJobNotFound
+	}
+	return out, err
+}
+
 // LastEntryDate returns the most recent local_date the user has any
 // journal entry for, or zero time if they've never written. The
 // dormancy guard uses this to decide whether to auto-arm the next

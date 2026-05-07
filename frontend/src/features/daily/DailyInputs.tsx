@@ -10,45 +10,12 @@ import { cn } from "@/lib/utils";
 
 import type { DailyInput } from "./api";
 
-// Curated palette of common emotions. Tap to toggle. Custom tags are
-// stored alongside (lowercase, deduped, trimmed). Update this list freely
-// — it's purely frontend; the backend stores whatever string the API
-// gets after normalization.
-const EMOTION_SUGGESTIONS = [
-  "happy",
-  "grateful",
-  "calm",
-  "content",
-  "excited",
-  "proud",
-  "hopeful",
-  "loved",
-  "energized",
-  "focused",
-  "curious",
-  "surprised",
-  "contemplative",
-  "tired",
-  "busy",
-  "anxious",
-  "stressed",
-  "frustrated",
-  "sad",
-  "lonely",
-  "overwhelmed",
-  "angry",
-  "restless",
-  "disappointed",
-] as const;
-
-const MAX_EMOTIONS = 8;
-
 interface Props {
   // Existing data, or null when nothing has been logged yet.
   input: DailyInput | null;
-  // Save callback — `null` mood means "unset", empty arrays / strings
-  // are valid. The hook layer turns "everything empty" into a delete.
-  onSave: (body: { mood_score: number | null; emotions: string[]; notes: string }) => void;
+  // Save callback — `null` mood means "unset", empty strings are valid.
+  // The hook layer turns "everything empty" into a delete.
+  onSave: (body: { mood_score: number | null; emotions_text: string; notes: string }) => void;
   // Whether a save is currently in flight. Used for the spinner.
   isSaving: boolean;
   // Optional title override; defaults to "Today's check-in".
@@ -59,11 +26,11 @@ export function DailyInputs({ input, onSave, isSaving, title }: Props) {
   // Mood: -1 means "no value" since Radix Slider can't show null. We
   // map between (slider value, internal nullable state) at the edges.
   const [mood, setMood] = useState<number | null>(input?.mood_score ?? null);
-  const [emotions, setEmotions] = useState<string[]>(input?.emotions ?? []);
+  const [emotionsText, setEmotionsText] = useState<string>(input?.emotions_text ?? "");
   const [notes, setNotes] = useState<string>(input?.notes ?? "");
   const [serverSnap, setServerSnap] = useState({
     mood: input?.mood_score ?? null,
-    emotions: input?.emotions ?? [],
+    emotionsText: input?.emotions_text ?? "",
     notes: input?.notes ?? "",
   });
   const showSpinner = useDebouncedFlag(isSaving, 300);
@@ -72,50 +39,30 @@ export function DailyInputs({ input, onSave, isSaving, title }: Props) {
   // but only when the user hasn't started editing — drafts win.
   useEffect(() => {
     const serverMood = input?.mood_score ?? null;
-    const serverEmotions = input?.emotions ?? [];
+    const serverEmotionsText = input?.emotions_text ?? "";
     const serverNotes = input?.notes ?? "";
     const stillPristine =
       eq(mood, serverSnap.mood) &&
-      sameSet(emotions, serverSnap.emotions) &&
+      emotionsText === serverSnap.emotionsText &&
       notes === serverSnap.notes;
     if (stillPristine) {
       setMood(serverMood);
-      setEmotions(serverEmotions);
+      setEmotionsText(serverEmotionsText);
       setNotes(serverNotes);
     }
-    setServerSnap({ mood: serverMood, emotions: serverEmotions, notes: serverNotes });
+    setServerSnap({ mood: serverMood, emotionsText: serverEmotionsText, notes: serverNotes });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input?.id, input?.updated_at]);
 
   const dirty =
     !eq(mood, serverSnap.mood) ||
-    !sameSet(emotions, serverSnap.emotions) ||
+    emotionsText !== serverSnap.emotionsText ||
     notes !== serverSnap.notes;
 
   const flush = () => {
     if (!dirty) return;
-    onSave({ mood_score: mood, emotions, notes });
+    onSave({ mood_score: mood, emotions_text: emotionsText, notes });
   };
-
-  const toggleEmotion = (e: string) => {
-    const norm = e.trim().toLowerCase();
-    if (!norm) return;
-    setEmotions((prev) => {
-      if (prev.includes(norm)) return prev.filter((x) => x !== norm);
-      if (prev.length >= MAX_EMOTIONS) return prev;
-      return [...prev, norm];
-    });
-  };
-
-  // Save emotions toggles immediately — they're a single-click action,
-  // a blur-to-save delay would feel laggy. Mood + notes save on blur.
-  useEffect(() => {
-    if (sameSet(emotions, serverSnap.emotions)) return;
-    onSave({ mood_score: mood, emotions, notes });
-    // We intentionally exclude mood/notes — toggling an emotion shouldn't
-    // also commit a half-typed note.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [emotions]);
 
   return (
     <Card>
@@ -136,9 +83,10 @@ export function DailyInputs({ input, onSave, isSaving, title }: Props) {
           onChange={setMood}
           onCommit={flush}
         />
-        <EmotionInput
-          selected={emotions}
-          onToggle={toggleEmotion}
+        <EmotionsInput
+          value={emotionsText}
+          onChange={setEmotionsText}
+          onCommit={flush}
         />
         <NotesInput
           value={notes}
@@ -245,100 +193,39 @@ function MoodInput({
 
 // ---------------- Emotions ----------------
 
-function EmotionInput({
-  selected,
-  onToggle,
+const EMOTIONS_TEXT_MAX = 1000;
+
+// Free-text emotions. The server fires an async River job that
+// classifies this into Plutchik's wheel (base + subtype); the
+// classified emotions only appear in summaries — never echoed back
+// here. Save-on-blur, same as Notes.
+function EmotionsInput({
+  value,
+  onChange,
+  onCommit,
 }: {
-  selected: string[];
-  onToggle: (e: string) => void;
+  value: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
 }) {
-  const [draft, setDraft] = useState("");
-  const customEmotions = selected.filter(
-    (s) => !EMOTION_SUGGESTIONS.includes(s as (typeof EMOTION_SUGGESTIONS)[number]),
-  );
-
-  const submit = () => {
-    const norm = draft.trim().toLowerCase();
-    if (!norm) return;
-    if (norm.length > 32) return;
-    onToggle(norm);
-    setDraft("");
-  };
-
   return (
     <section className="space-y-2">
-      <div className="flex items-baseline justify-between gap-3">
-        <label className="text-xs uppercase tracking-wider text-muted-foreground">
-          Emotions felt
-        </label>
-        <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-          {selected.length} / {MAX_EMOTIONS}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {EMOTION_SUGGESTIONS.map((e) => {
-          const on = selected.includes(e);
-          return (
-            <button
-              key={e}
-              type="button"
-              onClick={() => onToggle(e)}
-              className={cn(
-                "rounded-full border px-2.5 py-1 text-xs capitalize transition-colors",
-                on
-                  ? "border-accent bg-accent/15 text-foreground"
-                  : "border-border bg-card text-muted-foreground hover:border-accent/40 hover:text-foreground",
-              )}
-              aria-pressed={on}
-            >
-              {e}
-            </button>
-          );
-        })}
-        {customEmotions.map((e) => (
-          <button
-            key={e}
-            type="button"
-            onClick={() => onToggle(e)}
-            className="group flex items-center gap-1 rounded-full border border-accent bg-accent/15 px-2.5 py-1 text-xs capitalize"
-            aria-label={`Remove ${e}`}
-          >
-            {e}
-            <X className="h-3 w-3 opacity-60 transition-opacity group-hover:opacity-100" />
-          </button>
-        ))}
-      </div>
-      <div className="flex items-center gap-2 pt-1">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          placeholder="Custom emotion…"
-          maxLength={32}
-          className={cn(
-            "h-8 flex-1 rounded-md border border-border bg-transparent px-2 text-sm",
-            "placeholder:text-muted-foreground",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          )}
-        />
-        <button
-          type="button"
-          onClick={submit}
-          disabled={!draft.trim() || selected.length >= MAX_EMOTIONS}
-          className={cn(
-            "h-8 rounded-md border border-border bg-transparent px-3 text-xs transition-colors",
-            "hover:bg-secondary",
-            "disabled:opacity-40 disabled:hover:bg-transparent",
-          )}
-        >
-          Add
-        </button>
-      </div>
+      <label className="text-xs uppercase tracking-wider text-muted-foreground">
+        Emotions felt
+      </label>
+      <Textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={onCommit}
+        rows={3}
+        maxLength={EMOTIONS_TEXT_MAX}
+        placeholder="Anxious before the meeting, then relieved when it went well…"
+        className={cn(
+          "border-transparent bg-transparent px-0 leading-prose text-body",
+          "focus-visible:ring-0 focus-visible:ring-offset-0",
+          "focus-visible:border-b-border focus-visible:border-b rounded-none",
+        )}
+      />
     </section>
   );
 }
@@ -380,11 +267,4 @@ function NotesInput({
 
 function eq(a: number | null, b: number | null) {
   return a === b;
-}
-
-function sameSet(a: string[], b: string[]) {
-  if (a.length !== b.length) return false;
-  const setB = new Set(b);
-  for (const x of a) if (!setB.has(x)) return false;
-  return true;
 }

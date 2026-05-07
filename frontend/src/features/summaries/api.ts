@@ -67,3 +67,36 @@ export function getStats(days?: number): Promise<StatsResponse> {
   const qs = days ? `?days=${days}` : "";
   return api(`/api/summaries/stats${qs}`);
 }
+
+// Mirrors the lifecycle vocabulary in 0004_summaries.sql. `pending` = queued,
+// `claimed` = dispatcher handed it to River, `completed`/`skipped` = done,
+// `failed` = River exhausted retries.
+export type SummaryJobStatus =
+  | "pending"
+  | "claimed"
+  | "completed"
+  | "skipped"
+  | "failed";
+
+export interface SummaryJob {
+  id: string;
+  period_type: PeriodType;
+  period_start: string;
+  fire_at: string;
+  fired_at?: string;
+  status: SummaryJobStatus;
+  attempts: number;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// 404 when no job has ever existed for this period — caller treats that as
+// "no in-flight regen". Resolved into `null` by the hook layer.
+export function getSummaryJobStatus(
+  period_type: PeriodType,
+  period_start: string,
+): Promise<SummaryJob> {
+  const qs = new URLSearchParams({ period_type, period_start });
+  return api(`/api/summaries/jobs/status?${qs.toString()}`);
+}

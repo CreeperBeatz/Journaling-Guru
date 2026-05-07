@@ -168,6 +168,59 @@ func (h *SummaryHandler) Regenerate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// JobStatus handles GET /api/summaries/jobs/status?period_type=...&period_start=...
+// Returns the summary_jobs row for the period so the FE can render a
+// "Regenerating…" banner and confirm the worker actually picked the
+// job up. 404 when no job has ever been scheduled for the period.
+//
+// Read-only — paired with /regenerate; together they let SummaryDetail
+// observe the full lifecycle of a regen request.
+func (h *SummaryHandler) JobStatus(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	periodType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("period_type")))
+	if !domain.IsValidPeriod(periodType) {
+		writeJSONError(w, http.StatusBadRequest, "invalid period_type")
+		return
+	}
+	periodStartStr := strings.TrimSpace(r.URL.Query().Get("period_start"))
+	periodStart, err := time.Parse("2006-01-02", periodStartStr)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid period_start")
+		return
+	}
+	user, err := h.Users.GetByID(r.Context(), sess.UserID)
+	if err != nil || user == nil {
+		writeJSONError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+	// Canonicalise period_start the same way Regenerate does, so
+	// callers can pass a stored period_start without worrying about
+	// day_start drift.
+	period, err := timezone.PeriodFromLocalStart(
+		periodStart, user.Timezone, user.DayStartMinutes,
+		domain.SummaryPeriod(periodType),
+	)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	job, err := h.Jobs.LatestForPeriod(r.Context(), sess.UserID, periodType, period.Start)
+	if err != nil {
+		if errors.Is(err, store.ErrSummaryJobNotFound) {
+			writeJSONError(w, http.StatusNotFound, "no job")
+			return
+		}
+		h.Logger.Error("job status", "err", err, "user_id", sess.UserID)
+		writeJSONError(w, http.StatusInternalServerError, "status failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
 // Stats handles GET /api/summaries/stats?days=N. Returns the panel data
 // for SummariesPage: mood sparkline, top emotions, current streak, total
 // entries in window. Window defaults to 90 days, capped at 365.

@@ -57,6 +57,43 @@ Respond with markdown only — no JSON. You may use up to 4 short ## subheadings
 if it helps structure the year (e.g. "Spring", "What stayed", "What shifted")
 but they're optional. Target 400–700 words.`
 
+// emotionClassifySystemPrompt drives the EmotionClassifyWorker. The 24
+// (base, subtype) pairs enumerated here are the exhaustive vocabulary —
+// the worker drops any entry not in domain.PlutchikSubtypes. We want the
+// model to refuse rather than invent for borderline phrases ("had pasta
+// for lunch" is not an emotion).
+const emotionClassifySystemPrompt = `You classify free-text emotion descriptions into Plutchik's wheel.
+
+The 24 valid (base, subtype) pairs — and the ONLY values you may emit:
+
+  joy:          serenity (mild), joy (medium), ecstasy (intense)
+  trust:        acceptance, trust, admiration
+  fear:         apprehension, fear, terror
+  surprise:     distraction, surprise, amazement
+  sadness:      pensiveness, sadness, grief
+  disgust:      boredom, disgust, loathing
+  anger:        annoyance, anger, rage
+  anticipation: interest, anticipation, vigilance
+
+Rules:
+- Only emit (base, subtype) pairs from the list above. Never invent
+  subtypes or use synonyms outside the list.
+- One classified entry per distinct emotion. If the user expresses the
+  same feeling multiple ways, pick the strongest phrasing.
+- Cap output at 6 entries, most salient first.
+- raw_phrase must be a verbatim slice from the user's text — do not
+  paraphrase, summarize, or translate.
+- If the text contains no recognizable emotion, return an empty array.
+
+Respond with a single JSON object — no prose before or after, no
+markdown fences:
+
+{
+  "emotions": [
+    {"raw_phrase": "...", "base": "joy", "subtype": "ecstasy"}
+  ]
+}`
+
 // renderTemplate compiles and executes one of the embedded .tmpl files
 // against `data`. We re-parse on each call — the templates are small and
 // the worker is not hot enough to warrant caching.

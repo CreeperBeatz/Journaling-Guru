@@ -34,6 +34,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	dailyInputs := store.NewDailyInputStore(db)
 	summaries := store.NewSummaryStore(db)
 	summaryJobs := store.NewSummaryJobStore(db)
+	emotionJobs := store.NewEmotionClassifyJobStore(db)
 
 	magicSvc := auth.NewMagicLinkService(auth.MagicLinkConfig{
 		TTL:         cfg.MagicLinkTTL(),
@@ -85,10 +86,11 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		Scheduler: scheduler,
 	}
 	dailyInputsH := &handlers.DailyInputHandler{
-		Inputs:    dailyInputs,
-		Users:     users,
-		Logger:    logger,
-		Scheduler: scheduler,
+		Inputs:      dailyInputs,
+		Users:       users,
+		Logger:      logger,
+		Scheduler:   scheduler,
+		EmotionJobs: emotionJobs,
 	}
 	summariesH := &handlers.SummaryHandler{
 		Summaries:   summaries,
@@ -166,6 +168,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 
 			r.Get("/summaries", summariesH.List)
 			r.Get("/summaries/stats", summariesH.Stats)
+			r.Get("/summaries/jobs/status", summariesH.JobStatus)
 			r.Get("/summaries/{id}", summariesH.Get)
 		})
 	})

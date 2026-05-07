@@ -3,9 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <!-- Theme-color per scheme so iOS PWA chrome matches the active theme. -->
-    <meta name="theme-color" content="#f5efe2" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#100e0b" media="(prefers-color-scheme: dark)" />
+    <!-- Single theme-color meta; populated at runtime from the active palette's
+         --theme-color CSS var. The anti-flash script below seeds it before
+         hydration so iOS PWA chrome doesn't flash a wrong color. -->
+    <meta name="theme-color" content="#f5efe2" />
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <!-- Same-origin in dev (Vite proxies /api). In prod, /api is behind the
@@ -13,17 +14,35 @@
     <link rel="preconnect" href="/" crossorigin />
     <link rel="dns-prefetch" href="/" />
     <title>JournAI</title>
-    <!-- Anti-flash: read theme preference and apply class before React hydrates.
-         Mirrors the strategy next-themes documents for class-attribute mode. -->
+    <!-- Anti-flash: read theme + palette preference and apply class/attribute
+         before React hydrates. Mirrors the strategy next-themes documents for
+         class-attribute mode, extended with a data-palette attribute that our
+         CSS overrides key off. The seed theme-color values mirror each
+         palette's --theme-color (kept in sync with src/styles/index.css). -->
     <script>
       (function () {
         try {
           var stored = localStorage.getItem("theme");
           var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-          var resolved = stored === "light" || stored === "dark"
+          var mode = stored === "light" || stored === "dark"
             ? stored
             : prefersDark ? "dark" : "light";
-          if (resolved === "dark") document.documentElement.classList.add("dark");
+          if (mode === "dark") document.documentElement.classList.add("dark");
+
+          var palettes = ["paper", "ember", "forest", "ocean", "slate"];
+          var p = localStorage.getItem("journai.palette");
+          if (palettes.indexOf(p) === -1) p = "paper";
+          document.documentElement.setAttribute("data-palette", p);
+
+          var seeds = {
+            paper:  { light: "#f5efe2", dark: "#100e0b" },
+            ember:  { light: "#f8f1ed", dark: "#14110f" },
+            forest: { light: "#ebf0de", dark: "#0e100c" },
+            ocean:  { light: "#e0ecf0", dark: "#0d1218" },
+            slate:  { light: "#f0f2f6", dark: "#0e1015" }
+          };
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", seeds[p][mode]);
         } catch (e) {}
       })();
     </script>

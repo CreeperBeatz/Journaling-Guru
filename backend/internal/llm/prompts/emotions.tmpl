@@ -1,0 +1,13 @@
+Date: {{.Date}}
+
+The user described their emotions for the day in their own words:
+
+{{.EmotionsText}}
+
+Classify each distinct emotion the user mentions into Plutchik's wheel
+using ONLY the (base, subtype) pairs from the system message. Cap the
+output at 6 entries, most salient first. raw_phrase must be a verbatim
+slice of the user's text — do not paraphrase, summarize, or translate.
+
+Return only the JSON object described in the system message — no prose,
+no markdown fences.

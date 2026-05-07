@@ -9,8 +9,9 @@ import { cn } from "@/lib/utils";
 //   ●——————————————————●——————●
 //   1  2  3  4  5  6  7  8  9  10
 //
-// Tick marks render as small dots underneath. Thumb hugs the accent
-// hue at hover/focus to echo the warm-paper aesthetic.
+// Range + thumb use --primary (ink) so the slider visibly reflects the
+// active palette: violet on Paper/Slate, deep moss on Forest, deep teal
+// on Ocean. Accent is reserved for small margin-pen flourishes elsewhere.
 
 interface Props
   extends React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> {
@@ -39,11 +40,11 @@ export const Slider = React.forwardRef<
         {...props}
       >
         <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-secondary">
-          <SliderPrimitive.Range className="absolute h-full bg-accent" />
+          <SliderPrimitive.Range className="absolute h-full bg-primary" />
         </SliderPrimitive.Track>
         <SliderPrimitive.Thumb
           className={cn(
-            "block h-5 w-5 rounded-full border-2 border-accent bg-card shadow-sm",
+            "block h-5 w-5 rounded-full border-2 border-primary bg-card shadow-sm",
             "ring-offset-background transition-transform",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
             "hover:scale-110 focus-visible:scale-110",

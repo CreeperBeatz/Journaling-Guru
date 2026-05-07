@@ -154,7 +154,7 @@ run_stack() {
       --prefix-colors blue,magenta,green \
       "cd backend && air" \
       "cd backend && air -c .air.worker.toml" \
-      "cd frontend && pnpm dev"
+      "cd frontend && pnpm dev --host 0.0.0.0"
   else
     echo "[start] need 'overmind' or 'concurrently' on PATH. See README." >&2
     exit 1

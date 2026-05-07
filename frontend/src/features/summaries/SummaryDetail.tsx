@@ -1,5 +1,7 @@
+import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, ArrowLeft, Loader2, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -7,9 +9,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 
-import { useRegenerateSummary, useSummary } from "./hooks";
+import type { SummaryJob } from "./api";
+import {
+  SUMMARY_KEY,
+  useRegenerateSummary,
+  useSummary,
+  useSummaryJobStatus,
+} from "./hooks";
 
 const periodLabel: Record<string, string> = {
   day: "Daily",
@@ -21,8 +30,39 @@ const periodLabel: Record<string, string> = {
 export function SummaryDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { data, isPending, isError } = useSummary(id);
   const regen = useRegenerateSummary();
+  const jobQuery = useSummaryJobStatus(data?.period_type, data?.period_start);
+  const job = jobQuery.data ?? null;
+  const inFlight = job?.status === "pending" || job?.status === "claimed";
+
+  // Detect lifecycle transitions on the polled job and side-effect:
+  // pending|claimed → completed: refetch the summary so the new body
+  // replaces the stale one, plus toast for confirmation. → failed:
+  // toast the error so the user knows the regen really didn't land.
+  // Skipped is silent — the body didn't change.
+  const prevStatusRef = useRef<SummaryJob["status"] | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const next = job?.status;
+    prevStatusRef.current = next;
+    if (!prev || !next || prev === next) return;
+    const wasInFlight = prev === "pending" || prev === "claimed";
+    if (!wasInFlight) return;
+    if (next === "completed") {
+      if (id) qc.invalidateQueries({ queryKey: SUMMARY_KEY(id) });
+      qc.invalidateQueries({ queryKey: ["summaries", "list"] });
+      qc.invalidateQueries({ queryKey: ["summaries", "stats"] });
+      toast.success("Regeneration complete", {
+        description: "The new draft is loaded below.",
+      });
+    } else if (next === "failed") {
+      toast.error("Regeneration failed", {
+        description: job?.last_error ?? "The worker exhausted retries.",
+      });
+    }
+  }, [job?.status, job?.last_error, id, qc]);
 
   if (isPending) {
     return (
@@ -46,6 +86,8 @@ export function SummaryDetail() {
 
   const meta = data.metadata ?? {};
   const generated = new Date(data.generated_at);
+  const showFailed = job?.status === "failed";
+  const buttonDisabled = regen.isPending || inFlight;
 
   return (
     <div className="space-y-6">
@@ -56,7 +98,7 @@ export function SummaryDetail() {
         <Button
           variant="outline"
           size="sm"
-          disabled={regen.isPending}
+          disabled={buttonDisabled}
           onClick={() =>
             regen.mutate({
               period_type: data.period_type,
@@ -64,14 +106,17 @@ export function SummaryDetail() {
             })
           }
         >
-          {regen.isPending ? (
+          {buttonDisabled ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <RefreshCw className="h-4 w-4" />
           )}
-          Regenerate
+          {inFlight ? "Regenerating…" : "Regenerate"}
         </Button>
       </div>
+
+      {inFlight ? <RegenBanner job={job!} /> : null}
+      {showFailed ? <FailedBanner job={job!} /> : null}
 
       <header className="space-y-1">
         <p className="text-xs uppercase tracking-wider text-muted-foreground">
@@ -80,6 +125,7 @@ export function SummaryDetail() {
         <h1 className="font-serif text-h1">{periodHeading(data.period_type, data.period_start, data.period_end)}</h1>
         <p className="text-xs font-mono text-muted-foreground tabular-nums">
           generated {generated.toLocaleString()} · {data.model}
+          {inFlight ? <span className="ml-2 italic">(showing previous draft)</span> : null}
         </p>
       </header>
 
@@ -132,9 +178,67 @@ export function SummaryDetail() {
 
       <Separator />
 
-      <article className="prose-journal max-w-none">
+      <article
+        aria-busy={inFlight || undefined}
+        className={cn(
+          "prose-journal max-w-none transition-opacity duration-300",
+          inFlight && "opacity-60",
+        )}
+      >
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.body}</ReactMarkdown>
       </article>
+    </div>
+  );
+}
+
+// RegenBanner is shown while the queue row is pending or claimed. The
+// status-specific copy lets the user distinguish "queued" (worker not
+// yet assigned) from "running" (worker has it) — useful for confirming
+// the dispatcher isn't stuck.
+function RegenBanner({ job }: { job: SummaryJob }) {
+  const queued = job.status === "pending";
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cn(
+        "flex items-start gap-3 rounded-lg border border-accent/30 bg-accent/10 p-3 text-sm",
+      )}
+    >
+      <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-accent" />
+      <div className="space-y-0.5">
+        <p className="font-medium">
+          {queued ? "Queued for regeneration" : "Regenerating now"}
+          {job.attempts > 1 ? (
+            <span className="ml-2 text-xs font-mono text-muted-foreground tabular-nums">
+              attempt {job.attempts}
+            </span>
+          ) : null}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {queued
+            ? "Waiting for the worker to pick it up — the dispatcher polls every few seconds."
+            : "The worker is calling the model. The previous draft is shown below; this page will refresh when the new one lands."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function FailedBanner({ job }: { job: SummaryJob }) {
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+      <div className="space-y-0.5">
+        <p className="font-medium text-destructive">Last regeneration failed</p>
+        <p className="text-xs text-muted-foreground break-words">
+          {job.last_error ?? "The worker exhausted retries."} Try again — the
+          previous draft below is still intact.
+        </p>
+      </div>
     </div>
   );
 }

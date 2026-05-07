@@ -25,22 +25,23 @@ func NewDailyInputStore(db *pgxpool.Pool) *DailyInputStore { return &DailyInputS
 
 const dailyInputColumns = `id, user_id,
     to_char(local_date, 'YYYY-MM-DD') AS local_date,
-    mood_score, emotions, notes, created_at, updated_at`
+    mood_score, emotions_text, classified_emotions, notes, created_at, updated_at`
 
 func scanDailyInput(row pgx.Row) (*domain.DailyInput, error) {
 	var d domain.DailyInput
-	var emotions []byte
+	var classified []byte
 	if err := row.Scan(
 		&d.ID, &d.UserID, &d.LocalDate,
-		&d.MoodScore, &emotions, &d.Notes,
+		&d.MoodScore, &d.EmotionsText, &classified, &d.Notes,
 		&d.CreatedAt, &d.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
-	if len(emotions) == 0 {
-		d.Emotions = []string{}
-	} else if err := json.Unmarshal(emotions, &d.Emotions); err != nil {
-		return nil, fmt.Errorf("unmarshal emotions: %w", err)
+	d.ClassifiedEmotions = []domain.ClassifiedEmotion{}
+	if len(classified) > 0 {
+		if err := json.Unmarshal(classified, &d.ClassifiedEmotions); err != nil {
+			return nil, fmt.Errorf("unmarshal classified_emotions: %w", err)
+		}
 	}
 	return &d, nil
 }
@@ -63,9 +64,15 @@ func (s *DailyInputStore) GetByDate(
 }
 
 // Upsert writes (or overwrites) the row for one (user, local_date).
-// If all three fields would be empty (mood nil, emotions empty, notes
-// blank), the row is *deleted* — keeps the table free of empty rows
-// and matches the "empty body deletes" pattern from journal_entries.
+// If all three user-controlled fields would be empty (mood nil,
+// emotions_text blank, notes blank), the row is *deleted* — keeps the
+// table free of empty rows and matches the "empty body deletes" pattern
+// from journal_entries.
+//
+// classified_emotions is owned by the EmotionClassifyWorker — handler
+// writes never touch it. On INSERT it stays at the column default '[]';
+// on UPDATE we deliberately omit it from SET so a re-save preserves the
+// previous classification until the worker re-runs.
 //
 // Returns (input, true, nil) on insert/update; (nil, true, nil) on
 // delete-because-empty; (input, false, nil) on no-op (no existing row
@@ -75,15 +82,11 @@ func (s *DailyInputStore) Upsert(
 	userID string,
 	localDate time.Time,
 	mood *int,
-	emotions []string,
+	emotionsText string,
 	notes string,
 ) (*domain.DailyInput, bool, error) {
-	emotions = normalizeEmotions(emotions)
-	emotionsJSON, err := json.Marshal(emotions)
-	if err != nil {
-		return nil, false, fmt.Errorf("marshal emotions: %w", err)
-	}
-	allEmpty := mood == nil && len(emotions) == 0 && notes == ""
+	emotionsText = strings.TrimSpace(emotionsText)
+	allEmpty := mood == nil && emotionsText == "" && notes == ""
 	if allEmpty {
 		ct, err := s.DB.Exec(ctx,
 			`DELETE FROM daily_inputs WHERE user_id = $1 AND local_date = $2`,
@@ -94,20 +97,46 @@ func (s *DailyInputStore) Upsert(
 		return nil, ct.RowsAffected() > 0, nil
 	}
 	const q = `
-		INSERT INTO daily_inputs (user_id, local_date, mood_score, emotions, notes)
+		INSERT INTO daily_inputs (user_id, local_date, mood_score, emotions_text, notes)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (user_id, local_date) DO UPDATE
-		   SET mood_score = EXCLUDED.mood_score,
-		       emotions   = EXCLUDED.emotions,
-		       notes      = EXCLUDED.notes,
-		       updated_at = now()
+		   SET mood_score    = EXCLUDED.mood_score,
+		       emotions_text = EXCLUDED.emotions_text,
+		       notes         = EXCLUDED.notes,
+		       updated_at    = now()
 		RETURNING ` + dailyInputColumns
-	row := s.DB.QueryRow(ctx, q, userID, localDate, mood, emotionsJSON, notes)
+	row := s.DB.QueryRow(ctx, q, userID, localDate, mood, emotionsText, notes)
 	out, err := scanDailyInput(row)
 	if err != nil {
 		return nil, false, err
 	}
 	return out, true, nil
+}
+
+// WriteClassifiedEmotions overwrites the classifier output column. Called
+// by the EmotionClassifyWorker on completion (or to clear the column to
+// `[]` when emotions_text becomes empty). No-op if the row is gone (the
+// worker raced a delete; harmless).
+func (s *DailyInputStore) WriteClassifiedEmotions(
+	ctx context.Context,
+	userID string,
+	localDate time.Time,
+	classified []domain.ClassifiedEmotion,
+) error {
+	if classified == nil {
+		classified = []domain.ClassifiedEmotion{}
+	}
+	buf, err := json.Marshal(classified)
+	if err != nil {
+		return fmt.Errorf("marshal classified_emotions: %w", err)
+	}
+	_, err = s.DB.Exec(ctx,
+		`UPDATE daily_inputs
+		    SET classified_emotions = $3,
+		        updated_at = now()
+		  WHERE user_id = $1 AND local_date = $2`,
+		userID, localDate, buf)
+	return err
 }
 
 // MoodPoint mirrors the existing summaries.MoodSeries shape so the
@@ -149,24 +178,28 @@ func (s *DailyInputStore) MoodSeries(
 }
 
 // EmotionCount mirrors summaries.EmotionCount so the stats endpoint can
-// keep returning the same shape.
+// keep returning the same shape. The string is now a Plutchik subtype
+// ("ecstasy", "annoyance") rather than a free-form chip word.
 type DailyEmotionCount struct {
 	Emotion string `json:"emotion"`
 	Count   int    `json:"count"`
 }
 
-// TopEmotions returns the most-frequent emotions across daily_inputs in
-// the last `days` days. Limit caps the result; pass 0 for "no cap".
+// TopEmotions returns the most-frequent classified subtypes across
+// daily_inputs in the last `days` days. Limit caps the result; pass 0
+// for "no cap". Reads classified_emotions[*].subtype — rows where the
+// classifier hasn't run yet (or returned no entries) contribute nothing.
 func (s *DailyInputStore) TopEmotions(
 	ctx context.Context, userID string, days, limit int,
 ) ([]DailyEmotionCount, error) {
 	q := `
-		SELECT lower(emotion) AS emotion, COUNT(*)::int AS count
+		SELECT lower(e->>'subtype') AS emotion, COUNT(*)::int AS count
 		  FROM daily_inputs,
-		       jsonb_array_elements_text(emotions) AS emotion
+		       jsonb_array_elements(classified_emotions) AS e
 		 WHERE user_id = $1
 		   AND local_date >= (current_date - $2::int)
-		GROUP BY lower(emotion)
+		   AND e ? 'subtype'
+		GROUP BY lower(e->>'subtype')
 		ORDER BY count DESC, emotion ASC`
 	args := []any{userID, days}
 	if limit > 0 {
@@ -202,11 +235,9 @@ type AggregatedMetadata struct {
 // AggregateForRange computes the aggregated metadata over all
 // daily_inputs rows in [since, until] inclusive for the user.
 //
-// Mood: arithmetic mean of non-null mood_scores (we don't have a
-// natural per-day weight; entries-per-day was a proxy under the old
-// design but daily_inputs is already per-day). Empty range → MoodScore=nil.
-//
-// Emotions: top `topN` lower-case emotions by occurrence count.
+// Mood: arithmetic mean of non-null mood_scores. Empty range → MoodScore=nil.
+// Emotions: top `topN` Plutchik subtypes by occurrence count across the
+// classified_emotions arrays in range.
 // EntryCount: number of distinct local_dates with any input in range.
 func (s *DailyInputStore) AggregateForRange(
 	ctx context.Context, userID string, since, until time.Time, topN int,
@@ -225,12 +256,13 @@ func (s *DailyInputStore) AggregateForRange(
 	out.MoodScore = moodAvg
 
 	emoQuery := `
-		SELECT lower(emotion) AS emotion, COUNT(*)::int AS count
+		SELECT lower(e->>'subtype') AS emotion, COUNT(*)::int AS count
 		  FROM daily_inputs,
-		       jsonb_array_elements_text(emotions) AS emotion
+		       jsonb_array_elements(classified_emotions) AS e
 		 WHERE user_id = $1
 		   AND local_date BETWEEN $2 AND $3
-		GROUP BY lower(emotion)
+		   AND e ? 'subtype'
+		GROUP BY lower(e->>'subtype')
 		ORDER BY count DESC, emotion ASC`
 	args := []any{userID, since, until}
 	if topN > 0 {
@@ -254,9 +286,10 @@ func (s *DailyInputStore) AggregateForRange(
 }
 
 // HasContentInRange reports whether the user has any daily_inputs row
-// (with mood, emotions, or notes) in [since, until]. Used by the daily
-// worker's skip check — a "just notes + mood" day still warrants a
-// summary.
+// (with mood, emotions_text, or notes) in [since, until]. Used by the
+// daily worker's skip check — a "just notes" or "just mood" day still
+// warrants a summary. Raw text counts as content; whether classification
+// has finished doesn't gate the daily summary.
 func (s *DailyInputStore) HasContentInRange(
 	ctx context.Context, userID string, since, until time.Time,
 ) (bool, error) {
@@ -265,7 +298,7 @@ func (s *DailyInputStore) HasContentInRange(
 	     WHERE user_id = $1
 	       AND local_date BETWEEN $2 AND $3
 	       AND (mood_score IS NOT NULL
-	            OR jsonb_array_length(emotions) > 0
+	            OR emotions_text <> ''
 	            OR notes <> '')
 	)`
 	var exists bool
@@ -273,33 +306,4 @@ func (s *DailyInputStore) HasContentInRange(
 		return false, err
 	}
 	return exists, nil
-}
-
-// normalizeEmotions trims, lowercases, dedupes, and clips to a
-// reasonable cap. The frontend already does this on save, but
-// belt-and-suspenders — the worker reads these straight into the
-// summary metadata and we don't want stray casing to fork the count.
-func normalizeEmotions(in []string) []string {
-	const maxLen = 8
-	const maxStringLen = 32
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, raw := range in {
-		v := strings.ToLower(strings.TrimSpace(raw))
-		if v == "" {
-			continue
-		}
-		if len(v) > maxStringLen {
-			v = v[:maxStringLen]
-		}
-		if _, ok := seen[v]; ok {
-			continue
-		}
-		seen[v] = struct{}{}
-		out = append(out, v)
-		if len(out) >= maxLen {
-			break
-		}
-	}
-	return out
 }
