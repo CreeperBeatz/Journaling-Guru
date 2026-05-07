@@ -81,11 +81,13 @@ Both halves — light/dark mode and palette — live on `<html>`: `class="dark"`
 |---|---|---|---|---|
 | **paper** *(default)* | warm cream `39 38% 96%` | ink-violet `252 70% 50%` | terracotta `18 70% 52%` | canonical journal — paper under lamplight |
 | **ember** | peach cream `24 44% 95%` | burnt orange `22 80% 44%` | deep teal `190 60% 36%` | embers in candlelight — fired earth, warm hearth |
-| **forest** | sage cream `80 24% 94%` | deep moss `152 55% 30%` | cranberry `352 60% 46%` | leather notebook in a study |
-| **ocean** | sea-foam `200 38% 95%` | deep teal `195 75% 32%` | sun gold `42 90% 46%` | calm, breezy |
-| **slate** | cool gray `220 16% 96%` | ink-violet `252 70% 50%` | magenta `330 72% 52%` | modern, saturated — the "anti-paper" option |
+| **forest** | honey sand `50 26% 94%` | deep moss `152 55% 30%` | cranberry `352 60% 46%` | leather notebook in a warm study |
+| **ocean** | warm sand `32 32% 94%` | deep teal `195 75% 32%` | sun gold `42 90% 46%` | beach light, calm sea |
+| **slate** | warm clay `36 14% 93%` | ink-violet `252 70% 50%` | magenta `330 72% 52%` | modern, saturated — paper with sharper teeth |
 
-Accents are deliberately spread around the wheel (18° / 190° / 352° / 42° / 330°) so palettes read as visibly distinct identities even on small accented elements (question heading bars, link underlines, the `text-accent` mood label). Ember is the only palette where the *primary* itself is a warm orange (22°) — every other palette uses a cool/neutral primary against a warm accent.
+Every palette is warm — the *page* hue lives in 24°-50° (peach / cream / sand / clay), never in cool 180°-260° space. Identity comes from the primary/accent pairing, not from a cold page. Accents are spread around the wheel (18° / 190° / 352° / 42° / 330°) so palettes read as distinct on small accented elements (question heading bars, link underlines, the `text-accent` mood label). Ember is the only palette where the *primary* itself is a warm orange (22°); every other palette uses a cool primary (moss / teal / ink-violet) against the warm page — the canonical *cool ink on warm page* tension.
+
+Dark modes likewise unify on warm near-black (hue 28°-36°), never the cool 215°-222° range. Identity in dark mode comes from primary/accent only — the page is always dim warm wood.
 
 **Primary vs accent in components.** Use `--primary` for the dominant interactive ink — buttons, slider Range/Thumb, focus ring. Use `--accent` for sparing flourishes (margin-pen left bars, link underlines, today-pill). Don't lean on accent for large filled surfaces; it's the spice, not the dish.
 
@@ -195,7 +197,7 @@ Every variant goes through `useReducedMotion()` from `motion/react`. Falls back 
 
 Don't:
 - Hardcode any color value in components — all colors flow through CSS vars (`bg-background`, `text-foreground`, `border-border`, etc.) so palette switches stay coherent. The only colors in JS are the palette-picker swatches in `src/lib/palette.ts`.
-- Add another palette without a clear identity. Each existing palette has a distinct *page hue* (warm cream / peach cream / sage / sea-foam / cool gray) plus a deliberate ink/accent pairing — don't ship a near-duplicate.
+- Add another palette without a clear identity. Each existing palette has a warm page hue (cream / peach / sand / clay, all 24°-50°) plus a deliberate ink/accent pairing — don't ship a near-duplicate, and don't ship one with a cool (180°-260°) page.
 - Animate via `style={{ background: ... }}` through motion — always go through CSS vars so theme-swap remains instant.
 - Re-render the shell on theme toggle — colocate `useTheme()` into the toggle, not the shell.
 - Add inline status text on save (`"Saving…"/"Saved"/"Unsaved"`) — cache update is the feedback; reserve the textual indicator for the >300ms slow-network path.

@@ -14,9 +14,9 @@ export const PALETTE_LABEL: Record<Palette, string> = {
 export const PALETTE_DESCRIPTION: Record<Palette, string> = {
   paper: "Warm cream + ink violet + terracotta — the canonical journal aesthetic.",
   ember: "Peach cream + burnt orange + deep teal — embers in candlelight.",
-  forest: "Sage cream + deep moss + cranberry — leather notebook in a study.",
-  ocean: "Pale sea-foam + deep teal + sun gold — calm and breezy.",
-  slate: "Cool gray + ink violet + magenta — modern and saturated.",
+  forest: "Honey sand + deep moss + cranberry — leather notebook in a warm study.",
+  ocean: "Warm sand + deep teal + sun gold — beach light, calm sea.",
+  slate: "Warm clay + ink violet + magenta — saturated paper, modern.",
 };
 
 // Visual swatches for the picker. Each tuple is [bg, primary, accent] as
@@ -27,9 +27,9 @@ export const PALETTE_DESCRIPTION: Record<Palette, string> = {
 export const PALETTE_SWATCH: Record<Palette, [string, string, string]> = {
   paper: ["hsl(39 38% 96%)", "hsl(252 70% 50%)", "hsl(18 70% 52%)"],
   ember: ["hsl(24 44% 95%)", "hsl(22 80% 44%)", "hsl(190 60% 36%)"],
-  forest: ["hsl(80 24% 94%)", "hsl(152 55% 30%)", "hsl(352 60% 46%)"],
-  ocean: ["hsl(200 38% 95%)", "hsl(195 75% 32%)", "hsl(42 90% 46%)"],
-  slate: ["hsl(220 16% 96%)", "hsl(252 70% 50%)", "hsl(330 72% 52%)"],
+  forest: ["hsl(50 26% 94%)", "hsl(152 55% 30%)", "hsl(352 60% 46%)"],
+  ocean: ["hsl(32 32% 94%)", "hsl(195 75% 32%)", "hsl(42 90% 46%)"],
+  slate: ["hsl(36 14% 93%)", "hsl(252 70% 50%)", "hsl(330 72% 52%)"],
 };
 
 export const PALETTE_STORAGE_KEY = "journai.palette";
