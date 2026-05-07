@@ -202,6 +202,14 @@ Don't:
 - Reach for `experimental_prefetchInRender` (double-fires under React 18 strict mode).
 - Add `vaul` Sheet or `cmdk` palette without a clear product reason — keep dep count down.
 
+## Push reminders (Phase 5)
+
+- The reminders surface lives in **Settings → Notifications** alongside the existing reminder-time picker. There is no separate "Notifications" page; subscription is configuration, not navigation.
+- Subscribe button is per-device by design — phones and laptops are separate `push_subscriptions` rows, and the "Send test notification" button always targets the device the user clicked from. The device list under the button shows other endpoints with the rough "Chrome on macOS · last seen 3d ago" label, so the user can audit and unsubscribe stale ones from this card.
+- iOS gating is explicit: when we detect iPhone/iPad without `display-mode: standalone`, the entire card is replaced with the "Add to Home Screen first" copy. This isn't a hint at the bottom — it's the whole content, because the subscribe button physically cannot work, and offering it would leak frustration.
+- The custom service worker (`src/sw/push-handler.ts`) handles `push`, `notificationclick`, and `pushsubscriptionchange`. The third one is the iOS-reliability linchpin — the SW silently re-subscribes against `/api/push/vapid-public-key` whenever the OS rotates the endpoint, so users don't lose reminders after a reboot.
+- Notification visuals match the OS, not our palette — title `JournAI`, icon `/pwa-192.png`. No custom styling because the OS overrides everything anyway.
+
 ## Open / deferred
 
 - `vaul` Sheet — deferred. HistoryView's date rail works inline.

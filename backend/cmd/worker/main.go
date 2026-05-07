@@ -16,22 +16,21 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/config"
 	"github.com/cosmosthrace/journai/backend/internal/jobs"
 	"github.com/cosmosthrace/journai/backend/internal/llm"
+	"github.com/cosmosthrace/journai/backend/internal/push"
 	"github.com/cosmosthrace/journai/backend/internal/store"
 )
 
-// Phase 4 worker: River-backed summary pipeline + Phase 4.1 emotion
-// classifier.
+// Worker binary: River-backed pipeline for summaries (Phase 4),
+// emotion classification (Phase 4.2), and push reminders (Phase 5).
 //
 // Two cooperating loops:
 //   - dispatcher tick: every SUMMARY_DISPATCH_INTERVAL_SECONDS, atomically
-//     claim due rows from BOTH summary_jobs and emotion_classify_jobs and
-//     enqueue a River job per row. Single source of truth for "what
-//     should run."
-//   - River worker pool: consumes SummaryArgs / EmotionClassifyArgs,
-//     runs the LLM call, writes the row, and (for summaries) schedules
-//     the next period.
-//
-// Phase 5 will add a push-dispatch tick alongside this one.
+//     claim due rows from summary_jobs, emotion_classify_jobs, AND
+//     reminder_jobs, enqueuing a River job per row. Single source of
+//     truth for "what should run."
+//   - River worker pool: consumes SummaryArgs / EmotionClassifyArgs /
+//     ReminderArgs, runs the LLM call (or push fan-out), writes the
+//     row, and schedules the next slot.
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
@@ -58,6 +57,8 @@ func main() {
 	summaries := store.NewSummaryStore(db)
 	jobsStore := store.NewSummaryJobStore(db)
 	emotionJobs := store.NewEmotionClassifyJobStore(db)
+	pushSubs := store.NewPushSubscriptionStore(db)
+	reminderJobs := store.NewReminderJobStore(db)
 
 	llmClient := llm.NewOpenRouter(
 		cfg.OpenRouterKey, cfg.OpenRouterModel,
@@ -89,9 +90,40 @@ func main() {
 		Logger:      logger,
 	}
 
+	reminderScheduler := &jobs.ReminderScheduler{
+		Jobs:   reminderJobs,
+		Users:  users,
+		Logger: logger,
+	}
+
+	// Push sender — nil-safe: when VAPID keys are missing, the push
+	// worker marks rows failed instead of silently no-opping (see
+	// PushWorker.Work). The api binary builds its own sender for /test.
+	var pushSender push.Sender
+	if c, err := push.New(push.Config{
+		PublicKey:  cfg.VAPIDPublic,
+		PrivateKey: cfg.VAPIDPrivate,
+		Subject:    cfg.VAPIDSubject,
+	}); err == nil {
+		pushSender = c
+	} else {
+		logger.Warn("push sender disabled — VAPID keys missing", "err", err)
+	}
+
+	pushWorker := &jobs.PushWorker{
+		Reminders:     reminderJobs,
+		Subscriptions: pushSubs,
+		Users:         users,
+		Sender:        pushSender,
+		Scheduler:     reminderScheduler,
+		Logger:        logger,
+		AppOrigin:     cfg.PublicBaseURL,
+	}
+
 	workers := river.NewWorkers()
 	river.AddWorker(workers, worker)
 	river.AddWorker(workers, emotionWorker)
+	river.AddWorker(workers, pushWorker)
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues: map[string]river.QueueConfig{
@@ -114,9 +146,10 @@ func main() {
 		"inactivity_days", cfg.SummaryInactivityDays,
 		"openrouter_model", cfg.OpenRouterModel,
 		"openrouter_key_set", cfg.OpenRouterKey != "",
+		"push_sender_set", pushSender != nil,
 	)
 
-	go runDispatchLoop(rootCtx, logger, jobsStore, emotionJobs, riverClient, time.Duration(cfg.SummaryDispatchInterval)*time.Second)
+	go runDispatchLoop(rootCtx, logger, jobsStore, emotionJobs, reminderJobs, riverClient, time.Duration(cfg.SummaryDispatchInterval)*time.Second)
 
 	<-rootCtx.Done()
 	logger.Info("worker shutting down")
@@ -127,7 +160,7 @@ func main() {
 	}
 }
 
-// runDispatchLoop is the every-N-seconds tick that drains both job
+// runDispatchLoop is the every-N-seconds tick that drains all three job
 // queues. Atomic claim (FOR UPDATE SKIP LOCKED) means concurrent worker
 // replicas can't double-enqueue.
 func runDispatchLoop(
@@ -135,6 +168,7 @@ func runDispatchLoop(
 	logger *slog.Logger,
 	jobsStore *store.SummaryJobStore,
 	emotionJobs *store.EmotionClassifyJobStore,
+	reminderJobs *store.ReminderJobStore,
 	riverClient *river.Client[pgx.Tx],
 	interval time.Duration,
 ) {
@@ -146,14 +180,14 @@ func runDispatchLoop(
 
 	// Run once immediately so a freshly-restarted worker doesn't sit
 	// idle for a full interval if there's a backlog.
-	tick(ctx, logger, jobsStore, emotionJobs, riverClient)
+	tick(ctx, logger, jobsStore, emotionJobs, reminderJobs, riverClient)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tick(ctx, logger, jobsStore, emotionJobs, riverClient)
+			tick(ctx, logger, jobsStore, emotionJobs, reminderJobs, riverClient)
 		}
 	}
 }
@@ -163,6 +197,7 @@ func tick(
 	logger *slog.Logger,
 	jobsStore *store.SummaryJobStore,
 	emotionJobs *store.EmotionClassifyJobStore,
+	reminderJobs *store.ReminderJobStore,
 	riverClient *river.Client[pgx.Tx],
 ) {
 	const batch = 100
@@ -183,16 +218,29 @@ func tick(
 	claimedEmotions, err := emotionJobs.ClaimDue(ctx, batch)
 	if err != nil {
 		logger.Warn("claim due emotions", "err", err)
+	} else if len(claimedEmotions) > 0 {
+		logger.Info("dispatching emotion classify jobs", "count", len(claimedEmotions))
+		for _, c := range claimedEmotions {
+			if _, err := riverClient.Insert(ctx, jobs.EmotionClassifyArgs{JobID: c.ID}, nil); err != nil {
+				logger.Warn("river insert (emotion)", "err", err, "job_id", c.ID)
+				_ = emotionJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
+			}
+		}
+	}
+
+	claimedReminders, err := reminderJobs.ClaimDue(ctx, batch)
+	if err != nil {
+		logger.Warn("claim due reminders", "err", err)
 		return
 	}
-	if len(claimedEmotions) == 0 {
+	if len(claimedReminders) == 0 {
 		return
 	}
-	logger.Info("dispatching emotion classify jobs", "count", len(claimedEmotions))
-	for _, c := range claimedEmotions {
-		if _, err := riverClient.Insert(ctx, jobs.EmotionClassifyArgs{JobID: c.ID}, nil); err != nil {
-			logger.Warn("river insert (emotion)", "err", err, "job_id", c.ID)
-			_ = emotionJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
+	logger.Info("dispatching reminder jobs", "count", len(claimedReminders))
+	for _, c := range claimedReminders {
+		if _, err := riverClient.Insert(ctx, jobs.ReminderArgs{JobID: c.ID}, nil); err != nil {
+			logger.Warn("river insert (reminder)", "err", err, "job_id", c.ID)
+			_ = reminderJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
 		}
 	}
 }

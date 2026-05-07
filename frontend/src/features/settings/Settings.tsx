@@ -32,6 +32,8 @@ import { deleteAccount, logout, type User } from "@/features/auth/api";
 import { hhmmToMinutes, minutesToHHMM } from "@/lib/dayStart";
 import { QuestionEditor } from "@/features/journal/QuestionEditor";
 
+import { RemindersCard } from "@/features/push/RemindersCard";
+
 import { updateMe, UpdateMePatch } from "./api";
 import { AppearanceCard } from "./AppearanceCard";
 
@@ -275,8 +277,8 @@ export function Settings() {
             <CardHeader>
               <CardTitle className="font-serif">Reminder time</CardTitle>
               <CardDescription>
-                Local time of day for your daily reminder. Push notifications ship
-                in Phase 5; this value is saved either way.
+                Local time of day for the daily push reminder. Save the new
+                time, then enable notifications below.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
@@ -289,6 +291,8 @@ export function Settings() {
               />
             </CardContent>
           </Card>
+
+          <RemindersCard />
         </TabsContent>
 
         <TabsContent value="account" className="space-y-4">
@@ -349,7 +353,7 @@ export function Settings() {
         </Button>
       </div>
 
-      <p className="pt-2 text-xs text-muted-foreground">v2 · phase 4.1</p>
+      <p className="pt-2 text-xs text-muted-foreground">v2 · phase 5</p>
     </div>
   );
 }

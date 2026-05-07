@@ -16,8 +16,9 @@ import (
 // RequireAuth for authenticated reads, OptionalAuth where {user: null} is
 // a valid response.
 type MeHandler struct {
-	Users  *store.UserStore
-	Logger *slog.Logger
+	Users     *store.UserStore
+	Logger    *slog.Logger
+	Replanner ReminderReplanner // optional — nil-safe when push isn't wired
 }
 
 // Get returns the current user. Returns 401 when no session is attached
@@ -114,5 +115,16 @@ func (h *MeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
+
+	// Replan reminders when any field that influences fire_at changed.
+	// Timezone shifts the local-clock interpretation; reminder_time is
+	// the slot itself; reminder_enabled is the on/off switch.
+	if h.Replanner != nil &&
+		(patch.Timezone != nil || patch.ReminderTime != nil || patch.ReminderEnabled != nil) {
+		if err := h.Replanner.Replan(r.Context(), sess.UserID); err != nil {
+			h.Logger.Warn("replan reminders after settings update", "err", err, "user_id", sess.UserID)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, u)
 }

@@ -16,6 +16,7 @@ import (
 	mw "github.com/cosmosthrace/journai/backend/internal/httpapi/middleware"
 	"github.com/cosmosthrace/journai/backend/internal/jobs"
 	"github.com/cosmosthrace/journai/backend/internal/mail"
+	"github.com/cosmosthrace/journai/backend/internal/push"
 	"github.com/cosmosthrace/journai/backend/internal/store"
 )
 
@@ -35,6 +36,8 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	summaries := store.NewSummaryStore(db)
 	summaryJobs := store.NewSummaryJobStore(db)
 	emotionJobs := store.NewEmotionClassifyJobStore(db)
+	pushSubs := store.NewPushSubscriptionStore(db)
+	reminderJobs := store.NewReminderJobStore(db)
 
 	magicSvc := auth.NewMagicLinkService(auth.MagicLinkConfig{
 		TTL:         cfg.MagicLinkTTL(),
@@ -60,6 +63,29 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		InactivityDays: cfg.SummaryInactivityDays,
 	}
 
+	// Reminder scheduler — invoked from /me PATCH and /push/subscribe.
+	// ScheduleNext is the worker's job; the api owns Replan.
+	reminderScheduler := &jobs.ReminderScheduler{
+		Jobs:   reminderJobs,
+		Users:  users,
+		Logger: logger,
+	}
+
+	// Push sender. Built once if VAPID keys are configured; nil when
+	// they aren't, in which case /api/push/* returns 503 instead of
+	// silently no-opping. Constructing here (api binary) lets /test
+	// run end-to-end without the worker.
+	var pushSender push.Sender
+	if c, err := push.New(push.Config{
+		PublicKey:  cfg.VAPIDPublic,
+		PrivateKey: cfg.VAPIDPrivate,
+		Subject:    cfg.VAPIDSubject,
+	}); err == nil {
+		pushSender = c
+	} else {
+		logger.Warn("push sender not initialized — VAPID keys missing", "err", err)
+	}
+
 	authH := &handlers.AuthHandler{
 		Magic:         magicSvc,
 		Sessions:      sessionSvc,
@@ -71,7 +97,11 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		CookieTTL:     cfg.SessionTTL(),
 		MagicTTL:      cfg.MagicLinkTTL(),
 	}
-	meH := &handlers.MeHandler{Users: users, Logger: logger}
+	meH := &handlers.MeHandler{
+		Users:     users,
+		Logger:    logger,
+		Replanner: reminderScheduler,
+	}
 	acctH := &handlers.AccountHandler{
 		Users:        users,
 		Logger:       logger,
@@ -99,6 +129,16 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		DailyInputs: dailyInputs,
 		Logger:      logger,
 	}
+	pushH := &handlers.PushHandler{
+		Subs:        pushSubs,
+		Users:       users,
+		Reminders:   reminderJobs,
+		Replanner:   reminderScheduler,
+		Sender:      pushSender,
+		Logger:      logger,
+		VAPIDPublic: cfg.VAPIDPublic,
+		AppOrigin:   cfg.PublicBaseURL,
+	}
 	healthH := handlers.NewHealth(db)
 
 	r := chi.NewRouter()
@@ -123,8 +163,13 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":4.1}`))
+			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":5}`))
 		})
+
+		// Public read: VAPID public key. The PWA fetches this on first
+		// subscribe attempt — no session required because a logged-out
+		// install screen still needs to set up SW + manifest.
+		r.Get("/push/vapid-public-key", pushH.VAPIDKey)
 
 		// Mutating endpoints: CSRF gate (X-Requested-With required).
 		r.Group(func(r chi.Router) {
@@ -153,6 +198,10 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 				r.Patch("/daily/inputs/by-date/{date}", dailyInputsH.UpdateByDate)
 
 				r.Post("/summaries/regenerate", summariesH.Regenerate)
+
+				r.Post("/push/subscribe", pushH.Subscribe)
+				r.Delete("/push/subscribe", pushH.Unsubscribe)
+				r.Post("/push/test", pushH.Test)
 			})
 		})
 
@@ -170,6 +219,8 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 			r.Get("/summaries/stats", summariesH.Stats)
 			r.Get("/summaries/jobs/status", summariesH.JobStatus)
 			r.Get("/summaries/{id}", summariesH.Get)
+
+			r.Get("/push/state", pushH.State)
 		})
 	})
 

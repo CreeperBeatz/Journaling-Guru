@@ -55,4 +55,4 @@ frontend-build:
 	cd frontend && pnpm build
 
 vapid: ## Print a fresh VAPID keypair (paste into .env)
-	cd backend && go run ./cmd/vapid 2>/dev/null || echo "(vapid command lands in Phase 5)"
+	cd backend && go run ./cmd/vapid
