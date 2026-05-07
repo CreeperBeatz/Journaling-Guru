@@ -204,6 +204,93 @@ Don't:
 - Reach for `experimental_prefetchInRender` (double-fires under React 18 strict mode).
 - Add `vaul` Sheet or `cmdk` palette without a clear product reason — keep dep count down.
 
+## Chat (Phase 6a)
+
+The Today page (`/`) is a Tabs dispatcher with three modes — **Manual**, **Chat**, **Talk**. Chat is the default; Talk is a `disabled` tab with a `<Badge>soon</Badge>` reserved for Phase 6b voice.
+
+### Mode resolution + persistence
+
+Default mode is resolved in this priority order:
+
+1. `?mode=` URL search param — deep-links and reload-after-toggle stay stable.
+2. `localStorage["journai.todayMode"]` — remember-my-last-tab.
+3. `chat` — the v6a thesis: engagement first, data entry second.
+
+Tab toggles write back to both URL (replace, no history entry) and localStorage. SwipeNavigator is unwrapped from chat mode — horizontal drag would fight the message-list scroll on touch devices.
+
+### Conversation surface
+
+- **Bubble alignment**: user right-aligned, assistant left-aligned. `max-w-[85%] sm:max-w-[75%]`. User uses `bg-primary/8 text-foreground`; assistant uses `border border-border/60 bg-card text-card-foreground`. Soft border on assistant; no border on user. Both `rounded-2xl px-4 py-3 text-base leading-relaxed`.
+- **No timestamps, no avatars**, no per-bubble metadata. This is a reflection space, not a chat app — chrome breaks the ink-on-paper intent.
+- **Auto-stick to bottom**: `MessageList` calls `scrollIntoView({behavior:"smooth", block:"end"})` on every messages-length or partial-text change. We deliberately don't fight users who scroll up — they'll lose their place if a new chunk arrives. Acceptable trade for v1.
+
+### Streaming render
+
+The streaming itself is the effect — no synthetic typewriter delay layered on top.
+
+- Each chunk batch arrives via SSE → `partial` state grows → React re-renders `<StreamingMessage>` with the running string.
+- The bubble itself uses `motion.div` with `initial={{opacity:0, y:6}}, animate={{opacity:1, y:0}}, transition={{duration:0.18, ease:easeStandard}}`.
+- A blinking caret (`<span className="motion-safe:animate-pulse">`) marks the live tail.
+- A 3-dot terracotta loader pulses below the bubble while streaming; opacity-stagger via three `motion.span` with `delay: i * 0.15`. Reduced-motion: replace with the static text "thinking…".
+- When the `done` SSE frame lands, `useStreamingChat` sets `status='done'`, clears `partial`, and invalidates `chatSessionKey()`. The persisted assistant row replaces the streaming bubble on the next render.
+
+### Coverage chips (post-turn classifier)
+
+A horizontally-scrollable pill row sits below the sticky Today bar when the user has any active questions. Each pill = one question, truncated to 32 chars + ellipsis (full prompt in `title=` for tooltip).
+
+- **Inactive** (default): `bg-muted text-muted-foreground border border-border/60`.
+- **Active** (the post-turn classifier marked this `question_id` covered): `bg-accent/15 text-accent border border-accent/30`. Transition via `springTactile` for a tactile-but-not-bouncy fill.
+- **Compact mode** (driven by the sticky-bar `data-stuck` signal — see below): each chip collapses to a 10px dot. `bg-accent` when lit, `bg-border` when not. Tooltips still expose the full prompt; `aria-label` carries the covered state for screen readers.
+- Read-only — tapping does nothing today.
+- Source of truth is `chat_sessions.covered_question_ids` (a backend column written by `chat.Classify` after each assistant turn). The SSE `coverage_update` frame patches the same query-cache entry mid-stream so dots light up live; a page refresh re-renders from the persisted column. The previous inline `mark_topic_covered` tool was removed in favor of this dedicated post-turn pass — it can review the full turn in context instead of marking optimistically mid-reply.
+
+### Phase-driven UI
+
+Session phase ENUM: `greeting | exploring | wrapping_up | finalized | abandoned`. The chat header shows a phase label ("Starting up", "Reflecting", "Wrapping up", "Today's chat is closed"). Composer placeholder swaps per phase ("Type your reply…", "Say something…", "One last thing on your mind?").
+
+When the model emits `propose_wrap_up`, the SSE handler advances the session to `wrapping_up` and emits a `phase` frame. The FE caches the new phase immediately, and `<WrapUpAffordance>` slides in below the composer with a primary "I'm done" button.
+
+### Crisis card
+
+When the safety regex (server-side, `chat/safety.go`) hits a user message, the streaming handler short-circuits and emits a single `crisis` SSE frame. The FE swaps the message-list footer for `<CrisisCard>` — an in-flow `<Card>` (NOT a Dialog; interrupting the message list with a modal is jarring), `border-destructive/40 bg-destructive/5`, with hand-curated copy: 988, Crisis Text Line, link to `/resources`.
+
+Two affordances: **Get support** (primary, opens the resources page in a new tab) and **I want to keep talking** (ghost, dismisses the card). The user's message stays in the transcript either way — context is preserved. No LLM call is ever made on a crisis-flagged message; the card is the only response.
+
+The `/resources` page itself is static, public (no auth gate), hand-curated. Linked from CrisisCard and Settings.
+
+### Sticky Today bar (`DailyEntry`)
+
+The date header + mode tabs + (in chat mode) coverage chips are wrapped in a sticky group at the top of `/today`. As soon as the user scrolls past its natural position the bar collapses from a multi-line display block (`Today` eyebrow, serif `<h1>`, `currentTime · timezone · day-start` line) to a thin one-line strip with the short date + tabs + status pill. Coverage chips stack as a second sticky strip directly below, switching to dots-only in the stuck state.
+
+- **Glass tokens**: `bg-background/85 backdrop-blur-md`, mirroring AppShell's mobile header (`AppShell.tsx`) and the Settings sticky save bar. Border-bottom is transparent in flow and `border-border/60` when stuck — the line is the visual cue that the bar has detached.
+- **Layering**: AppShell's mobile header is `z-30`; the sticky Today bar is `z-20` so it parks below it (`top-[3.5rem] md:top-0`). The coverage strip is `z-10` and pins below the Today bar at `top-[6.25rem] md:top-[2.75rem]`.
+- **Stuck detection**: a tiny inline `useIsStuck` hook reads the bar's `getBoundingClientRect().top` on scroll/resize and flips a state when the rect reaches the viewport's sticky offset. Both the bar's collapse and the coverage chips' compact mode share that single signal (passed as `coverageCompact` to `ChatPanel`) so the two stickies always transition in sync.
+- **Bleed-out**: `-mx-4 md:-mx-8` (matches AppShell main padding) so the glass strip extends to the edges of the constrained content frame.
+- **Pill slot**: between the header block and `<TabsList>`, `inline-flex shrink-0` so it fits inline with the row in stuck mode and `self-end` (right-aligned) above the tabs in flow mode.
+
+### Background extraction pill
+
+Clicking "Update check-in" no longer replaces the chat surface — the extraction worker runs in the background and the chat stays interactive. Status surfaces as a small pill in the sticky Today bar.
+
+- **Pending / running**: `bg-accent/15 text-accent` rounded-full pill with a `Loader2` spinner + "Updating check-in…". `role="status" aria-live="polite"` so a screen reader announces the change without interrupting.
+- **Failed**: `bg-destructive/10 text-destructive border border-destructive/40` button — clicking re-fires `useFinalizeChat` (idempotent on the backend; the `chat_extraction_jobs.session_id` UNIQUE constraint deduplicates within the same minute). The error message lives in `title=` for tooltip discovery.
+- **Idle / completed**: pill is absent. The success toast in `useExtractionStatus` ("Check-in updated") is the completion signal.
+- The hook is called in `DailyEntry` (not `ChatPanel`) so the polling effect — and the toast it fires on `completed` / `failed` — runs exactly once. ChatPanel's "Update check-in" button still triggers the same mutation; both observers converge on the cached session row.
+- New chat messages typed during a background extraction are simply not part of the snapshot the worker just consumed. They land in the next update.
+
+### History view integration
+
+`<HistoryChatTranscript localDate={...} />` slots between `<HistoryDailyInputs>` and the entries Card on `/history/:date`. Read-only; default-collapsed `<details>` so the page stays uncluttered. Header shows turn count + "auto-filled into the check-in" / "draft" status. Renders nothing when no chat session exists for that day.
+
+### Anti-patterns
+
+Don't:
+- Add a per-token typewriter delay. The SSE stream's natural rhythm IS the effect — anything synthetic feels fake.
+- Render the chat in a Dialog or Sheet. It's a primary surface, not a popover.
+- Show a "1m 23s" session timer. Reflection isn't billed by the second; the timer would change the experience.
+- Style the assistant bubble with the accent color — bubbles compete with the coverage chips and bias the eye toward "AI is doing the work." Card-warm + soft border keeps the assistant present but quiet.
+- Add `vaul` for the chat — see "Open / deferred" below.
+
 ## Push reminders (Phase 5)
 
 - The reminders surface lives in **Settings → Notifications** alongside the existing reminder-time picker. There is no separate "Notifications" page; subscription is configuration, not navigation.

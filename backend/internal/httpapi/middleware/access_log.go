@@ -26,6 +26,14 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap exposes the underlying ResponseWriter so http.NewResponseController
+// can walk the wrapper chain to find Flusher / Hijacker / SetWriteDeadline.
+// Without this method the SSE chat handlers can't flush per-chunk and
+// streaming silently truncates after the first frame.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
+}
+
 // AccessLog emits one structured log line per request after it completes.
 func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

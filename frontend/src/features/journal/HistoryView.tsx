@@ -11,6 +11,7 @@ import { listEntries } from "./api";
 import { HistoryEntryEditor } from "./HistoryEntryEditor";
 import { useEntries, useEntryDates, useQuestions, ENTRY_DATES_KEY, entriesKey } from "./hooks";
 import { HistoryDailyInputs } from "./HistoryDailyInputs";
+import { HistoryChatTranscript } from "@/features/chat/HistoryChatTranscript";
 
 function formatHumanDate(yyyymmdd: string): string {
   const [y, m, d] = yyyymmdd.split("-").map(Number);
@@ -129,6 +130,7 @@ export function HistoryView() {
               ) : (
                 <div className="space-y-6">
                   <HistoryDailyInputs localDate={detail.data!.local_date} />
+                  <HistoryChatTranscript localDate={detail.data!.local_date} />
                   <Card>
                     <CardHeader>
                       <CardTitle className="font-serif">

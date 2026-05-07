@@ -1,0 +1,25 @@
+{{/* User-prompt template for the extraction step. The system prompt
+   (chatExtractionSystemPrompt in chat/extract.go) sets the schema and
+   rules; this template provides the inputs.
+
+   Variables:
+     .Questions — []QuestionView{ID, Prompt}
+     .Messages  — []TranscriptLine{Role, Content}
+*/ -}}
+
+# Questions on file
+
+{{range .Questions -}}
+({{.ID}}) {{.Prompt}}
+{{end}}
+
+# Transcript (verbatim)
+
+{{range .Messages -}}
+[{{.Role}}] {{.Content}}
+
+{{end}}
+
+Now emit the JSON object exactly per the schema in the system prompt.
+Omit `answers` keys for any question the user did not substantively
+answer. Use the user's voice, never the assistant's.

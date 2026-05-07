@@ -59,9 +59,17 @@ func main() {
 	emotionJobs := store.NewEmotionClassifyJobStore(db)
 	pushSubs := store.NewPushSubscriptionStore(db)
 	reminderJobs := store.NewReminderJobStore(db)
+	questions := store.NewQuestionStore(db)
+	chatSessions := store.NewChatSessionStore(db)
+	chatMessages := store.NewChatMessageStore(db)
+	chatExtractionJobs := store.NewChatExtractionJobStore(db)
 
-	llmClient := llm.NewOpenRouter(
-		cfg.OpenRouterKey, cfg.OpenRouterModel,
+	summaryLLM := llm.NewOpenRouter(
+		cfg.OpenRouterKey, cfg.SummaryModel,
+		cfg.PublicBaseURL, "JournAI",
+	)
+	classifyLLM := llm.NewOpenRouter(
+		cfg.OpenRouterKey, cfg.ClassifyModel,
 		cfg.PublicBaseURL, "JournAI",
 	)
 
@@ -79,14 +87,14 @@ func main() {
 		DailyInputs: dailyInputs,
 		Users:       users,
 		Scheduler:   scheduler,
-		LLM:         llmClient,
+		LLM:         summaryLLM,
 		Logger:      logger,
 	}
 	emotionWorker := &jobs.EmotionClassifyWorker{
 		DailyInputs: dailyInputs,
 		EmotionJobs: emotionJobs,
 		Users:       users,
-		LLM:         llmClient,
+		LLM:         classifyLLM,
 		Logger:      logger,
 	}
 
@@ -120,10 +128,32 @@ func main() {
 		AppOrigin:     cfg.PublicBaseURL,
 	}
 
+	chatExtractWorker := &jobs.ChatExtractionWorker{
+		Sessions:    chatSessions,
+		Messages:    chatMessages,
+		Jobs:        chatExtractionJobs,
+		Entries:     entries,
+		DailyInputs: dailyInputs,
+		Questions:   questions,
+		Users:       users,
+		EmotionJobs: emotionJobs,
+		Scheduler:   scheduler,
+		LLM:         classifyLLM,
+		Logger:      logger,
+	}
+
+	chatIdleSweeper := &jobs.ChatIdleSweeper{
+		Sessions:  chatSessions,
+		Jobs:      chatExtractionJobs,
+		IdleAfter: time.Duration(cfg.ChatIdleTimeoutMinutes) * time.Minute,
+		Logger:    logger,
+	}
+
 	workers := river.NewWorkers()
 	river.AddWorker(workers, worker)
 	river.AddWorker(workers, emotionWorker)
 	river.AddWorker(workers, pushWorker)
+	river.AddWorker(workers, chatExtractWorker)
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues: map[string]river.QueueConfig{
@@ -144,12 +174,15 @@ func main() {
 		"env", cfg.AppEnv,
 		"dispatch_interval_seconds", cfg.SummaryDispatchInterval,
 		"inactivity_days", cfg.SummaryInactivityDays,
-		"openrouter_model", cfg.OpenRouterModel,
+		"summary_model", cfg.SummaryModel,
+		"classify_model", cfg.ClassifyModel,
 		"openrouter_key_set", cfg.OpenRouterKey != "",
 		"push_sender_set", pushSender != nil,
 	)
 
-	go runDispatchLoop(rootCtx, logger, jobsStore, emotionJobs, reminderJobs, riverClient, time.Duration(cfg.SummaryDispatchInterval)*time.Second)
+	go runDispatchLoop(rootCtx, logger, jobsStore, emotionJobs, reminderJobs,
+		chatExtractionJobs, chatIdleSweeper,
+		riverClient, time.Duration(cfg.SummaryDispatchInterval)*time.Second)
 
 	<-rootCtx.Done()
 	logger.Info("worker shutting down")
@@ -160,15 +193,18 @@ func main() {
 	}
 }
 
-// runDispatchLoop is the every-N-seconds tick that drains all three job
-// queues. Atomic claim (FOR UPDATE SKIP LOCKED) means concurrent worker
-// replicas can't double-enqueue.
+// runDispatchLoop is the every-N-seconds tick that drains all four job
+// queues (summary, emotion, reminder, chat extraction) and runs the
+// chat idle sweeper. Atomic claim (FOR UPDATE SKIP LOCKED) means
+// concurrent worker replicas can't double-enqueue.
 func runDispatchLoop(
 	ctx context.Context,
 	logger *slog.Logger,
 	jobsStore *store.SummaryJobStore,
 	emotionJobs *store.EmotionClassifyJobStore,
 	reminderJobs *store.ReminderJobStore,
+	chatExtractionJobs *store.ChatExtractionJobStore,
+	chatIdleSweeper *jobs.ChatIdleSweeper,
 	riverClient *river.Client[pgx.Tx],
 	interval time.Duration,
 ) {
@@ -180,14 +216,14 @@ func runDispatchLoop(
 
 	// Run once immediately so a freshly-restarted worker doesn't sit
 	// idle for a full interval if there's a backlog.
-	tick(ctx, logger, jobsStore, emotionJobs, reminderJobs, riverClient)
+	tick(ctx, logger, jobsStore, emotionJobs, reminderJobs, chatExtractionJobs, chatIdleSweeper, riverClient)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tick(ctx, logger, jobsStore, emotionJobs, reminderJobs, riverClient)
+			tick(ctx, logger, jobsStore, emotionJobs, reminderJobs, chatExtractionJobs, chatIdleSweeper, riverClient)
 		}
 	}
 }
@@ -198,6 +234,8 @@ func tick(
 	jobsStore *store.SummaryJobStore,
 	emotionJobs *store.EmotionClassifyJobStore,
 	reminderJobs *store.ReminderJobStore,
+	chatExtractionJobs *store.ChatExtractionJobStore,
+	chatIdleSweeper *jobs.ChatIdleSweeper,
 	riverClient *river.Client[pgx.Tx],
 ) {
 	const batch = 100
@@ -231,16 +269,35 @@ func tick(
 	claimedReminders, err := reminderJobs.ClaimDue(ctx, batch)
 	if err != nil {
 		logger.Warn("claim due reminders", "err", err)
+	} else if len(claimedReminders) > 0 {
+		logger.Info("dispatching reminder jobs", "count", len(claimedReminders))
+		for _, c := range claimedReminders {
+			if _, err := riverClient.Insert(ctx, jobs.ReminderArgs{JobID: c.ID}, nil); err != nil {
+				logger.Warn("river insert (reminder)", "err", err, "job_id", c.ID)
+				_ = reminderJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
+			}
+		}
+	}
+
+	// Chat idle sweeper writes chat_extraction_jobs rows for stale
+	// sessions; the next claim block picks them up.
+	if chatIdleSweeper != nil {
+		chatIdleSweeper.Sweep(ctx, batch)
+	}
+
+	claimedChat, err := chatExtractionJobs.ClaimDue(ctx, batch)
+	if err != nil {
+		logger.Warn("claim due chat extractions", "err", err)
 		return
 	}
-	if len(claimedReminders) == 0 {
+	if len(claimedChat) == 0 {
 		return
 	}
-	logger.Info("dispatching reminder jobs", "count", len(claimedReminders))
-	for _, c := range claimedReminders {
-		if _, err := riverClient.Insert(ctx, jobs.ReminderArgs{JobID: c.ID}, nil); err != nil {
-			logger.Warn("river insert (reminder)", "err", err, "job_id", c.ID)
-			_ = reminderJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
+	logger.Info("dispatching chat extraction jobs", "count", len(claimedChat))
+	for _, c := range claimedChat {
+		if _, err := riverClient.Insert(ctx, jobs.ChatExtractionArgs{JobID: c.ID}, nil); err != nil {
+			logger.Warn("river insert (chat extraction)", "err", err, "job_id", c.ID)
+			_ = chatExtractionJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
 		}
 	}
 }

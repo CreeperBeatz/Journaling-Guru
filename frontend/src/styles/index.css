@@ -3,6 +3,23 @@
 @tailwind utilities;
 
 @layer base {
+  /* Disable browser scroll anchoring on the page-level scroll container.
+   *
+   * Why: the sticky Today bar on /today shrinks (full → condensed) when
+   * the user scrolls past its threshold. With the default `auto`, the
+   * browser tries to "keep the visible content stable" by adjusting
+   * window scrollY by the shrunk amount — which clamps to 0 when the
+   * shrink (~90px) exceeds current scrollY, snapping the user to the
+   * very top of the page mid-scroll. `none` keeps scrollY where the
+   * user put it; the only side effect is a small visible shift of
+   * content under the bar as the bar collapses, which is the desired
+   * behavior here.
+   */
+  html {
+    overflow-anchor: none;
+  }
+
+
   /* Token system: HSL triplets (no hsl() wrapper) so we can compose alpha at
      consumption sites. The bare :root and .dark blocks below define the
      default "paper" palette. Alternate palettes override via [data-palette]

@@ -13,8 +13,8 @@ export interface JournalEntry {
   question_id: string;
   local_date: string; // YYYY-MM-DD
   body: string;
-  source: "text" | "voice";
-  voice_session_id?: string | null;
+  source: "text" | "voice" | "chat";
+  chat_session_id?: string | null;
   created_at: string;
   updated_at: string;
 }

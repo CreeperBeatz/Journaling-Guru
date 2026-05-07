@@ -30,13 +30,13 @@ var ErrEntryNotFound = errors.New("entry not found")
 
 const entryColumns = `id, user_id, question_id,
     to_char(local_date, 'YYYY-MM-DD') AS local_date,
-    body, source, voice_session_id, created_at, updated_at`
+    body, source, chat_session_id, created_at, updated_at`
 
 func scanEntry(row pgx.Row) (*domain.JournalEntry, error) {
 	var e domain.JournalEntry
 	if err := row.Scan(
 		&e.ID, &e.UserID, &e.QuestionID, &e.LocalDate,
-		&e.Body, &e.Source, &e.VoiceSessionID, &e.CreatedAt, &e.UpdatedAt,
+		&e.Body, &e.Source, &e.ChatSessionID, &e.CreatedAt, &e.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (s *EntryStore) ListByDate(ctx context.Context, userID string, localDate ti
 		var e domain.JournalEntry
 		if err := rows.Scan(
 			&e.ID, &e.UserID, &e.QuestionID, &e.LocalDate,
-			&e.Body, &e.Source, &e.VoiceSessionID, &e.CreatedAt, &e.UpdatedAt,
+			&e.Body, &e.Source, &e.ChatSessionID, &e.CreatedAt, &e.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -221,6 +221,131 @@ func (s *EntryStore) Upsert(
 		userID, questionID, localDate, body, source,
 	)
 	e, err := scanEntry(row)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, err
+	}
+	return e, true, nil
+}
+
+// UpsertFromChat is the chat extraction worker's writer. Overwrites
+// any existing row (manual or chat) for the same (user, question, day).
+// The FE warns the user before triggering extraction so they consent
+// to losing prior values for the questions covered in conversation.
+//
+// Empty body is a silent no-op (different from Upsert's empty-deletes
+// semantics). Extraction returning empty for an uncovered question
+// must not delete a manual entry the user wrote.
+//
+// Returns (entry, true, nil) on insert/update; (nil, false, nil) when
+// body was empty; (nil, false, ErrEntryQuestionMissing) for archived
+// or cross-tenant question ids.
+func (s *EntryStore) UpsertFromChat(
+	ctx context.Context,
+	userID, questionID string,
+	localDate time.Time,
+	body, chatSessionID string,
+) (*domain.JournalEntry, bool, error) {
+	if body == "" {
+		return nil, false, nil
+	}
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var owned int
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM questions
+		  WHERE id = $1 AND user_id = $2 AND archived_at IS NULL`,
+		questionID, userID,
+	).Scan(&owned); err != nil {
+		return nil, false, err
+	}
+	if owned == 0 {
+		return nil, false, ErrEntryQuestionMissing
+	}
+
+	row := tx.QueryRow(ctx,
+		`INSERT INTO journal_entries
+		    (user_id, question_id, local_date, body, source, chat_session_id)
+		 VALUES ($1, $2, $3, $4, 'chat', $5)
+		 ON CONFLICT (user_id, question_id, local_date) DO UPDATE
+		    SET body            = EXCLUDED.body,
+		        source          = 'chat',
+		        chat_session_id = EXCLUDED.chat_session_id,
+		        updated_at      = now()
+		 RETURNING `+entryColumns,
+		userID, questionID, localDate, body, chatSessionID,
+	)
+	e, err := scanEntry(row)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, err
+	}
+	return e, true, nil
+}
+
+// UpsertIfAbsent (legacy) writes only when no row exists. Kept for any
+// call sites that want manual-wins; the chat extraction worker now
+// uses UpsertFromChat with explicit overwrite semantics + FE warning.
+//
+// Empty body is a silent no-op (different from Upsert's empty-deletes
+// semantics). Extraction returning empty for an uncovered question
+// must not delete a manual entry the user wrote in parallel.
+//
+// Returns (entry, true, nil) on insert; (nil, false, nil) when an
+// existing row was preserved or body was empty;
+// (nil, false, ErrEntryQuestionMissing) for archived/cross-tenant
+// question ids — the worker logs and continues.
+func (s *EntryStore) UpsertIfAbsent(
+	ctx context.Context,
+	userID, questionID string,
+	localDate time.Time,
+	body, source, chatSessionID string,
+) (*domain.JournalEntry, bool, error) {
+	if body == "" {
+		return nil, false, nil
+	}
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var owned int
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM questions
+		  WHERE id = $1 AND user_id = $2 AND archived_at IS NULL`,
+		questionID, userID,
+	).Scan(&owned); err != nil {
+		return nil, false, err
+	}
+	if owned == 0 {
+		return nil, false, ErrEntryQuestionMissing
+	}
+
+	row := tx.QueryRow(ctx,
+		`INSERT INTO journal_entries
+		    (user_id, question_id, local_date, body, source, chat_session_id)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (user_id, question_id, local_date) DO NOTHING
+		 RETURNING `+entryColumns,
+		userID, questionID, localDate, body, source, chatSessionID,
+	)
+	e, err := scanEntry(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Existing manual entry preserved.
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, err
+		}
+		return nil, false, nil
+	}
 	if err != nil {
 		return nil, false, err
 	}

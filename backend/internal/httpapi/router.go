@@ -15,6 +15,7 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/httpapi/handlers"
 	mw "github.com/cosmosthrace/journai/backend/internal/httpapi/middleware"
 	"github.com/cosmosthrace/journai/backend/internal/jobs"
+	"github.com/cosmosthrace/journai/backend/internal/llm"
 	"github.com/cosmosthrace/journai/backend/internal/mail"
 	"github.com/cosmosthrace/journai/backend/internal/push"
 	"github.com/cosmosthrace/journai/backend/internal/store"
@@ -38,6 +39,9 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	emotionJobs := store.NewEmotionClassifyJobStore(db)
 	pushSubs := store.NewPushSubscriptionStore(db)
 	reminderJobs := store.NewReminderJobStore(db)
+	chatSessions := store.NewChatSessionStore(db)
+	chatMessages := store.NewChatMessageStore(db)
+	chatExtractionJobs := store.NewChatExtractionJobStore(db)
 
 	magicSvc := auth.NewMagicLinkService(auth.MagicLinkConfig{
 		TTL:         cfg.MagicLinkTTL(),
@@ -139,6 +143,31 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		VAPIDPublic: cfg.VAPIDPublic,
 		AppOrigin:   cfg.PublicBaseURL,
 	}
+	chatLLM := llm.NewOpenRouter(
+		cfg.OpenRouterKey, cfg.ChatModel,
+		cfg.PublicBaseURL, "JournAI",
+	)
+	classifyLLM := llm.NewOpenRouter(
+		cfg.OpenRouterKey, cfg.ClassifyModel,
+		cfg.PublicBaseURL, "JournAI",
+	)
+	chatH := &handlers.ChatHandler{
+		Sessions:       chatSessions,
+		Messages:       chatMessages,
+		Jobs:           chatExtractionJobs,
+		Questions:      questions,
+		Users:          users,
+		DailyInputs:    dailyInputs,
+		ChatLLM:        chatLLM,
+		ClassifyLLM:    classifyLLM,
+		Logger:         logger,
+		ChatModel:      cfg.ChatModel,
+		ClassifyModel:  cfg.ClassifyModel,
+		MaxTurns:       cfg.ChatMaxTurns,
+		HardCapMinutes: cfg.ChatHardCapMinutes,
+		KeepLastN:      cfg.ChatTranscriptKeepLast,
+		ResourcesURL:   cfg.ChatCrisisResourcesURL,
+	}
 	healthH := handlers.NewHealth(db)
 
 	r := chi.NewRouter()
@@ -155,72 +184,110 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	r.Use(mw.RequestID)
 	r.Use(mw.Recoverer(logger))
 	r.Use(mw.AccessLog(logger))
-	r.Use(chimw.Timeout(30 * time.Second))
+	// Global Timeout removed — applied per route group below so chat's
+	// SSE handlers can use a longer ceiling without bouncing the whole
+	// request context every 30 s.
 
 	r.Get("/healthz", healthH.Healthz)
 	r.Get("/readyz", healthH.Readyz)
 
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"version":"v2-dev","phase":5}`))
-		})
-
-		// Public read: VAPID public key. The PWA fetches this on first
-		// subscribe attempt — no session required because a logged-out
-		// install screen still needs to set up SW + manifest.
-		r.Get("/push/vapid-public-key", pushH.VAPIDKey)
-
-		// Mutating endpoints: CSRF gate (X-Requested-With required).
+		// Default request timeout for all non-streaming /api routes.
+		// Chat endpoints (mounted further down) override this with 120 s
+		// so streaming assistant turns aren't cut at 30 s.
 		r.Group(func(r chi.Router) {
-			r.Use(mw.CSRF)
+			r.Use(chimw.Timeout(30 * time.Second))
 
-			// Public auth endpoints — no session required.
-			r.Post("/auth/magic-link", authH.MagicLinkRequest)
-			r.Post("/auth/verify", authH.MagicLinkVerify)
-			r.Post("/auth/logout", authH.Logout)
+			r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"version":"v2-dev","phase":6}`))
+			})
 
-			// Authenticated mutators.
+			// Public read: VAPID public key. The PWA fetches this on first
+			// subscribe attempt — no session required because a logged-out
+			// install screen still needs to set up SW + manifest.
+			r.Get("/push/vapid-public-key", pushH.VAPIDKey)
+
+			// Mutating endpoints: CSRF gate (X-Requested-With required).
+			r.Group(func(r chi.Router) {
+				r.Use(mw.CSRF)
+
+				// Public auth endpoints — no session required.
+				r.Post("/auth/magic-link", authH.MagicLinkRequest)
+				r.Post("/auth/verify", authH.MagicLinkVerify)
+				r.Post("/auth/logout", authH.Logout)
+
+				// Authenticated mutators.
+				r.Group(func(r chi.Router) {
+					r.Use(mw.RequireAuth(sessionSvc, cfg.SessionCookieName))
+					r.Delete("/account", acctH.Delete)
+					r.Patch("/me", meH.Update)
+
+					r.Post("/questions", questionsH.Create)
+					r.Patch("/questions/{id}", questionsH.Update)
+					r.Delete("/questions/{id}", questionsH.Archive)
+					r.Post("/questions/reorder", questionsH.Reorder)
+
+					r.Put("/entries", entriesH.Upsert)
+					r.Patch("/entries/{id}", entriesH.UpdateByID)
+
+					r.Put("/daily/inputs", dailyInputsH.Upsert)
+					r.Patch("/daily/inputs/by-date/{date}", dailyInputsH.UpdateByDate)
+
+					r.Post("/summaries/regenerate", summariesH.Regenerate)
+
+					r.Post("/push/subscribe", pushH.Subscribe)
+					r.Delete("/push/subscribe", pushH.Unsubscribe)
+					r.Post("/push/test", pushH.Test)
+				})
+			})
+
+			// Authenticated reads.
 			r.Group(func(r chi.Router) {
 				r.Use(mw.RequireAuth(sessionSvc, cfg.SessionCookieName))
-				r.Delete("/account", acctH.Delete)
-				r.Patch("/me", meH.Update)
+				r.Get("/me", meH.Get)
+				r.Get("/questions", questionsH.List)
+				r.Get("/entries", entriesH.ListByDate)
+				r.Get("/entries/dates", entriesH.ListDates)
 
-				r.Post("/questions", questionsH.Create)
-				r.Patch("/questions/{id}", questionsH.Update)
-				r.Delete("/questions/{id}", questionsH.Archive)
-				r.Post("/questions/reorder", questionsH.Reorder)
+				r.Get("/daily/inputs", dailyInputsH.Get)
 
-				r.Put("/entries", entriesH.Upsert)
-				r.Patch("/entries/{id}", entriesH.UpdateByID)
+				r.Get("/summaries", summariesH.List)
+				r.Get("/summaries/stats", summariesH.Stats)
+				r.Get("/summaries/jobs/status", summariesH.JobStatus)
+				r.Get("/summaries/{id}", summariesH.Get)
 
-				r.Put("/daily/inputs", dailyInputsH.Upsert)
-				r.Patch("/daily/inputs/by-date/{date}", dailyInputsH.UpdateByDate)
-
-				r.Post("/summaries/regenerate", summariesH.Regenerate)
-
-				r.Post("/push/subscribe", pushH.Subscribe)
-				r.Delete("/push/subscribe", pushH.Unsubscribe)
-				r.Post("/push/test", pushH.Test)
+				r.Get("/push/state", pushH.State)
 			})
 		})
 
-		// Authenticated reads.
-		r.Group(func(r chi.Router) {
+		// /api/chat — NO chimw.Timeout here. The Timeout middleware's
+		// internal ResponseWriter wrapper does not implement
+		// http.Flusher, which kills SSE streaming. Streaming endpoints
+		// rely on context cancellation from the client (the request
+		// context fires when the browser disconnects); short non-
+		// streaming endpoints finish well under the global 30s anyway.
+		// All chat routes require auth; mutating verbs go through CSRF.
+		r.Route("/chat", func(r chi.Router) {
 			r.Use(mw.RequireAuth(sessionSvc, cfg.SessionCookieName))
-			r.Get("/me", meH.Get)
-			r.Get("/questions", questionsH.List)
-			r.Get("/entries", entriesH.ListByDate)
-			r.Get("/entries/dates", entriesH.ListDates)
 
-			r.Get("/daily/inputs", dailyInputsH.Get)
+			// Reads.
+			r.Get("/sessions/today", chatH.Today)
+			r.Get("/sessions/by-date/{date}", chatH.ByDate)
+			r.Get("/sessions/{id}/extraction/status", chatH.ExtractionStatus)
+			// Opener is a GET (no body) so EventSource-style clients
+			// could in principle subscribe; we use fetch+ReadableStream
+			// on the FE for symmetry with POST /messages.
+			r.Get("/sessions/{id}/opener", chatH.Opener)
 
-			r.Get("/summaries", summariesH.List)
-			r.Get("/summaries/stats", summariesH.Stats)
-			r.Get("/summaries/jobs/status", summariesH.JobStatus)
-			r.Get("/summaries/{id}", summariesH.Get)
-
-			r.Get("/push/state", pushH.State)
+			// Mutators.
+			r.Group(func(r chi.Router) {
+				r.Use(mw.CSRF)
+				r.Post("/sessions", chatH.CreateOrResume)
+				r.Post("/sessions/{id}/messages", chatH.StreamMessage)
+				r.Post("/sessions/{id}/finalize", chatH.Finalize)
+				r.Post("/sessions/{id}/reset", chatH.Reset)
+			})
 		})
 	})
 

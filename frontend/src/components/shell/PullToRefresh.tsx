@@ -22,9 +22,13 @@ export function PullToRefresh({ children, onRefresh }: Props) {
   const startScroll = useRef(0);
   const armed = useRef(false);
 
-  // Scale + rotation tied to drag distance.
+  // Scale + rotation tied to drag distance. All hooks must be called
+  // before the touch-only early return so the hook count is stable
+  // across renders — otherwise React fires "Rendered more hooks than
+  // during the previous render" the first time the media query flips.
   const indicatorOpacity = useTransform(y, [0, TRIGGER], [0, 1]);
   const indicatorRotate = useTransform(y, [0, MAX], [0, 360]);
+  const indicatorY = useTransform(y, (v) => Math.max(0, v - 24));
 
   if (!touch) return <>{children}</>;
 
@@ -58,7 +62,7 @@ export function PullToRefresh({ children, onRefresh }: Props) {
       <motion.div
         aria-hidden={!refreshing}
         className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2"
-        style={{ y: useTransform(y, (v) => Math.max(0, v - 24)), opacity: indicatorOpacity }}
+        style={{ y: indicatorY, opacity: indicatorOpacity }}
       >
         <div className="rounded-full border border-border bg-card p-2 shadow-md">
           {refreshing ? (

@@ -113,6 +113,93 @@ func (s *DailyInputStore) Upsert(
 	return out, true, nil
 }
 
+// OverwriteFromExtraction is the chat extraction writer. Overwrites
+// mood/emotions/notes from extraction output — the user is warned at
+// the FE before clicking "Update check-in", so they consent to losing
+// any prior manual values for those fields.
+//
+// Empty extracted values DO NOT blank existing fields. If chat covered
+// mood but not notes, manual notes are preserved. classified_emotions
+// is owned by the EmotionClassifyWorker and is never touched here; the
+// caller schedules a re-classify after writing emotions_text so the
+// classifier output catches up to the new text.
+func (s *DailyInputStore) OverwriteFromExtraction(
+	ctx context.Context,
+	userID string,
+	localDate time.Time,
+	mood *int,
+	emotions string,
+	notes string,
+) (*domain.DailyInput, error) {
+	emotions = strings.TrimSpace(emotions)
+	notes = strings.TrimSpace(notes)
+	if mood == nil && emotions == "" && notes == "" {
+		return s.GetByDate(ctx, userID, localDate)
+	}
+	const q = `
+		INSERT INTO daily_inputs (user_id, local_date, mood_score, emotions_text, notes)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (user_id, local_date) DO UPDATE
+		   SET mood_score    = COALESCE(EXCLUDED.mood_score, daily_inputs.mood_score),
+		       emotions_text = CASE WHEN EXCLUDED.emotions_text = ''
+		                            THEN daily_inputs.emotions_text
+		                            ELSE EXCLUDED.emotions_text
+		                       END,
+		       notes         = CASE WHEN EXCLUDED.notes = ''
+		                            THEN daily_inputs.notes
+		                            ELSE EXCLUDED.notes
+		                       END,
+		       updated_at    = now()
+		RETURNING ` + dailyInputColumns
+	row := s.DB.QueryRow(ctx, q, userID, localDate, mood, emotions, notes)
+	out, err := scanDailyInput(row)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// MergeFromExtraction (legacy) — left in place for backwards-compat
+// but no longer the default chat extraction writer. Was used to give
+// "manual-wins per field"; the new chat UX explicitly warns the user
+// before overwriting, so OverwriteFromExtraction is preferred.
+func (s *DailyInputStore) MergeFromExtraction(
+	ctx context.Context,
+	userID string,
+	localDate time.Time,
+	mood *int,
+	emotions string,
+	notes string,
+) (*domain.DailyInput, error) {
+	emotions = strings.TrimSpace(emotions)
+	notes = strings.TrimSpace(notes)
+	allEmpty := mood == nil && emotions == "" && notes == ""
+	if allEmpty {
+		return s.GetByDate(ctx, userID, localDate)
+	}
+	const q = `
+		INSERT INTO daily_inputs (user_id, local_date, mood_score, emotions_text, notes)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (user_id, local_date) DO UPDATE
+		   SET mood_score    = COALESCE(daily_inputs.mood_score, EXCLUDED.mood_score),
+		       emotions_text = CASE WHEN daily_inputs.emotions_text = ''
+		                            THEN EXCLUDED.emotions_text
+		                            ELSE daily_inputs.emotions_text
+		                       END,
+		       notes         = CASE WHEN daily_inputs.notes = ''
+		                            THEN EXCLUDED.notes
+		                            ELSE daily_inputs.notes
+		                       END,
+		       updated_at    = now()
+		RETURNING ` + dailyInputColumns
+	row := s.DB.QueryRow(ctx, q, userID, localDate, mood, emotions, notes)
+	out, err := scanDailyInput(row)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WriteClassifiedEmotions overwrites the classifier output column. Called
 // by the EmotionClassifyWorker on completion (or to clear the column to
 // `[]` when emotions_text becomes empty). No-op if the row is gone (the

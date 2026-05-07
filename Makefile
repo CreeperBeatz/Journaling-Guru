@@ -22,13 +22,13 @@ psql: ## Open psql against the dev database
 	docker compose exec postgres psql -U journai -d journai
 
 migrate-up: ## Apply all pending migrations
-	cd backend && go run ./cmd/migrate up
+	@set -a && . ./.env && set +a && cd backend && go run ./cmd/migrate up
 
 migrate-down: ## Roll back one migration
-	cd backend && go run ./cmd/migrate down
+	@set -a && . ./.env && set +a && cd backend && go run ./cmd/migrate down
 
 migrate-status: ## Show migration status
-	cd backend && go run ./cmd/migrate status
+	@set -a && . ./.env && set +a && cd backend && go run ./cmd/migrate status
 
 fmt: ## gofmt the backend
 	cd backend && gofmt -w .

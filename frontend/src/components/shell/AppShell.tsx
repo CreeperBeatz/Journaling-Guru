@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   Navigate,
   NavLink,
@@ -23,6 +23,8 @@ import { STATS_KEY } from "@/features/summaries/hooks";
 import { getStats } from "@/features/summaries/api";
 import { dailyInputKey } from "@/features/daily/hooks";
 import { getDailyInput } from "@/features/daily/api";
+import { chatSessionKey } from "@/features/chat/hooks";
+import { getTodaySession } from "@/features/chat/api";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -78,12 +80,45 @@ export function AppShell() {
       queryFn: () => getDailyInput(),
       staleTime: 30_000,
     });
+    // Phase 6a: chat is the default mode of /today. Prefetching the
+    // session envelope means the streamed greeting can start the moment
+    // the route's chunk resolves, instead of after a round-trip.
+    qc.prefetchQuery({
+      queryKey: chatSessionKey(),
+      queryFn: () => getTodaySession(),
+      staleTime: 60_000,
+    });
   }, [me.data?.id, qc]);
 
   const signOut = useMutation({
     mutationFn: () => logout(),
     onSettled: () => qc.invalidateQueries({ queryKey: ME_KEY }),
   });
+
+  // Publish the mobile header's actual rendered height as a CSS var so
+  // sibling sticky bars (DailyEntry's Today bar, ChatPanel's coverage
+  // strip) can pin flush against it without guessing. On desktop the
+  // header is `md:hidden` and offsetHeight is 0, so the var resolves to
+  // 0px and the consumers naturally pin to viewport top there.
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const update = () => {
+      document.documentElement.style.setProperty(
+        "--app-mobile-header-h",
+        `${el.offsetHeight}px`,
+      );
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, []);
 
   if (me.isPending) {
     return <AppShellSkeleton />;
@@ -115,7 +150,10 @@ export function AppShell() {
         signingOut={signOut.isPending}
       />
       <div className="flex min-h-svh flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border/60 bg-background/80 px-4 backdrop-blur-md md:hidden pt-[env(safe-area-inset-top)]">
+        <header
+          ref={headerRef}
+          className="sticky top-0 z-30 flex items-center justify-between border-b border-border/60 bg-background/80 px-4 backdrop-blur-md md:hidden pt-[env(safe-area-inset-top)]"
+        >
           <NavLink to="/" className="font-serif italic text-lg leading-none py-3">
             JournAI
           </NavLink>

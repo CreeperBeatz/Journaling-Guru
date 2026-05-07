@@ -39,8 +39,15 @@ type Config struct {
 	SMTPPass string `env:"SMTP_PASS"`
 	SMTPFrom string `env:"SMTP_FROM" envDefault:"JournAI <hello@journai.local>"`
 
-	OpenRouterKey   string `env:"OPENROUTER_API_KEY"`
-	OpenRouterModel string `env:"OPENROUTER_MODEL" envDefault:"anthropic/claude-sonnet-4-5"`
+	OpenRouterKey string `env:"OPENROUTER_API_KEY"`
+	// Three model tiers, all routed through OpenRouter. Chat is
+	// latency-sensitive; summaries are async long-form; classify covers
+	// short JSON tasks (emotion classify, chat coverage, post-session
+	// extraction). Summary and classify share a default but stay tunable
+	// independently.
+	ChatModel     string `env:"CHAT_MODEL"     envDefault:"anthropic/claude-sonnet-4-5"`
+	SummaryModel  string `env:"SUMMARY_MODEL"  envDefault:"google/gemma-4-26b-a4b-it"`
+	ClassifyModel string `env:"CLASSIFY_MODEL" envDefault:"google/gemma-4-26b-a4b-it"`
 
 	// Worker tick + dormancy. SummaryDispatchInterval controls how often the
 	// worker scans summary_jobs for due rows. SummaryInactivityDays is the
@@ -52,6 +59,14 @@ type Config struct {
 
 	OpenAIKey           string `env:"OPENAI_API_KEY"`
 	OpenAIRealtimeModel string `env:"OPENAI_REALTIME_MODEL" envDefault:"gpt-realtime"`
+
+	// Chat (Phase 6a). Model defaults live up top with the other
+	// tiers; the knobs below are session-shape, not model selection.
+	ChatIdleTimeoutMinutes int `env:"CHAT_IDLE_TIMEOUT_MIN" envDefault:"20"`
+	ChatHardCapMinutes     int    `env:"CHAT_HARD_CAP_MIN" envDefault:"30"`
+	ChatMaxTurns           int    `env:"CHAT_MAX_TURNS" envDefault:"50"`
+	ChatTranscriptKeepLast int    `env:"CHAT_TRANSCRIPT_KEEP_LAST" envDefault:"30"`
+	ChatCrisisResourcesURL string `env:"CHAT_CRISIS_RESOURCES_URL" envDefault:"/resources"`
 
 	VAPIDPublic  string `env:"VAPID_PUBLIC_KEY"`
 	VAPIDPrivate string `env:"VAPID_PRIVATE_KEY"`

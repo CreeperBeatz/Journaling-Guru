@@ -38,6 +38,9 @@ const MagicLinkVerify = lazy(() =>
 const HealthPage = lazy(() =>
   import("./features/health/HealthPage").then((m) => ({ default: m.HealthPage })),
 );
+const ResourcesPage = lazy(() =>
+  import("./features/resources/ResourcesPage").then((m) => ({ default: m.ResourcesPage })),
+);
 
 function withSuspense(node: ReactNode, fallback: ReactNode) {
   return <Suspense fallback={fallback}>{node}</Suspense>;
@@ -71,6 +74,12 @@ export const router = createBrowserRouter([
       {
         path: "/health",
         element: withSuspense(<HealthPage />, <AuthCardSkeleton />),
+      },
+      // Crisis resources — public so a user in distress can reach it
+      // from anywhere, including the in-chat CrisisCard.
+      {
+        path: "/resources",
+        element: withSuspense(<ResourcesPage />, <AuthCardSkeleton />),
       },
     ],
   },

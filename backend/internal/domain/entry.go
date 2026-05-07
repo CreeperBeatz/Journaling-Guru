@@ -14,7 +14,7 @@ type JournalEntry struct {
 	LocalDate      string    `json:"local_date"` // YYYY-MM-DD
 	Body           string    `json:"body"`
 	Source         string    `json:"source"`
-	VoiceSessionID *string   `json:"voice_session_id,omitempty"`
+	ChatSessionID  *string   `json:"chat_session_id,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
