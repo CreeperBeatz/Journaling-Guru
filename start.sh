@@ -8,12 +8,15 @@
 # By default Vite binds 0.0.0.0 so phones on the same Wi-Fi can reach it at
 # http://<windows-ip>:5173. The script tries to detect that IP for you via
 # powershell.exe. Over plain HTTP the PWA service worker / push won't register
-# — use --tunnel for that.
+# — use --tunnel or --ngrok for that.
 #
 # Flags:
 #   --tunnel     start a cloudflared quick tunnel and inject PUBLIC_BASE_URL +
 #                COOKIE_SECURE=true so magic links and Secure cookies work over
 #                the public HTTPS URL. URL is ephemeral (random per run).
+#   --ngrok      same as --tunnel but uses ngrok with a reserved domain
+#                (default: champion-square-yak.ngrok-free.app, override via
+#                NGROK_URL in .env). URL is stable across runs.
 #   --localhost  bind only to localhost (no LAN exposure, no tunnel)
 #
 # SMTP is expected to be an external provider configured via .env.
@@ -26,9 +29,10 @@ MODE="lan"
 for arg in "$@"; do
   case "$arg" in
     --tunnel) MODE="tunnel" ;;
+    --ngrok) MODE="ngrok" ;;
     --localhost) MODE="localhost" ;;
     -h|--help)
-      sed -n '2,19p' "${BASH_SOURCE[0]}"
+      sed -n '2,22p' "${BASH_SOURCE[0]}"
       exit 0
       ;;
     *) echo "[start] unknown arg: $arg" >&2; exit 1 ;;
@@ -73,14 +77,14 @@ done
 echo "[start] applying migrations…"
 ( cd backend && go run ./cmd/migrate up )
 
-CLOUDFLARED_PID=""
-CLOUDFLARED_LOG=""
+TUNNEL_PID=""
+TUNNEL_LOG=""
 cleanup() {
-  if [[ -n "${CLOUDFLARED_PID}" ]] && kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
-    kill "$CLOUDFLARED_PID" 2>/dev/null || true
+  if [[ -n "${TUNNEL_PID}" ]] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
+    kill "$TUNNEL_PID" 2>/dev/null || true
   fi
-  if [[ -n "${CLOUDFLARED_LOG}" && -f "${CLOUDFLARED_LOG}" ]]; then
-    rm -f "$CLOUDFLARED_LOG"
+  if [[ -n "${TUNNEL_LOG}" && -f "${TUNNEL_LOG}" ]]; then
+    rm -f "$TUNNEL_LOG"
   fi
 }
 
@@ -105,21 +109,21 @@ if [[ "$MODE" == "tunnel" ]]; then
     exit 1
   fi
 
-  CLOUDFLARED_LOG="$(mktemp -t cloudflared.XXXXXX.log)"
+  TUNNEL_LOG="$(mktemp -t cloudflared.XXXXXX.log)"
   trap cleanup EXIT INT TERM
 
   echo "[start] starting cloudflared quick tunnel → localhost:5173…"
-  cloudflared tunnel --url http://localhost:5173 >"$CLOUDFLARED_LOG" 2>&1 &
-  CLOUDFLARED_PID=$!
+  cloudflared tunnel --url http://localhost:5173 >"$TUNNEL_LOG" 2>&1 &
+  TUNNEL_PID=$!
 
   TUNNEL_URL=""
   for i in {1..30}; do
-    if ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
+    if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
       echo "[start] cloudflared exited unexpectedly. log:" >&2
-      cat "$CLOUDFLARED_LOG" >&2
+      cat "$TUNNEL_LOG" >&2
       exit 1
     fi
-    TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$CLOUDFLARED_LOG" | head -1 || true)
+    TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" | head -1 || true)
     if [[ -n "$TUNNEL_URL" ]]; then
       break
     fi
@@ -128,15 +132,66 @@ if [[ "$MODE" == "tunnel" ]]; then
 
   if [[ -z "$TUNNEL_URL" ]]; then
     echo "[start] timed out waiting for cloudflared URL. log:" >&2
-    cat "$CLOUDFLARED_LOG" >&2
+    cat "$TUNNEL_LOG" >&2
     exit 1
   fi
 
   export PUBLIC_BASE_URL="$TUNNEL_URL"
   export COOKIE_SECURE=true
+  # SPA calls the API through the same public URL; Vite proxies /api to the
+  # local backend (proxy target stays localhost:8080 to avoid a tunnel loop).
+  export VITE_API_BASE="$TUNNEL_URL"
   # Vite needs to accept the tunnel domain in the Host header.
   export VITE_DEV_HOST=true
   echo "[start] tunnel ready → $TUNNEL_URL  (open this on your phone)"
+fi
+
+if [[ "$MODE" == "ngrok" ]]; then
+  if ! command -v ngrok >/dev/null 2>&1; then
+    echo "[start] ngrok not on PATH. Install via: https://ngrok.com/download" >&2
+    exit 1
+  fi
+
+  NGROK_HOST="${NGROK_URL:-champion-square-yak.ngrok-free.app}"
+  # Strip any scheme the user may have added to NGROK_URL.
+  NGROK_HOST="${NGROK_HOST#https://}"
+  NGROK_HOST="${NGROK_HOST#http://}"
+
+  TUNNEL_LOG="$(mktemp -t ngrok.XXXXXX.log)"
+  trap cleanup EXIT INT TERM
+
+  echo "[start] starting ngrok → https://${NGROK_HOST} → localhost:5173…"
+  ngrok http "5173" --url="${NGROK_HOST}" --log=stdout --log-format=logfmt >"$TUNNEL_LOG" 2>&1 &
+  TUNNEL_PID=$!
+
+  TUNNEL_READY=""
+  for i in {1..30}; do
+    if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+      echo "[start] ngrok exited unexpectedly. log:" >&2
+      cat "$TUNNEL_LOG" >&2
+      exit 1
+    fi
+    if grep -qE 'started tunnel|url=https://' "$TUNNEL_LOG" 2>/dev/null; then
+      TUNNEL_READY=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ -z "$TUNNEL_READY" ]]; then
+    echo "[start] timed out waiting for ngrok tunnel. log:" >&2
+    cat "$TUNNEL_LOG" >&2
+    exit 1
+  fi
+
+  export PUBLIC_BASE_URL="https://${NGROK_HOST}"
+  export COOKIE_SECURE=true
+  # SPA calls the API through the same public URL; Vite proxies /api to the
+  # local backend (proxy target stays localhost:8080 to avoid a tunnel loop).
+  export VITE_API_BASE="${PUBLIC_BASE_URL}"
+  # Vite needs to accept the tunnel domain in the Host header.
+  export VITE_DEV_HOST=true
+  echo "[start] ngrok ready → ${PUBLIC_BASE_URL}  (open this on your phone)"
 fi
 
 run_stack() {
@@ -161,9 +216,9 @@ run_stack() {
   fi
 }
 
-# When tunnel mode is on we need the EXIT trap to run so cloudflared is killed,
-# so we can't `exec` the supervisor — keep it as a child and `wait` on it.
-if [[ -n "$CLOUDFLARED_PID" ]]; then
+# When a tunnel is on we need the EXIT trap to run so the tunnel process is
+# killed, so we can't `exec` the supervisor — keep it as a child and `wait`.
+if [[ -n "$TUNNEL_PID" ]]; then
   run_stack &
   STACK_PID=$!
   wait "$STACK_PID"

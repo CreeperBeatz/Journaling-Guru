@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "node:path";
@@ -6,9 +6,13 @@ import path from "node:path";
 // We use `injectManifest` (not `generateSW`) so the push handler in
 // src/sw/push-handler.ts is the actual service worker. Workbox precaching
 // still runs because vite-plugin-pwa injects the manifest into our SW.
-export default defineConfig(({ mode, command }) => {
-  const env = loadEnv(mode, path.resolve(__dirname, ".."), "VITE_");
-  const apiBase = env.VITE_API_BASE || "http://localhost:8080";
+export default defineConfig(({ command }) => {
+  // The proxy target intentionally does NOT use VITE_API_BASE — start.sh
+  // --tunnel/--ngrok sets VITE_API_BASE to the public URL so the SPA calls
+  // it directly, and reusing it as the proxy target would create a tunnel
+  // loop (Vite → tunnel → Vite → ...).
+  const proxyTarget =
+    process.env.VITE_PROXY_API_TARGET || "http://localhost:8080";
   const isDev = command === "serve";
   // Set by start.sh --lan / --tunnel: bind 0.0.0.0 so phones on the LAN can
   // reach Vite. (For tunnels, cloudflared connects via 127.0.0.1, so this is
@@ -74,7 +78,7 @@ export default defineConfig(({ mode, command }) => {
       // its auth endpoints under /api/auth/*, so only /api needs proxying.
       proxy: {
         "/api": {
-          target: apiBase,
+          target: proxyTarget,
           changeOrigin: true,
         },
       },

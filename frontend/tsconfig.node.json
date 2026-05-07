@@ -1,6 +1,11 @@
 {
   "compilerOptions": {
     "composite": true,
+    // Emit `tsc -b` output into a cache dir so vite.config.js doesn't get
+    // written next to vite.config.ts. Vite's config resolver checks .js
+    // before .ts, so a shadow file silently overrides edits to the source.
+    "outDir": "./node_modules/.cache/tsc-node",
+    "tsBuildInfoFile": "./node_modules/.cache/tsc-node/tsconfig.node.tsbuildinfo",
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
