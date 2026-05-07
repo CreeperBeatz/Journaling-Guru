@@ -160,7 +160,7 @@ export function ChatPanel({ coverageCompact = false }: Props) {
         <div
           style={{ top: "calc(var(--app-mobile-header-h, 2.5rem) + 3rem)" }}
           className={cn(
-            "sticky z-10 -mx-5 px-5 transition-[background-color,border-color] duration-200",
+            "sticky z-10 -mx-5 px-5 transition-[padding,background-color,border-color] duration-200",
             coverageCompact
               ? "border-b border-border/60 bg-background/85 py-1.5 backdrop-blur-md"
               : "border-b border-transparent bg-transparent py-0",

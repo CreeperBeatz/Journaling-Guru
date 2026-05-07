@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -193,26 +193,6 @@ export function DailyEntry() {
   // immediately before the bar (see useIsStuck for why).
   const sentinelRef = useRef<HTMLDivElement>(null);
   const isStuck = useIsStuck(sentinelRef);
-  // When the sticky bar collapses (header hides, padding shrinks, tabs
-  // shorten) its natural slot in document flow shrinks too — every byte
-  // of content below jumps up by the delta in viewport space. Compensate
-  // by scrolling the page by that delta so the page-content stays
-  // visually anchored across the stuck/unstuck transition.
-  const barRef = useRef<HTMLDivElement>(null);
-  const prevBarHeightRef = useRef<number | null>(null);
-  useLayoutEffect(() => {
-    const el = barRef.current;
-    if (!el) return;
-    const newH = el.offsetHeight;
-    const prev = prevBarHeightRef.current;
-    prevBarHeightRef.current = newH;
-    if (prev === null || prev === newH) return;
-    const delta = newH - prev;
-    // Use the documentElement scroller (window) to keep the relative
-    // position of content under the bar fixed. behavior:'instant' so we
-    // don't fight the still-running CSS transitions.
-    window.scrollBy({ top: delta, left: 0, behavior: "instant" as ScrollBehavior });
-  }, [isStuck]);
   const prefersReducedMotion = useReducedMotion();
   const layoutAnim = prefersReducedMotion
     ? ({ duration: 0 } as const)
@@ -292,7 +272,6 @@ export function DailyEntry() {
       <div ref={sentinelRef} aria-hidden className="h-px" />
 
       <div
-        ref={barRef}
         data-stuck={isStuck ? "true" : "false"}
         // Top offset is the AppShell mobile header's actual rendered
         // height (set as a CSS var by AppShell's ResizeObserver).
@@ -303,11 +282,7 @@ export function DailyEntry() {
           "sticky z-20",
           "-mx-4 md:-mx-8 px-4 md:px-8",
           "bg-background/85 backdrop-blur-md",
-          // Padding snaps (no transition) so the bar's natural height
-          // changes in one frame; the scroll-compensation effect above
-          // matches that snap. Animating padding here would drift the
-          // page during the 200ms transition.
-          "border-b transition-[border-color] duration-200",
+          "border-b transition-[border-color,padding] duration-200",
           isStuck ? "border-border/60 py-2" : "border-transparent py-4 md:py-5",
         )}
       >
@@ -330,12 +305,11 @@ export function DailyEntry() {
         >
           <header
             className={cn(
-              "min-w-0 flex-1 overflow-hidden",
+              "min-w-0 flex-1 transition-[max-height,opacity] duration-200 overflow-hidden",
               !isStuck && "space-y-1",
               // Mobile + stuck: collapse header out of layout so tabs
-              // sit flush at the top of the bar. Snap (no transition):
-              // animating max-height drifts content under the bar.
-              isStuck ? "max-md:hidden" : "",
+              // sit flush at the top of the bar.
+              isStuck ? "max-md:max-h-0 max-md:opacity-0" : "max-h-32 opacity-100",
               isStuck && "md:leading-tight",
             )}
           >
@@ -399,7 +373,7 @@ export function DailyEntry() {
           >
             <TabsList
               className={cn(
-                "grid w-full grid-cols-3",
+                "grid w-full grid-cols-3 transition-[height] duration-200",
                 isStuck && "h-8 md:inline-flex md:w-auto",
               )}
             >
