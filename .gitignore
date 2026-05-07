@@ -7,6 +7,7 @@
 backend/bin/
 backend/tmp/
 backend/.air.tmp/
+backend/smoke-classify
 *.test
 *.out
 coverage.txt
@@ -22,6 +23,7 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 frontend/*.tsbuildinfo
 frontend/**/*.tsbuildinfo
+frontend/vite.config.ts.timestamp-*.mjs
 
 # IDE / OS
 .idea/
