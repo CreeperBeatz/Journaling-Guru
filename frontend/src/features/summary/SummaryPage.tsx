@@ -1,28 +1,28 @@
 import { useState } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useSummaries, useStats } from "@/features/summaries/hooks";
-import { StatsPanel } from "@/features/summaries/StatsPanel";
+import { useSummaries } from "@/features/summaries/hooks";
 
 import { WeeklyLetter } from "./WeeklyLetter";
 import { ByQuestionTimeline } from "./ByQuestionTimeline";
+import { TrendsDashboard } from "./TrendsDashboard";
 
 type Tab = "trends" | "by-question";
 
 /**
  * /summary — two-tab surface:
- *   - Trends: WeeklyLetter (hero) + folded dashboard (stats panel for now;
- *     WordCloud / MoodLine / GuruNote land in step 6).
+ *   - Trends: WeeklyLetter (hero) + collapsible TrendsDashboard
+ *     (StatTiles + MoodLine + WordCloud + GuruNote).
  *   - By Question: question rail + vertical timeline.
  *
- * The most recent weekly summary drives the letter. When no weekly
- * summary exists yet (new users, mid-week before the first Sunday),
- * WeeklyLetter renders its empty-state copy.
+ * The most recent weekly summary drives the letter and seeds the
+ * dashboard's GuruNote / accent pick. When no weekly summary exists
+ * yet, WeeklyLetter renders its empty-state copy and the dashboard
+ * still surfaces stats from the daily summary stream.
  */
 export function SummaryPage() {
   const [tab, setTab] = useState<Tab>("trends");
   const weekly = useSummaries("week", 1);
-  const stats = useStats(90);
 
   const latestLetter = weekly.data?.[0] ?? null;
 
@@ -43,10 +43,7 @@ export function SummaryPage() {
 
         <TabsContent value="trends" className="m-0 space-y-6">
           <WeeklyLetter summary={latestLetter} loading={weekly.isPending} />
-          {/* Step 6 will replace this with WordCloud + MoodLine + StatTiles
-              + GuruNote inside a collapsible Card. For now, surface the
-              existing stats panel so the data isn't dropped. */}
-          <StatsPanel stats={stats.data} loading={stats.isPending} />
+          <TrendsDashboard weekly={latestLetter} />
         </TabsContent>
 
         <TabsContent value="by-question" className="m-0">
