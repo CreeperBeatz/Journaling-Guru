@@ -57,11 +57,20 @@ export function HistoryView() {
 
 // ---------- Landing (heatmap + recent entries) ----------
 
+const RECENT_PAGE_STEP = 14;
+
 function HistoryLanding() {
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const heatmap = useHeatmap();
-  const dates = useEntryDates(14);
+  const [recentLimit, setRecentLimit] = useState(RECENT_PAGE_STEP);
+  const dates = useEntryDates(recentLimit);
+
+  // View + anchor drive the drill-down. Year (no anchor = today) →
+  // click a month tile → month with that anchor → click a week → week
+  // with that anchor → click a day → /history/:date.
   const [view, setView] = useState<HeatView>("year");
+  const [anchor, setAnchor] = useState<string | null>(null);
 
   const days = heatmap.data?.days ?? [];
   const today = heatmap.data?.today ?? new Date().toISOString().slice(0, 10);
@@ -73,6 +82,23 @@ function HistoryLanding() {
       qc.refetchQueries({ queryKey: heatmapKey() }),
       qc.refetchQueries({ queryKey: ENTRY_DATES_KEY }),
     ]);
+  };
+
+  // ViewToggle changes always reset the anchor so the user lands on
+  // today's slice of whichever view they picked.
+  const setViewReset = (v: HeatView) => {
+    setView(v);
+    setAnchor(null);
+  };
+
+  const goUp = () => {
+    if (view === "week") {
+      setView("month");
+      // keep anchor so the parent month is highlighted
+    } else if (view === "month") {
+      setView("year");
+      setAnchor(null);
+    }
   };
 
   return (
@@ -90,7 +116,18 @@ function HistoryLanding() {
 
         <section className="space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <ViewToggle value={view} onChange={setView} />
+            <div className="flex items-center gap-2">
+              <ViewToggle value={view} onChange={setViewReset} />
+              {view !== "year" ? (
+                <button
+                  type="button"
+                  onClick={goUp}
+                  className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground"
+                >
+                  ← Up
+                </button>
+              ) : null}
+            </div>
             <p className="font-mono text-[11px] text-muted-foreground" aria-hidden>
               none · short · mid · deep
             </p>
@@ -101,9 +138,26 @@ function HistoryLanding() {
           ) : heatmap.isError ? (
             <p className="text-sm text-destructive">Couldn&apos;t load heatmap.</p>
           ) : (
-            // Read-only — cells are too small to be reliable tap targets.
-            // Use the Recent entries list below to open a specific day.
-            <HeatGrid cells={cells} view={view} anchor={today} />
+            <HeatGrid
+              cells={cells}
+              view={view}
+              anchor={anchor ?? today}
+              onMonthClick={(iso) => {
+                setAnchor(iso);
+                setView("month");
+              }}
+              onWeekClick={(iso) => {
+                setAnchor(iso);
+                setView("week");
+              }}
+              onSelect={(iso) => {
+                qc.prefetchQuery({
+                  queryKey: entriesKey(iso),
+                  queryFn: () => listEntries(iso),
+                });
+                navigate(`/history/${iso}`);
+              }}
+            />
           )}
         </section>
 
@@ -118,21 +172,41 @@ function HistoryLanding() {
               Nothing yet — write today&apos;s entries and they&apos;ll appear here tomorrow.
             </p>
           ) : (
-            <ul className="divide-y divide-border/60">
-              {dates.data!.map((d) => (
-                <li key={d.local_date}>
-                  <Link
-                    to={`/history/${d.local_date}`}
-                    className="flex items-baseline justify-between gap-3 py-3 transition-colors hover:bg-secondary/30 -mx-2 px-2 rounded-md"
+            <>
+              <ul className="divide-y divide-border/60">
+                {dates.data!.map((d) => (
+                  <li key={d.local_date}>
+                    <Link
+                      to={`/history/${d.local_date}`}
+                      className="flex items-baseline justify-between gap-3 py-3 transition-colors hover:bg-secondary/30 -mx-2 px-2 rounded-md"
+                    >
+                      <span className="font-medium">{formatHumanDate(d.local_date)}</span>
+                      <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                        {d.entry_count} answer{d.entry_count === 1 ? "" : "s"}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+              {/* Pagination: only show "Load more" when the page is full.
+                  When the API returns fewer rows than asked for, we know
+                  we've hit the end and the button can be hidden. */}
+              {dates.data!.length >= recentLimit ? (
+                <div className="flex justify-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setRecentLimit((n) => n + RECENT_PAGE_STEP)}
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-sm",
+                      "text-muted-foreground transition-colors hover:text-foreground hover:bg-secondary/60",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    )}
                   >
-                    <span className="font-medium">{formatHumanDate(d.local_date)}</span>
-                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                      {d.entry_count} answer{d.entry_count === 1 ? "" : "s"}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+                    Load more
+                  </button>
+                </div>
+              ) : null}
+            </>
           )}
         </section>
       </div>
