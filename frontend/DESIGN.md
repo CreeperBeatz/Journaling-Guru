@@ -106,18 +106,15 @@ CSS-var scale: `--radius-sm: 0.375rem`, `--radius-md: 0.5rem`, `--radius-lg: 0.7
 
 ### Heat (history grid)
 
-The history heatmap derives its ramp from `--primary` rather than declaring per-palette explicit steps — so the grid re-skins automatically on palette switch.
+The history heatmap is **binary** — a day has an entry or it doesn't. We expect a similar volume of answers each day, so a multi-step ramp added noise without adding signal. Duolingo-style done/not-done is the right primitive.
 
 | Token | Value | Intent |
 |---|---|---|
 | `--heat-empty` | `hsl(var(--muted))` | No entry on that day. |
-| `--heat-l1` | `hsl(var(--primary) / 0.18)` | Short streak (1–2 questions answered). |
-| `--heat-l2` | `hsl(var(--primary) / 0.40)` | Mid streak (3–5 answered or chat session ≥3 turns). |
-| `--heat-l3` | `hsl(var(--primary) / 0.65)` | Deep streak (full answers + chat). |
-| `--heat-l4` | `hsl(var(--primary) / 0.90)` | Deep streak (consecutive deep days). |
-| `--heat-mood` | `hsl(var(--accent))` | Inset 1px ring on cells where `daily_inputs.mood >= 4`. |
+| (filled) | `hsl(var(--primary))` | Day has at least one journal entry OR a substantive chat (≥3 turns). |
+| `--heat-mood` | `hsl(var(--accent))` | Inset 1px ring on cells where `daily_inputs.mood_score >= 7` (top tertile of the 1-10 scale). |
 
-Cells use `--heat-l*` for fill and `--heat-mood` for the optional mood-up ring. Don't hardcode level colors per palette.
+The filled color is `--primary` directly — no intermediate `--heat-l*` tokens. Cells re-skin automatically on palette switch because the fill is a `--primary` reference.
 
 ## Typography
 
@@ -276,20 +273,17 @@ Lives in `src/components/ui/heat-grid.tsx`.
 - **Click** — `onSelect(date)` → `navigate('/history/' + date)`.
 - **A11y** — each cell `role="button"`, `aria-label="2026-04-12, 5 of 7 answered"`. The grid is a `role="grid"` with date columns/rows wired up.
 
-### Streak level rule
+### Day rule (binary)
 
 Computed client-side from a single endpoint (`GET /api/history/heatmap?from&to`):
 
 | Level | Condition |
 |---|---|
-| 0 | No entries that day. |
-| 1 | 1–2 questions answered, no chat session. |
-| 2 | 3–5 answered **or** chat session with ≥3 turns. |
-| 3 | 6+ answered AND chat session with ≥3 turns. |
-| 4 | Level-3 day inside a run of ≥3 consecutive level-3 days. |
+| 0 | No journal entries AND fewer than 3 chat turns. |
+| 1 | At least one journal entry OR a chat session with ≥3 turns. |
 | `moodUp` | `daily_inputs.mood_score >= 7` (top tertile of the 1-10 scale). Independent of level — applies as the inset ring. |
 
-Streak counter (`<StreakBadge>`) = consecutive days back from today with `level >= 1`. Renders in the page header, `font-mono tabular-nums`, accent number on `bg-accent/10` rounded-full pill.
+Streak counter (`<StreakBadge>`) = consecutive days back from today with `level === 1`. Renders in the page header, `font-mono tabular-nums`, accent number on `bg-accent/10` rounded-full pill.
 
 ### Recent entries list
 

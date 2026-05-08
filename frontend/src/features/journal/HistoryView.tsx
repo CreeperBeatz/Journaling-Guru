@@ -106,32 +106,6 @@ function anchorLabel(view: HeatView, iso: string): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
-function HeatLegend() {
-  // Swatch ramp: less ← → more. Mirrors the actual --heat-l* values.
-  const swatches = [
-    "var(--heat-empty)",
-    "var(--heat-l1)",
-    "var(--heat-l2)",
-    "var(--heat-l3)",
-    "var(--heat-l4)",
-  ];
-  return (
-    <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
-      <span aria-hidden>less</span>
-      <div className="flex items-center gap-[3px]">
-        {swatches.map((bg, i) => (
-          <span
-            key={i}
-            className="h-3 w-3 rounded-[2px]"
-            style={{ backgroundColor: bg }}
-            aria-hidden
-          />
-        ))}
-      </div>
-      <span aria-hidden>more</span>
-    </div>
-  );
-}
 
 function HistoryLanding() {
   const navigate = useNavigate();
@@ -191,7 +165,6 @@ function HistoryLanding() {
         <section className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <ViewToggle value={view} onChange={setViewReset} />
-            <HeatLegend />
           </div>
 
           <div className="flex items-center justify-between gap-3">

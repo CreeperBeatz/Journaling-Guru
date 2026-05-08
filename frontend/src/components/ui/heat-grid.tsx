@@ -3,7 +3,10 @@ import { motion, useReducedMotion } from "motion/react";
 
 import { cn } from "@/lib/utils";
 
-export type HeatLevel = 0 | 1 | 2 | 3 | 4;
+// Binary: a day either has an entry or doesn't. We expect a similar
+// volume of answers each day, so a 0-4 ramp is noise — Duolingo-style
+// done/not-done is the right primitive.
+export type HeatLevel = 0 | 1;
 
 export interface HeatCellData {
   date: string; // YYYY-MM-DD
@@ -32,10 +35,7 @@ export interface HeatGridProps {
 
 const LEVEL_VAR: Record<HeatLevel, string> = {
   0: "var(--heat-empty)",
-  1: "var(--heat-l1)",
-  2: "var(--heat-l2)",
-  3: "var(--heat-l3)",
-  4: "var(--heat-l4)",
+  1: "hsl(var(--primary))",
 };
 
 function parseISO(s: string): Date {
@@ -381,11 +381,9 @@ function WeekRow({
                 !interactive && "cursor-default",
                 isFuture && "opacity-30",
                 isToday && "ring-1 ring-foreground/40",
-                level >= 3
+                level === 1
                   ? "text-primary-foreground/90"
-                  : level >= 1
-                    ? "text-foreground/80"
-                    : "text-muted-foreground/60",
+                  : "text-muted-foreground/60",
               )}
               style={{
                 backgroundColor: LEVEL_VAR[level],
@@ -406,63 +404,24 @@ function WeekRow({
 }
 
 function cellLabel(iso: string, data?: HeatCellData): string {
-  if (!data || data.level === 0) return `${iso}: nothing yet`;
-  const parts = [iso, levelLabel(data.level)];
+  if (!data || data.level === 0) return `${iso}: no entry`;
+  const parts = [iso, "entry logged"];
   if (data.moodUp) parts.push("mood up");
   return parts.join(" · ");
 }
 
-function levelLabel(level: HeatLevel): string {
-  switch (level) {
-    case 1:
-      return "short";
-    case 2:
-      return "mid";
-    case 3:
-      return "deep";
-    case 4:
-      return "deep streak";
-    default:
-      return "empty";
-  }
-}
-
-/**
- * Compute level + moodUp for a single day's stats. Mirrors the rule in
- * DESIGN.md → History so we can rebuild the heat ramp client-side from
- * the heatmap endpoint without a second round-trip.
- */
-export function deriveHeatLevel(
-  answered: number,
-  chatTurns: number,
-  prevLevel3Run: number,
-): HeatLevel {
-  if (answered === 0 && chatTurns === 0) return 0;
-  if (answered <= 2 && chatTurns < 3) return 1;
-  if (answered >= 6 && chatTurns >= 3) {
-    return prevLevel3Run >= 2 ? 4 : 3;
-  }
-  if (answered >= 3 || chatTurns >= 3) return 2;
-  return 1;
-}
-
 /**
  * Build a chronological array of <HeatCellData> from a raw heatmap
- * response. Computes `level` from answered/chat_turns/prev streak and
- * `moodUp` from mood_score >= 7 (top tertile of the 1-10 scale).
+ * response. A day counts as filled (`level === 1`) if it has at least
+ * one journal entry OR a chat session with substantive turns.
+ * `moodUp` is mood_score >= 7 (top tertile of the 1-10 scale).
  */
 export function buildHeatCells(
   days: { local_date: string; answered: number; chat_turns: number; mood?: number | null }[],
 ): HeatCellData[] {
-  const sorted = [...days].sort((a, b) => a.local_date.localeCompare(b.local_date));
-  const out: HeatCellData[] = [];
-  let level3Run = 0;
-  for (const d of sorted) {
-    const level = deriveHeatLevel(d.answered, d.chat_turns, level3Run);
-    if (level >= 3) level3Run += 1;
-    else level3Run = 0;
-    const moodUp = (d.mood ?? 0) >= 7;
-    out.push({ date: d.local_date, level, moodUp });
-  }
-  return out;
+  return days.map((d) => ({
+    date: d.local_date,
+    level: d.answered > 0 || d.chat_turns >= 3 ? 1 : 0,
+    moodUp: (d.mood ?? 0) >= 7,
+  }));
 }
