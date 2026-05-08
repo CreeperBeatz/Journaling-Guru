@@ -58,7 +58,6 @@ export function HistoryView() {
 // ---------- Landing (heatmap + recent entries) ----------
 
 function HistoryLanding() {
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const heatmap = useHeatmap();
   const dates = useEntryDates(14);
@@ -102,22 +101,9 @@ function HistoryLanding() {
           ) : heatmap.isError ? (
             <p className="text-sm text-destructive">Couldn&apos;t load heatmap.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <HeatGrid
-                cells={cells}
-                view={view}
-                anchor={today}
-                onSelect={(date) => {
-                  // Prefetch the day before navigating — the entry-detail
-                  // chunk gets a warm cache by the time it mounts.
-                  qc.prefetchQuery({
-                    queryKey: entriesKey(date),
-                    queryFn: () => listEntries(date),
-                  });
-                  navigate(`/history/${date}`);
-                }}
-              />
-            </div>
+            // Read-only — cells are too small to be reliable tap targets.
+            // Use the Recent entries list below to open a specific day.
+            <HeatGrid cells={cells} view={view} anchor={today} />
           )}
         </section>
 

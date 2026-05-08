@@ -16,10 +16,9 @@ export type HeatView = "year" | "month" | "week";
 export interface HeatGridProps {
   cells: HeatCellData[];
   view?: HeatView;
-  /** Anchor date for the grid (default: today). Year view shows the 52
-   *  weeks before this date plus the current week; month view shows the
-   *  calendar month containing this date; week view shows the week
-   *  containing this date. */
+  /** Anchor date (default: today). Year view shows the 12 months
+   *  ending at the anchor's month; month view shows the anchor's
+   *  month; week view shows the week containing the anchor. */
   anchor?: string;
   onSelect?: (date: string) => void;
   className?: string;
@@ -45,54 +44,22 @@ function formatISO(d: Date): string {
   return `${y}-${m}-${dd}`;
 }
 
-function addDays(d: Date, n: number): Date {
-  const x = new Date(d);
-  x.setUTCDate(x.getUTCDate() + n);
-  return x;
+function startOfMonth(year: number, month: number): Date {
+  return new Date(Date.UTC(year, month, 1));
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
 function startOfWeek(d: Date): Date {
-  // Sunday-start week. Matches GitHub-style heatmaps.
   const dow = d.getUTCDay();
-  return addDays(d, -dow);
+  const x = new Date(d);
+  x.setUTCDate(x.getUTCDate() - dow);
+  return x;
 }
 
-function startOfMonth(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
-}
-
-function endOfMonth(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
-}
-
-interface ResolvedRange {
-  start: Date;
-  end: Date;
-  cols: number;
-  rows: number;
-}
-
-function resolveRange(view: HeatView, anchor: Date): ResolvedRange {
-  if (view === "week") {
-    const s = startOfWeek(anchor);
-    return { start: s, end: addDays(s, 6), cols: 1, rows: 7 };
-  }
-  if (view === "month") {
-    const monthStart = startOfMonth(anchor);
-    const monthEnd = endOfMonth(anchor);
-    const gridStart = startOfWeek(monthStart);
-    const gridEnd = addDays(startOfWeek(monthEnd), 6);
-    const totalDays = Math.round(
-      (gridEnd.getTime() - gridStart.getTime()) / 86_400_000,
-    ) + 1;
-    return { start: gridStart, end: gridEnd, cols: totalDays / 7, rows: 7 };
-  }
-  // year: 53 columns × 7 rows ending at the week containing `anchor`.
-  const endWeekStart = startOfWeek(anchor);
-  const start = addDays(endWeekStart, -52 * 7);
-  const end = addDays(endWeekStart, 6);
-  return { start, end, cols: 53, rows: 7 };
-}
+const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
 export function HeatGrid({
   cells,
@@ -101,13 +68,10 @@ export function HeatGrid({
   onSelect,
   className,
 }: HeatGridProps) {
-  const reduceMotion = useReducedMotion();
-
   const anchorDate = useMemo(
     () => (anchor ? parseISO(anchor) : new Date()),
     [anchor],
   );
-  const range = useMemo(() => resolveRange(view, anchorDate), [view, anchorDate]);
   const todayISO = useMemo(() => formatISO(new Date()), []);
 
   const byDate = useMemo(() => {
@@ -116,84 +80,255 @@ export function HeatGrid({
     return m;
   }, [cells]);
 
-  // Build column-major: each column = one week (7 days), top row = Sunday.
-  const columns: { weekIndex: number; days: { iso: string; data?: HeatCellData; outOfRange: boolean; isToday: boolean }[] }[] = [];
-  for (let col = 0; col < range.cols; col++) {
-    const days = [];
-    for (let row = 0; row < 7; row++) {
-      const d = addDays(range.start, col * 7 + row);
-      const iso = formatISO(d);
-      const inRange = d >= range.start && d <= range.end;
-      const future = d.getTime() > parseISO(todayISO).getTime();
-      days.push({
-        iso,
-        data: byDate.get(iso),
-        outOfRange: !inRange || future,
-        isToday: iso === todayISO,
-      });
-    }
-    columns.push({ weekIndex: col, days });
+  if (view === "week") {
+    const start = startOfWeek(anchorDate);
+    return (
+      <WeekRow
+        start={start}
+        byDate={byDate}
+        todayISO={todayISO}
+        onSelect={onSelect}
+        className={className}
+      />
+    );
   }
 
-  // Cell sizing per view — kept in tailwind classes so the grid scales
-  // crisply on retina without manual pixel math.
-  const cellSize =
-    view === "week"
-      ? "h-12 w-12 rounded-md"
-      : view === "month"
-        ? "h-8 w-8 rounded-sm"
-        : "h-3 w-3 rounded-[2px]";
-  const gapClass = view === "week" || view === "month" ? "gap-1" : "gap-[2px]";
+  if (view === "month") {
+    return (
+      <div className={cn("flex justify-center", className)}>
+        <MonthGrid
+          year={anchorDate.getUTCFullYear()}
+          month={anchorDate.getUTCMonth()}
+          byDate={byDate}
+          todayISO={todayISO}
+          onSelect={onSelect}
+          size="lg"
+          showWeekdays
+        />
+      </div>
+    );
+  }
+
+  // Year view: 12 months ending at the anchor's month, laid out in a
+  // responsive grid. No horizontal scroll — cards wrap to the next row.
+  const months: { year: number; month: number }[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(
+      Date.UTC(anchorDate.getUTCFullYear(), anchorDate.getUTCMonth() - i, 1),
+    );
+    months.push({ year: d.getUTCFullYear(), month: d.getUTCMonth() });
+  }
 
   return (
     <div
       className={cn(
-        "inline-flex flex-col",
+        "grid w-full gap-x-4 gap-y-6",
+        "grid-cols-2 sm:grid-cols-3 md:grid-cols-4",
         className,
       )}
-      role="grid"
-      aria-label="Journaling activity heatmap"
     >
-      <div className={cn("flex", gapClass)}>
-        {columns.map((col) => (
-          <div key={col.weekIndex} className={cn("flex flex-col", gapClass)}>
-            {col.days.map((day) => {
-              const level = day.data?.level ?? 0;
-              const moodUp = day.data?.moodUp ?? false;
-              const interactive = !day.outOfRange && !!onSelect;
-              return (
-                <motion.button
-                  key={day.iso}
-                  type="button"
-                  role="gridcell"
-                  disabled={!interactive}
-                  onClick={() => interactive && onSelect?.(day.iso)}
-                  whileHover={
-                    interactive && !reduceMotion ? { scale: 1.18 } : undefined
-                  }
-                  transition={{ type: "spring", stiffness: 400, damping: 22 }}
-                  className={cn(
-                    cellSize,
-                    "relative outline-none transition-colors",
-                    "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ring-offset-background",
-                    !interactive && "cursor-default",
-                    day.outOfRange && "opacity-30",
-                    day.isToday && "ring-1 ring-foreground/40",
-                  )}
-                  style={{
-                    backgroundColor: LEVEL_VAR[level],
-                    boxShadow: moodUp
-                      ? "inset 0 0 0 1px var(--heat-mood)"
-                      : undefined,
-                  }}
-                  aria-label={cellLabel(day.iso, day.data)}
-                  title={cellLabel(day.iso, day.data)}
-                />
-              );
-            })}
-          </div>
+      {months.map(({ year, month }) => (
+        <MonthGrid
+          key={`${year}-${month}`}
+          year={year}
+          month={month}
+          byDate={byDate}
+          todayISO={todayISO}
+          onSelect={onSelect}
+          size="sm"
+        />
+      ))}
+    </div>
+  );
+}
+
+interface MonthGridProps {
+  year: number;
+  month: number; // 0-indexed
+  byDate: Map<string, HeatCellData>;
+  todayISO: string;
+  onSelect?: (date: string) => void;
+  size: "sm" | "lg";
+  showWeekdays?: boolean;
+}
+
+function MonthGrid({
+  year,
+  month,
+  byDate,
+  todayISO,
+  onSelect,
+  size,
+  showWeekdays,
+}: MonthGridProps) {
+  const reduceMotion = useReducedMotion();
+  const monthLabel = startOfMonth(year, month).toLocaleDateString(undefined, {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+  const totalDays = daysInMonth(year, month);
+  const firstDow = startOfMonth(year, month).getUTCDay(); // 0=Sun
+  const cellSize = size === "lg" ? "h-10 w-10 rounded-md" : "h-7 w-7 rounded-md";
+  const gapClass = size === "lg" ? "gap-1.5" : "gap-1";
+  const labelClass =
+    size === "lg"
+      ? "text-sm font-medium"
+      : "text-xs font-medium";
+
+  // Pad with leading empties so the 1st lands on its real weekday.
+  const leadingEmpties = Array.from({ length: firstDow }, (_, i) => `e-${i}`);
+  const dayNumbers = Array.from({ length: totalDays }, (_, i) => i + 1);
+
+  return (
+    <div className="flex flex-col items-center">
+      <p className={cn("mb-2 self-start", labelClass)}>{monthLabel}</p>
+      {showWeekdays ? (
+        <div className={cn("mb-1 grid grid-cols-7", gapClass)}>
+          {WEEKDAYS.map((w, i) => (
+            <span
+              key={`${w}-${i}`}
+              className={cn(
+                "text-center font-mono text-[10px] uppercase tracking-wider text-muted-foreground",
+                cellSize,
+                "flex items-center justify-center",
+              )}
+              aria-hidden
+            >
+              {w}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <div className={cn("grid grid-cols-7", gapClass)} role="grid" aria-label={monthLabel}>
+        {leadingEmpties.map((id) => (
+          <span key={id} className={cellSize} aria-hidden />
         ))}
+        {dayNumbers.map((day) => {
+          const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const data = byDate.get(iso);
+          const level: HeatLevel = data?.level ?? 0;
+          const moodUp = data?.moodUp ?? false;
+          const isToday = iso === todayISO;
+          const isFuture = iso > todayISO;
+          const interactive = !isFuture && !!onSelect;
+          return (
+            <motion.button
+              key={iso}
+              type="button"
+              role="gridcell"
+              disabled={!interactive}
+              onClick={() => interactive && onSelect?.(iso)}
+              whileHover={
+                interactive && !reduceMotion ? { scale: 1.08 } : undefined
+              }
+              transition={{ type: "spring", stiffness: 400, damping: 22 }}
+              className={cn(
+                cellSize,
+                "relative flex items-center justify-center font-mono text-[10px] tabular-nums",
+                "outline-none transition-colors",
+                "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ring-offset-background",
+                !interactive && "cursor-default",
+                isFuture && "opacity-30",
+                isToday && "ring-1 ring-foreground/40",
+                level >= 3
+                  ? "text-primary-foreground/90"
+                  : level >= 1
+                    ? "text-foreground/80"
+                    : "text-muted-foreground/60",
+              )}
+              style={{
+                backgroundColor: LEVEL_VAR[level],
+                boxShadow: moodUp
+                  ? "inset 0 0 0 1px var(--heat-mood)"
+                  : undefined,
+              }}
+              aria-label={cellLabel(iso, data)}
+              title={cellLabel(iso, data)}
+            >
+              {size === "lg" ? day : null}
+            </motion.button>
+          );
+        })}
       </div>
+    </div>
+  );
+}
+
+function WeekRow({
+  start,
+  byDate,
+  todayISO,
+  onSelect,
+  className,
+}: {
+  start: Date;
+  byDate: Map<string, HeatCellData>;
+  todayISO: string;
+  onSelect?: (date: string) => void;
+  className?: string;
+}) {
+  const reduceMotion = useReducedMotion();
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start);
+    d.setUTCDate(d.getUTCDate() + i);
+    return d;
+  });
+  return (
+    <div className={cn("flex w-full justify-between gap-2", className)} role="grid">
+      {days.map((d) => {
+        const iso = formatISO(d);
+        const data = byDate.get(iso);
+        const level: HeatLevel = data?.level ?? 0;
+        const moodUp = data?.moodUp ?? false;
+        const isToday = iso === todayISO;
+        const isFuture = iso > todayISO;
+        const interactive = !isFuture && !!onSelect;
+        const dow = WEEKDAYS[d.getUTCDay()];
+        const day = d.getUTCDate();
+        return (
+          <div key={iso} className="flex flex-1 flex-col items-center gap-1.5">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              {dow}
+            </span>
+            <motion.button
+              type="button"
+              role="gridcell"
+              disabled={!interactive}
+              onClick={() => interactive && onSelect?.(iso)}
+              whileHover={
+                interactive && !reduceMotion ? { scale: 1.05 } : undefined
+              }
+              transition={{ type: "spring", stiffness: 400, damping: 22 }}
+              className={cn(
+                "h-12 w-full max-w-14 rounded-lg",
+                "relative flex items-center justify-center font-mono text-base tabular-nums",
+                "outline-none transition-colors",
+                "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ring-offset-background",
+                !interactive && "cursor-default",
+                isFuture && "opacity-30",
+                isToday && "ring-1 ring-foreground/40",
+                level >= 3
+                  ? "text-primary-foreground/90"
+                  : level >= 1
+                    ? "text-foreground/80"
+                    : "text-muted-foreground/60",
+              )}
+              style={{
+                backgroundColor: LEVEL_VAR[level],
+                boxShadow: moodUp
+                  ? "inset 0 0 0 1px var(--heat-mood)"
+                  : undefined,
+              }}
+              aria-label={cellLabel(iso, data)}
+              title={cellLabel(iso, data)}
+            >
+              {day}
+            </motion.button>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -224,10 +359,6 @@ function levelLabel(level: HeatLevel): string {
  * Compute level + moodUp for a single day's stats. Mirrors the rule in
  * DESIGN.md → History so we can rebuild the heat ramp client-side from
  * the heatmap endpoint without a second round-trip.
- *
- * Pass `prevLevels` as the chronological run of levels up to this day
- * (excluding it) — used to detect "deep streak" (3+ consecutive level-3
- * days).
  */
 export function deriveHeatLevel(
   answered: number,
