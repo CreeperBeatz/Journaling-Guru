@@ -160,6 +160,82 @@ func (s *EntryStore) ListDates(ctx context.Context, userID string, limit int) ([
 	return out, rows.Err()
 }
 
+// HeatmapDay is one row in the History heatmap response. `Mood` is nil when
+// the user hasn't logged a mood for that day; `Answered` and `ChatTurns`
+// default to 0 (NULL is squashed in SQL via COALESCE).
+type HeatmapDay struct {
+	LocalDate string `json:"local_date"`
+	Answered  int    `json:"answered"`
+	ChatTurns int    `json:"chat_turns"`
+	Mood      *int   `json:"mood,omitempty"`
+}
+
+// HeatmapRange returns one row per day in [from, to] for which the user
+// has any signal — at least one journal_entry, daily_inputs row, or
+// chat_session. Empty days are omitted; the FE backfills level-0 cells
+// from the calendar grid for visualisation.
+//
+// Returns rows ordered ascending by date.
+func (s *EntryStore) HeatmapRange(
+	ctx context.Context,
+	userID string,
+	from, to time.Time,
+) ([]HeatmapDay, error) {
+	const q = `
+WITH dates AS (
+  SELECT DISTINCT local_date AS d FROM journal_entries
+   WHERE user_id = $1 AND local_date BETWEEN $2 AND $3
+  UNION
+  SELECT DISTINCT local_date AS d FROM daily_inputs
+   WHERE user_id = $1 AND local_date BETWEEN $2 AND $3
+  UNION
+  SELECT DISTINCT local_date AS d FROM chat_sessions
+   WHERE user_id = $1 AND local_date BETWEEN $2 AND $3
+),
+entries AS (
+  SELECT local_date AS d, COUNT(*)::int AS answered
+    FROM journal_entries
+   WHERE user_id = $1 AND local_date BETWEEN $2 AND $3
+   GROUP BY local_date
+),
+turns AS (
+  SELECT s.local_date AS d,
+         COUNT(m.id) FILTER (WHERE m.role IN ('user','assistant'))::int AS chat_turns
+    FROM chat_sessions s
+    LEFT JOIN chat_messages m ON m.session_id = s.id
+   WHERE s.user_id = $1 AND s.local_date BETWEEN $2 AND $3
+   GROUP BY s.local_date
+),
+inputs AS (
+  SELECT local_date AS d, mood_score
+    FROM daily_inputs
+   WHERE user_id = $1 AND local_date BETWEEN $2 AND $3
+)
+SELECT to_char(d.d, 'YYYY-MM-DD'),
+       COALESCE(e.answered, 0),
+       COALESCE(t.chat_turns, 0),
+       i.mood_score
+  FROM dates d
+  LEFT JOIN entries e ON e.d = d.d
+  LEFT JOIN turns   t ON t.d = d.d
+  LEFT JOIN inputs  i ON i.d = d.d
+ ORDER BY d.d ASC`
+	rows, err := s.DB.Query(ctx, q, userID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]HeatmapDay, 0)
+	for rows.Next() {
+		var hd HeatmapDay
+		if err := rows.Scan(&hd.LocalDate, &hd.Answered, &hd.ChatTurns, &hd.Mood); err != nil {
+			return nil, err
+		}
+		out = append(out, hd)
+	}
+	return out, rows.Err()
+}
+
 // Upsert writes (or overwrites) the entry for one (user, question, day).
 // Empty body is treated as "delete the entry" so the UI can clear an
 // answer by saving an empty textarea — saves us a separate DELETE

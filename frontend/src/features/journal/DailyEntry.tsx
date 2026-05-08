@@ -6,8 +6,10 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { CardStack, type CardStackItem } from "@/components/ui/card-stack";
+import { CardShell, CardStack, type CardSlotApi, type CardStackSlot } from "@/components/ui/card-stack";
 import { PaperPage, PaperPageBlock } from "@/components/ui/paper-page";
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
 import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -25,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { type JournalEntry, type Question, listEntries } from "./api";
 import { useEntries, useQuestions, useSaveEntry, ENTRY_DATES_KEY, entriesKey } from "./hooks";
 import { DailyInputs } from "@/features/daily/DailyInputs";
+import type { DailyInput } from "@/features/daily/api";
 import { useDailyInput, useSaveDailyInput } from "@/features/daily/hooks";
 
 // Three modes coexist on /today (Phase 6a). Talk is reserved for 6b
@@ -445,17 +448,23 @@ export function DailyEntry() {
 interface ManualBodyProps {
   questions: Question[];
   entryByQuestion: Map<string, JournalEntry>;
-  dailyInput: Parameters<typeof DailyInputs>[0]["input"];
-  onSaveDaily: Parameters<typeof DailyInputs>[0]["onSave"];
+  dailyInput: DailyInput | null;
+  onSaveDaily: (body: { mood_score: number | null; emotions_text: string; notes: string }) => void;
   isSavingDaily: boolean;
   dayLabel: string;
 }
 
-// "answered" = an entry row exists. The save mutation deletes the row on
-// empty body, so a present entry implies non-empty content.
-function allAnswered(qs: Question[], byQ: Map<string, JournalEntry>): boolean {
-  if (qs.length === 0) return false;
-  return qs.every((q) => byQ.has(q.id));
+// "all touched" = every question has an entry row AND mood/emotions have
+// been set. Save mutation deletes rows on empty body, so a present entry
+// implies non-empty content.
+function allAnswered(
+  qs: Question[],
+  byQ: Map<string, JournalEntry>,
+  daily: DailyInput | null,
+): boolean {
+  const dailyTouched = !!daily?.mood_score || !!(daily?.emotions_text ?? "").trim();
+  if (qs.length === 0) return dailyTouched;
+  return dailyTouched && qs.every((q) => byQ.has(q.id));
 }
 
 function ManualBody({
@@ -469,50 +478,82 @@ function ManualBody({
   const save = useSaveEntry();
   const reduceMotion = useReducedMotion();
 
-  // "complete" = either all questions answered OR the user reached the
-  // end of the stack (CardStack onComplete). The latter handles empty
-  // last submits which leave a question still un-rowed but the user
-  // wants to see the paper page.
-  const initialComplete = allAnswered(questions, entryByQuestion);
+  // "complete" = filling done OR user clicked "Show full page" / advanced
+  // past the last card. We don't auto-flip back to filling on edits —
+  // once you're on the paper page, you stay there.
+  const initialComplete = allAnswered(questions, entryByQuestion, dailyInput);
   const [reachedEnd, setReachedEnd] = useState(initialComplete);
   const phase: "filling" | "complete" =
     initialComplete || reachedEnd ? "complete" : "filling";
 
-  const items: CardStackItem[] = questions.map((q) => ({
-    id: q.id,
-    prompt: q.prompt,
-    initialBody: entryByQuestion.get(q.id)?.body ?? "",
-  }));
-
-  const handleSubmit = (item: CardStackItem, body: string) => {
-    // Cards advance on submit — fire the save and don't await it. The
-    // optimistic mutation has already updated the cache by the time
-    // CardStack swaps cards. Empty bodies just delete the row.
-    save.mutate({ questionId: item.id, body });
-  };
-
-  // PaperPage edits: parent owns the mutation, blocks own dirty state.
   const handleBlockSave = (questionId: string, body: string) => {
     save.mutate({ questionId, body });
   };
 
+  // Slots: Mood → Emotions → ...questions. Mood/Emotions write back
+  // through the existing daily-input mutation; questions through
+  // useSaveEntry. Each slot sees `hasValue` so the stack lands on the
+  // first thing that needs attention.
+  const slots: CardStackSlot[] = [
+    {
+      id: "__mood",
+      hasValue: dailyInput?.mood_score != null,
+      render: (api) => (
+        <MoodSlot
+          api={api}
+          dailyInput={dailyInput}
+          onSaveDaily={onSaveDaily}
+        />
+      ),
+    },
+    {
+      id: "__emotions",
+      hasValue: !!(dailyInput?.emotions_text ?? "").trim(),
+      render: (api) => (
+        <EmotionsSlot
+          api={api}
+          dailyInput={dailyInput}
+          onSaveDaily={onSaveDaily}
+        />
+      ),
+    },
+    ...questions.map((q) => ({
+      id: q.id,
+      hasValue: entryByQuestion.has(q.id),
+      render: (api: CardSlotApi) => (
+        <QuestionSlot
+          api={api}
+          question={q}
+          initialBody={entryByQuestion.get(q.id)?.body ?? ""}
+          onSubmit={(body) => save.mutate({ questionId: q.id, body })}
+        />
+      ),
+    })),
+  ];
+
   return (
     <div className="space-y-6">
-      <DailyInputs input={dailyInput} onSave={onSaveDaily} isSaving={isSavingDaily} />
       {questions.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-serif">No questions yet</CardTitle>
-            <CardDescription>
-              You haven't set up any prompts. Add some to start journaling.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button asChild>
-              <Link to="/settings?tab=questions">Manage questions</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <>
+          <DailyInputs
+            input={dailyInput}
+            onSave={onSaveDaily}
+            isSaving={isSavingDaily}
+          />
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-serif">No questions yet</CardTitle>
+              <CardDescription>
+                You haven't set up any prompts. Add some to start journaling.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link to="/settings?tab=questions">Manage questions</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </>
       ) : (
         // Q7 morph: AnimatePresence keyed on `phase`. CardStack exits
         // opacity+y; PaperPage enters opacity+y; serif date settles
@@ -529,11 +570,7 @@ function ManualBody({
                   : { opacity: 0, y: -12, transition: { duration: 0.2, ease: [0.4, 0, 1, 1] } }
               }
             >
-              <CardStack
-                items={items}
-                onSubmit={handleSubmit}
-                onComplete={() => setReachedEnd(true)}
-              />
+              <CardStack slots={slots} onComplete={() => setReachedEnd(true)} />
             </motion.div>
           ) : (
             <motion.div
@@ -548,7 +585,13 @@ function ManualBody({
                   ? { opacity: 1, transition: { duration: 0.18 } }
                   : { opacity: 1, y: 0, transition: { duration: 0.36, ease: [0.2, 0, 0, 1] } }
               }
+              className="space-y-6"
             >
+              <DailyInputs
+                input={dailyInput}
+                onSave={onSaveDaily}
+                isSaving={isSavingDaily}
+              />
               <PaperPage
                 eyebrow="Today"
                 title={
@@ -581,5 +624,151 @@ function ManualBody({
         </AnimatePresence>
       )}
     </div>
+  );
+}
+
+// ---- Card slot components ----
+
+interface SlotInputsProps {
+  api: CardSlotApi;
+  dailyInput: DailyInput | null;
+  onSaveDaily: (body: { mood_score: number | null; emotions_text: string; notes: string }) => void;
+}
+
+function MoodSlot({ api, dailyInput, onSaveDaily }: SlotInputsProps) {
+  const [value, setValue] = useState<number | null>(dailyInput?.mood_score ?? null);
+  const handleAdvance = () => {
+    onSaveDaily({
+      mood_score: value,
+      emotions_text: dailyInput?.emotions_text ?? "",
+      notes: dailyInput?.notes ?? "",
+    });
+    api.advance();
+  };
+  const display = value ?? 5;
+  const isSet = value !== null;
+  return (
+    <CardShell
+      api={{ ...api, advance: handleAdvance }}
+      eyebrow="Check-in"
+      prompt="How are you feeling today?"
+      footerHint="1 = low · 10 = great · skip leaves it unset"
+    >
+      <div className="flex flex-1 flex-col items-center justify-center gap-6">
+        <div className="flex items-baseline gap-3">
+          <span className="font-serif text-display tabular-nums">
+            {isSet ? display : "—"}
+          </span>
+          <span className="text-base text-muted-foreground">/ 10</span>
+        </div>
+        <div className="w-full max-w-md">
+          <Slider
+            value={[display]}
+            min={1}
+            max={10}
+            step={1}
+            ticks
+            onValueChange={([v]) => setValue(v)}
+          />
+        </div>
+        {!isSet ? (
+          <button
+            type="button"
+            onClick={() => setValue(5)}
+            className="text-xs text-accent underline-offset-4 hover:underline"
+          >
+            Tap to set
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setValue(null)}
+            className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+    </CardShell>
+  );
+}
+
+function EmotionsSlot({ api, dailyInput, onSaveDaily }: SlotInputsProps) {
+  const [text, setText] = useState<string>(dailyInput?.emotions_text ?? "");
+  const handleAdvance = () => {
+    onSaveDaily({
+      mood_score: dailyInput?.mood_score ?? null,
+      emotions_text: text,
+      notes: dailyInput?.notes ?? "",
+    });
+    api.advance();
+  };
+  return (
+    <CardShell
+      api={{ ...api, advance: handleAdvance }}
+      eyebrow="Check-in"
+      prompt="What emotions are you feeling?"
+      footerHint="Free text — anxious, relieved, grateful… ⌘↵ to advance"
+    >
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            handleAdvance();
+          }
+        }}
+        autoFocus
+        placeholder="Anxious before the meeting, then relieved when it went well…"
+        rows={6}
+        className={cn(
+          "flex-1 resize-none border-transparent bg-transparent px-0 leading-prose text-body",
+          "focus-visible:ring-0 focus-visible:ring-offset-0",
+          "focus-visible:border-b-border focus-visible:border-b rounded-none",
+        )}
+      />
+    </CardShell>
+  );
+}
+
+interface QuestionSlotProps {
+  api: CardSlotApi;
+  question: Question;
+  initialBody: string;
+  onSubmit: (body: string) => void;
+}
+
+function QuestionSlot({ api, question, initialBody, onSubmit }: QuestionSlotProps) {
+  const [draft, setDraft] = useState(initialBody);
+  const handleAdvance = () => {
+    onSubmit(draft);
+    api.advance();
+  };
+  return (
+    <CardShell
+      api={{ ...api, advance: handleAdvance }}
+      prompt={question.prompt}
+      footerHint="⌘↵ to submit · empty answers are allowed"
+    >
+      <Textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            handleAdvance();
+          }
+        }}
+        autoFocus
+        placeholder="Write whatever comes to mind…"
+        rows={6}
+        className={cn(
+          "flex-1 resize-none border-transparent bg-transparent px-0 leading-prose text-body",
+          "focus-visible:ring-0 focus-visible:ring-offset-0",
+          "focus-visible:border-b-border focus-visible:border-b rounded-none",
+        )}
+      />
+    </CardShell>
   );
 }

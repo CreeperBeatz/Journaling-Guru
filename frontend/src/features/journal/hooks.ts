@@ -8,6 +8,8 @@ import {
   createQuestion,
   DayEntries,
   DateSummary,
+  getHeatmap,
+  HeatmapResponse,
   JournalEntry,
   listEntries,
   listEntryDates,
@@ -23,6 +25,8 @@ export const QUESTIONS_KEY = ["questions"] as const;
 export const entriesKey = (date?: string) =>
   date ? (["entries", date] as const) : (["entries", "today"] as const);
 export const ENTRY_DATES_KEY = ["entries", "dates"] as const;
+export const heatmapKey = (from?: string, to?: string) =>
+  ["history", "heatmap", from ?? "default", to ?? "default"] as const;
 
 // Helper for stable temp ids during optimistic mutations. randomUUID is
 // available everywhere we ship (modern browsers + service workers).
@@ -50,6 +54,14 @@ export function useEntries(date?: string) {
     queryFn: () => listEntries(date),
     staleTime: isPast ? Infinity : 30_000,
     gcTime: 30 * 60_000,
+  });
+}
+
+export function useHeatmap(from?: string, to?: string) {
+  return useQuery<HeatmapResponse, ApiError>({
+    queryKey: heatmapKey(from, to),
+    queryFn: () => getHeatmap(from, to),
+    staleTime: 60_000,
   });
 }
 

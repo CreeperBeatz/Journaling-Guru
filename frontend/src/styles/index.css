@@ -323,6 +323,19 @@
     --radius-2xl: 1.5rem;
   }
 
+  /* Heat ramp for the History calendar. Derived from --primary + --accent so
+     a palette switch re-skins the grid automatically; no per-palette
+     overrides needed. The ramp is alpha-on-primary; --heat-empty falls
+     back to --muted (the rest blend cleanly over it). */
+  :root {
+    --heat-empty: hsl(var(--muted));
+    --heat-l1: hsl(var(--primary) / 0.18);
+    --heat-l2: hsl(var(--primary) / 0.40);
+    --heat-l3: hsl(var(--primary) / 0.65);
+    --heat-l4: hsl(var(--primary) / 0.90);
+    --heat-mood: hsl(var(--accent));
+  }
+
   /* Shadows derive their tint from each palette's --shadow-tint, so a single
      declaration covers every palette. Light = real drop shadow; dark = inset
      top-edge highlight + low ambient (sells elevation on OLED). */

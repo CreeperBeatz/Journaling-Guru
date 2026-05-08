@@ -210,18 +210,22 @@ The Manual mode of the chats surface is **not** a stack of textareas. It has two
 
 ### Filling state — `<CardStack>`
 
-One question per card, full focus. Lives in `src/components/ui/card-stack.tsx` (lifted out of `features/journal` because PaperPage reuses the question shape).
+One slot per card, full focus. Lives in `src/components/ui/card-stack.tsx` (slot-based; lifted out of `features/journal` because PaperPage reuses the question shape).
 
-- **Layout** — single card visible, `min-h-[60svh]`, content vertically centered. The card itself is a `<Card>` on `bg-card`, with the question prompt as `h2` serif, optional eyebrow `caption`, and a single input control sized to the question's `kind`:
-  - `short answer` → `<Input>`.
-  - `sentence` → `<Textarea rows={3}>`.
-  - `sentence + chips` → `<Textarea rows={3}>` with a chip row below.
+- **Slot order** — `Mood → Emotions → ...questions`. Mood and Emotions are not "questions" — they're the existing `daily_inputs` mood/emotions fields rendered as cards so the check-in is a single linear flow. Notes (third field on `daily_inputs`) is **not** a card — it stays on the PaperPage / DailyInputs card in the complete state, since most days users don't write notes.
+- **Layout** — single card visible, `min-h-[60svh]`, content vertically centered. The card itself is a `<Card>` on `bg-card`, with the question prompt as `h2` serif, optional eyebrow `caption`, and a single input control sized to the slot's `kind`:
+  - Mood card: large tabular-nums `display`-size number + 1–10 slider (`<Slider ticks>`); skip leaves mood unset (null).
+  - Emotions card: `<Textarea rows={6}>`, free text. Server-side classifier runs async; not echoed.
+  - `short answer` → `<Input>` (Phase-7 backend kind).
+  - `sentence` → `<Textarea rows={6}>` (default for questions today).
+  - `sentence + chips` → `<Textarea>` with a chip row below.
   - `word` → `<Input>` with `text-2xl serif`.
   - `name + why` → two-row group (`<Input>` + `<Textarea>`).
-- **Advance on submit** — `↵` for short answers; `cmd/ctrl+↵` for textareas. The card commits its answer to the cache + POSTs *on advance*, not on blur. (PaperPage owns blur saves.)
-- **Back** — swipe-right (touch only, with the iOS leftmost-20px dead-zone) and a soft `<ChevronLeft>` button revisit the previous card. Already-answered cards prefill from cache.
+- **Advance on submit** — `↵` for short answers; `cmd/ctrl+↵` for textareas. The card commits its value to the cache + POSTs *on advance*, not on blur. (PaperPage owns blur saves.)
+- **Back** — swipe-right (touch only, with the iOS leftmost-20px dead-zone) and a soft `<ChevronLeft>` button revisit the previous card. Already-filled cards prefill from cache.
 - **Progress** — a single thin progress bar `bg-accent` at the top of the card, width `= (index + 1) / total`. No "Question 3 of 7" copy — the bar carries it.
-- **Skip** — there is no skip. Empty submit advances with an empty answer; empty answers don't count toward the streak level (see History).
+- **Skip-to-end** — a small `Show full page →` affordance lives next to the progress bar. Clicking it fires `onComplete()` directly, jumping the surface to PaperPage without walking through every card. Reading users + return-day users want this; the cards are the on-ramp, not a forced corridor.
+- **Skip card** — no per-card skip. Empty submit advances with no value; empty mood / emotions / answer don't count toward the streak level (see History).
 
 ### Completion state — `<PaperPage>`
 
@@ -283,7 +287,7 @@ Computed client-side from a single endpoint (`GET /api/history/heatmap?from&to`)
 | 2 | 3–5 answered **or** chat session with ≥3 turns. |
 | 3 | 6+ answered AND chat session with ≥3 turns. |
 | 4 | Level-3 day inside a run of ≥3 consecutive level-3 days. |
-| `moodUp` | `daily_inputs.mood >= 4`. Independent of level — applies as the inset ring. |
+| `moodUp` | `daily_inputs.mood_score >= 7` (top tertile of the 1-10 scale). Independent of level — applies as the inset ring. |
 
 Streak counter (`<StreakBadge>`) = consecutive days back from today with `level >= 1`. Renders in the page header, `font-mono tabular-nums`, accent number on `bg-accent/10` rounded-full pill.
 

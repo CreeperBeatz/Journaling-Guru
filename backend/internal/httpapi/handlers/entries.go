@@ -109,6 +109,69 @@ func (h *EntryHandler) ListDates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"dates": rows})
 }
 
+// Heatmap handles GET /api/history/heatmap?from=YYYY-MM-DD&to=YYYY-MM-DD.
+// Both parameters are optional; defaults are last-365-days ending today
+// (in the user's timezone). The FE caps the range at 366 days client-side
+// but the server enforces a hard cap to keep the query bounded.
+func (h *EntryHandler) Heatmap(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	u, err := h.Users.GetByID(r.Context(), sess.UserID)
+	if err != nil || u == nil {
+		writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
+		return
+	}
+	today, err := timezone.LocalDate(time.Now(), u.Timezone, u.DayStartMinutes)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "tz resolve failed")
+		return
+	}
+
+	parseDate := func(s string, fallback time.Time) (time.Time, error) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return fallback, nil
+		}
+		return time.Parse("2006-01-02", s)
+	}
+	to, err := parseDate(r.URL.Query().Get("to"), today)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid to")
+		return
+	}
+	from, err := parseDate(r.URL.Query().Get("from"), to.AddDate(0, 0, -364))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid from")
+		return
+	}
+	if to.Before(from) {
+		writeJSONError(w, http.StatusBadRequest, "to before from")
+		return
+	}
+	// Hard cap to keep the query bounded — 2 years is more than the year
+	// view ever asks for.
+	if to.Sub(from) > 730*24*time.Hour {
+		writeJSONError(w, http.StatusBadRequest, "range too wide")
+		return
+	}
+
+	rows, err := h.Entries.HeatmapRange(r.Context(), sess.UserID, from, to)
+	if err != nil {
+		h.Logger.Error("heatmap", "err", err, "user_id", sess.UserID)
+		writeJSONError(w, http.StatusInternalServerError, "heatmap failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"from":  timezone.FormatDate(from),
+		"to":    timezone.FormatDate(to),
+		"today": timezone.FormatDate(today),
+		"days":  rows,
+	})
+}
+
 type upsertEntryRequest struct {
 	QuestionID string `json:"question_id"`
 	Body       string `json:"body"`

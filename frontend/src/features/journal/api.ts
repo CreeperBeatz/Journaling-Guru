@@ -29,6 +29,20 @@ export interface DateSummary {
   entry_count: number;
 }
 
+export interface HeatmapDay {
+  local_date: string;
+  answered: number;
+  chat_turns: number;
+  mood?: number | null;
+}
+
+export interface HeatmapResponse {
+  from: string;
+  to: string;
+  today: string;
+  days: HeatmapDay[];
+}
+
 export function listQuestions(): Promise<{ questions: Question[] }> {
   return api("/api/questions");
 }
@@ -60,6 +74,14 @@ export function listEntries(date?: string): Promise<DayEntries> {
 export function listEntryDates(limit?: number): Promise<{ dates: DateSummary[] }> {
   const qs = limit && limit > 0 ? `?limit=${limit}` : "";
   return api(`/api/entries/dates${qs}`);
+}
+
+export function getHeatmap(from?: string, to?: string): Promise<HeatmapResponse> {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const qs = params.toString();
+  return api(`/api/history/heatmap${qs ? `?${qs}` : ""}`);
 }
 
 // Upserts today's entry. Empty body deletes the row, matching backend.

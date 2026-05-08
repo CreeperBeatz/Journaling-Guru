@@ -1,8 +1,14 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { PaperPage, PaperPageBlock } from "@/components/ui/paper-page";
+import {
+  HeatGrid,
+  buildHeatCells,
+  type HeatView,
+} from "@/components/ui/heat-grid";
+import { StreakBadge, computeStreak } from "@/components/ui/streak-badge";
 import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { cn } from "@/lib/utils";
@@ -11,10 +17,12 @@ import { listEntries, type JournalEntry } from "./api";
 import {
   useEntries,
   useEntryDates,
+  useHeatmap,
   useQuestions,
   useUpdateEntry,
   ENTRY_DATES_KEY,
   entriesKey,
+  heatmapKey,
 } from "./hooks";
 import { HistoryDailyInputs } from "./HistoryDailyInputs";
 import { HistoryChatTranscript } from "@/features/chat/HistoryChatTranscript";
@@ -35,24 +43,162 @@ function formatHumanDate(yyyymmdd: string): string {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function HistoryView() {
-  const dates = useEntryDates(180);
-  const questions = useQuestions();
-  const navigate = useNavigate();
-  const qc = useQueryClient();
   const { date: rawDate } = useParams();
-
+  const navigate = useNavigate();
   const selected = rawDate && DATE_RE.test(rawDate) ? rawDate : null;
 
-  // Garbage in the URL bounces back to the bare /history list.
+  // Garbage in the URL bounces back to the bare /history.
   useEffect(() => {
     if (rawDate && !selected) navigate("/history", { replace: true });
   }, [rawDate, selected, navigate]);
 
-  const detail = useEntries(selected ?? undefined);
+  return selected ? <HistoryDetail localDate={selected} /> : <HistoryLanding />;
+}
+
+// ---------- Landing (heatmap + recent entries) ----------
+
+function HistoryLanding() {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const heatmap = useHeatmap();
+  const dates = useEntryDates(14);
+  const [view, setView] = useState<HeatView>("year");
+
+  const days = heatmap.data?.days ?? [];
+  const today = heatmap.data?.today ?? new Date().toISOString().slice(0, 10);
+  const cells = useMemo(() => buildHeatCells(days), [days]);
+  const streak = useMemo(() => computeStreak(cells, today), [cells, today]);
+
+  const onRefresh = async () => {
+    await Promise.all([
+      qc.refetchQueries({ queryKey: heatmapKey() }),
+      qc.refetchQueries({ queryKey: ENTRY_DATES_KEY }),
+    ]);
+  };
+
+  return (
+    <PullToRefresh onRefresh={onRefresh}>
+      <div className="space-y-8">
+        <header className="flex flex-wrap items-end justify-between gap-3">
+          <div className="space-y-1">
+            <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+              History
+            </p>
+            <h1 className="font-serif text-h1 leading-tight">Where you&apos;ve been</h1>
+          </div>
+          <StreakBadge days={streak} />
+        </header>
+
+        <section className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <ViewToggle value={view} onChange={setView} />
+            <p className="font-mono text-[11px] text-muted-foreground" aria-hidden>
+              none · short · mid · deep
+            </p>
+          </div>
+
+          {heatmap.isPending ? (
+            <p className="text-sm text-muted-foreground">Loading heatmap…</p>
+          ) : heatmap.isError ? (
+            <p className="text-sm text-destructive">Couldn&apos;t load heatmap.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <HeatGrid
+                cells={cells}
+                view={view}
+                anchor={today}
+                onSelect={(date) => {
+                  // Prefetch the day before navigating — the entry-detail
+                  // chunk gets a warm cache by the time it mounts.
+                  qc.prefetchQuery({
+                    queryKey: entriesKey(date),
+                    queryFn: () => listEntries(date),
+                  });
+                  navigate(`/history/${date}`);
+                }}
+              />
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="font-serif text-h2">Recent entries</h2>
+          {dates.isPending ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : dates.isError ? (
+            <p className="text-sm text-destructive">Couldn&apos;t load history.</p>
+          ) : dates.data!.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nothing yet — write today&apos;s entries and they&apos;ll appear here tomorrow.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border/60">
+              {dates.data!.map((d) => (
+                <li key={d.local_date}>
+                  <Link
+                    to={`/history/${d.local_date}`}
+                    className="flex items-baseline justify-between gap-3 py-3 transition-colors hover:bg-secondary/30 -mx-2 px-2 rounded-md"
+                  >
+                    <span className="font-medium">{formatHumanDate(d.local_date)}</span>
+                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                      {d.entry_count} answer{d.entry_count === 1 ? "" : "s"}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </PullToRefresh>
+  );
+}
+
+function ViewToggle({
+  value,
+  onChange,
+}: {
+  value: HeatView;
+  onChange: (v: HeatView) => void;
+}) {
+  const opts: { v: HeatView; label: string }[] = [
+    { v: "year", label: "Year" },
+    { v: "month", label: "Month" },
+    { v: "week", label: "Week" },
+  ];
+  return (
+    <div className="inline-flex rounded-md border border-border bg-card p-0.5 text-xs">
+      {opts.map((o) => (
+        <button
+          key={o.v}
+          type="button"
+          onClick={() => onChange(o.v)}
+          className={cn(
+            "rounded px-3 py-1 transition-colors",
+            value === o.v
+              ? "bg-secondary text-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+          aria-pressed={value === o.v}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Detail (single day) ----------
+
+function HistoryDetail({ localDate }: { localDate: string }) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const detail = useEntries(localDate);
+  const dates = useEntryDates(180);
+  const questions = useQuestions();
 
   const dateList = dates.data ?? [];
-  const idx = selected ? dateList.findIndex((d) => d.local_date === selected) : -1;
-  // dates[] is sorted desc — most recent first. So idx-1 is newer, idx+1 is older.
+  const idx = dateList.findIndex((d) => d.local_date === localDate);
   const newer = idx > 0 ? dateList[idx - 1].local_date : null;
   const older = idx >= 0 && idx < dateList.length - 1 ? dateList[idx + 1].local_date : null;
 
@@ -61,13 +207,8 @@ export function HistoryView() {
   );
 
   const onRefresh = async () => {
-    await qc.refetchQueries({ queryKey: ENTRY_DATES_KEY });
-    if (selected) await qc.refetchQueries({ queryKey: entriesKey(selected) });
+    await qc.refetchQueries({ queryKey: entriesKey(localDate) });
   };
-
-  if (dates.isPending) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (dates.isError)
-    return <p className="text-sm text-destructive">Couldn't load history.</p>;
 
   return (
     <PullToRefresh onRefresh={onRefresh}>
@@ -88,71 +229,37 @@ export function HistoryView() {
         }}
       >
         <div className="space-y-6">
-          <header className="space-y-1">
-            <p className="text-xs uppercase tracking-wider text-muted-foreground">History</p>
-            <h1 className="font-serif text-h1">Past entries</h1>
-            <p className="text-sm text-muted-foreground">
-              {dateList.length === 0
-                ? "Nothing yet — write today's entries and they'll appear here tomorrow."
-                : `${dateList.length} day${dateList.length === 1 ? "" : "s"} on record. Pick a date to read or edit.`}
+          <Link
+            to="/history"
+            className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground"
+          >
+            ← Back to overview
+          </Link>
+
+          {detail.isPending ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : detail.isError ? (
+            <p className="text-sm text-destructive">
+              Couldn&apos;t load entries for {localDate}.
             </p>
-          </header>
-
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-[16rem,1fr]">
-            <nav className="space-y-1">
-              {dateList.map((d) => {
-                const active = selected === d.local_date;
-                return (
-                  <Link
-                    key={d.local_date}
-                    to={active ? "/history" : `/history/${d.local_date}`}
-                    className={cn(
-                      "block w-full rounded-md border-l-4 border-transparent px-3 py-2 text-left text-sm transition-colors",
-                      active
-                        ? "border-l-accent bg-secondary/50"
-                        : "hover:border-l-border hover:bg-secondary/40",
-                    )}
-                  >
-                    <div className="font-medium">{formatHumanDate(d.local_date)}</div>
-                    <div className="font-mono text-xs text-muted-foreground tabular-nums">
-                      {d.entry_count} answer{d.entry_count === 1 ? "" : "s"}
-                    </div>
-                  </Link>
-                );
-              })}
-            </nav>
-
-            <div className="min-h-[8rem]">
-              {!selected ? (
+          ) : (
+            <div className="space-y-6">
+              <HistoryDailyInputs localDate={detail.data!.local_date} />
+              <HistoryChatTranscript localDate={detail.data!.local_date} />
+              {detail.data!.entries.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  Pick a date to read or edit what you wrote.
-                </p>
-              ) : detail.isPending ? (
-                <p className="text-sm text-muted-foreground">Loading…</p>
-              ) : detail.isError ? (
-                <p className="text-sm text-destructive">
-                  Couldn't load entries for {selected}.
+                  No entries on this date.
                 </p>
               ) : (
-                <div className="space-y-6">
-                  <HistoryDailyInputs localDate={detail.data!.local_date} />
-                  <HistoryChatTranscript localDate={detail.data!.local_date} />
-                  {detail.data!.entries.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      No entries on this date.
-                    </p>
-                  ) : (
-                    <HistoryPaperPage
-                      localDate={detail.data!.local_date}
-                      entries={detail.data!.entries}
-                      promptByQuestion={promptByQuestion}
-                      dateLabel={formatHumanDate(detail.data!.local_date)}
-                    />
-                  )}
-                </div>
+                <HistoryPaperPage
+                  localDate={detail.data!.local_date}
+                  entries={detail.data!.entries}
+                  promptByQuestion={promptByQuestion}
+                  dateLabel={formatHumanDate(detail.data!.local_date)}
+                />
               )}
             </div>
-          </div>
+          )}
         </div>
       </SwipeNavigator>
     </PullToRefresh>
