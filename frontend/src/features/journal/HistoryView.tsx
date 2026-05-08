@@ -139,15 +139,6 @@ function HistoryLanding() {
     setAnchor(null);
   };
 
-  const goUp = () => {
-    if (view === "week") {
-      setView("month");
-      // keep anchor so the parent month is highlighted
-    } else if (view === "month") {
-      setView("year");
-      setAnchor(null);
-    }
-  };
 
   return (
     <PullToRefresh onRefresh={onRefresh}>
@@ -209,15 +200,6 @@ function HistoryLanding() {
                   className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground"
                 >
                   Today
-                </button>
-              ) : null}
-              {view !== "year" ? (
-                <button
-                  type="button"
-                  onClick={goUp}
-                  className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground"
-                >
-                  ← Up
                 </button>
               ) : null}
             </div>
