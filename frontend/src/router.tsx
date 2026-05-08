@@ -41,6 +41,9 @@ const HealthPage = lazy(() =>
 const ResourcesPage = lazy(() =>
   import("./features/resources/ResourcesPage").then((m) => ({ default: m.ResourcesPage })),
 );
+const GoalsPage = lazy(() =>
+  import("./features/goals/GoalsPage").then((m) => ({ default: m.GoalsPage })),
+);
 
 function withSuspense(node: ReactNode, fallback: ReactNode) {
   return <Suspense fallback={fallback}>{node}</Suspense>;
@@ -103,6 +106,7 @@ export const router = createBrowserRouter([
       { path: "summary/:id", element: withSuspense(<SummaryDetail />, <SummaryDetailSkeleton />) },
       { path: "summaries", element: <Navigate to="/summary" replace /> },
       { path: "summaries/:id", element: <Navigate to="/summary" replace /> },
+      { path: "goals", element: withSuspense(<GoalsPage />, <p className="text-sm text-muted-foreground">Loading…</p>) },
     ],
   },
 ]);

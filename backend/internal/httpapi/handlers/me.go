@@ -43,11 +43,12 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateMeRequest struct {
-	DisplayName     *string `json:"display_name,omitempty"`
-	Timezone        *string `json:"timezone,omitempty"`
-	ReminderTime    *string `json:"reminder_time,omitempty"`
-	ReminderEnabled *bool   `json:"reminder_enabled,omitempty"`
-	DayStartMinutes *int    `json:"day_start_minutes,omitempty"`
+	DisplayName       *string `json:"display_name,omitempty"`
+	Timezone          *string `json:"timezone,omitempty"`
+	ReminderTime      *string `json:"reminder_time,omitempty"`
+	ReminderEnabled   *bool   `json:"reminder_enabled,omitempty"`
+	DayStartMinutes   *int    `json:"day_start_minutes,omitempty"`
+	ReflectionWeekday *int    `json:"reflection_weekday,omitempty"`
 }
 
 // reminderTimePattern matches "HH:MM" or "HH:MM:SS" with leading zeros.
@@ -103,6 +104,14 @@ func (h *MeHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		patch.DayStartMinutes = &v
+	}
+	if req.ReflectionWeekday != nil {
+		v := *req.ReflectionWeekday
+		if v < 0 || v > 6 {
+			writeJSONError(w, http.StatusBadRequest, "reflection_weekday must be 0..6")
+			return
+		}
+		patch.ReflectionWeekday = &v
 	}
 
 	u, err := h.Users.UpdateSettings(r.Context(), sess.UserID, patch)

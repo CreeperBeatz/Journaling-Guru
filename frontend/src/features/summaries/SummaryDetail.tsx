@@ -143,7 +143,7 @@ export function SummaryDetail() {
             {meta.mood_score != null ? (
               <Stat label="Mood">
                 <span className="font-mono text-xl tabular-nums">{meta.mood_score.toFixed(1)}</span>
-                <span className="text-muted-foreground"> /10</span>
+                <span className="text-muted-foreground"> /3</span>
                 {meta.mood_label ? (
                   <span className={cn("ml-2 text-sm capitalize", moodLabelClass(meta.mood_label))}>
                     {meta.mood_label}

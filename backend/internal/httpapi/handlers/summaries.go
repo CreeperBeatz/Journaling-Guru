@@ -246,15 +246,12 @@ func (h *SummaryHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "stats failed")
 		return
 	}
-	emotions, err := h.DailyInputs.TopEmotions(r.Context(), sess.UserID, days, 6)
-	if err != nil {
-		h.Logger.Error("stats: emotions", "err", err)
-		writeJSONError(w, http.StatusInternalServerError, "stats failed")
-		return
-	}
+	// Emotions are retired under the Energy Audit pivot — return an empty
+	// array so the existing FE chart code degrades gracefully until
+	// Phase 6 swaps this endpoint for the three-zone summary surface.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"window_days": days,
 		"mood":        mood,
-		"emotions":    emotions,
+		"emotions":    []any{},
 	})
 }

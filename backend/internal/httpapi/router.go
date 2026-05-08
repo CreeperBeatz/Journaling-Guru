@@ -36,7 +36,10 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	dailyInputs := store.NewDailyInputStore(db)
 	summaries := store.NewSummaryStore(db)
 	summaryJobs := store.NewSummaryJobStore(db)
-	emotionJobs := store.NewEmotionClassifyJobStore(db)
+	tags := store.NewTagStore(db)
+	dailyEntryTags := store.NewDailyEntryTagStore(db)
+	goals := store.NewGoalStore(db)
+	goalCheckIns := store.NewGoalCheckInStore(db)
 	pushSubs := store.NewPushSubscriptionStore(db)
 	reminderJobs := store.NewReminderJobStore(db)
 	chatSessions := store.NewChatSessionStore(db)
@@ -120,11 +123,19 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		Scheduler: scheduler,
 	}
 	dailyInputsH := &handlers.DailyInputHandler{
-		Inputs:      dailyInputs,
-		Users:       users,
-		Logger:      logger,
-		Scheduler:   scheduler,
-		EmotionJobs: emotionJobs,
+		Inputs:         dailyInputs,
+		Users:          users,
+		Tags:           tags,
+		DailyEntryTags: dailyEntryTags,
+		Logger:         logger,
+		Scheduler:      scheduler,
+	}
+	tagsH := &handlers.TagHandler{Tags: tags, Logger: logger}
+	goalsH := &handlers.GoalHandler{
+		Goals:    goals,
+		CheckIns: goalCheckIns,
+		Users:    users,
+		Logger:   logger,
 	}
 	summariesH := &handlers.SummaryHandler{
 		Summaries:   summaries,
@@ -234,6 +245,15 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 					r.Put("/daily/inputs", dailyInputsH.Upsert)
 					r.Patch("/daily/inputs/by-date/{date}", dailyInputsH.UpdateByDate)
 
+					r.Post("/tags", tagsH.Create)
+					r.Patch("/tags/{id}", tagsH.Update)
+					r.Post("/tags/{id}/merge", tagsH.Merge)
+					r.Delete("/tags/{id}", tagsH.Archive)
+
+					r.Post("/goals", goalsH.Create)
+					r.Patch("/goals/{id}", goalsH.Update)
+					r.Post("/goals/{id}/check-ins", goalsH.CheckIn)
+
 					r.Post("/summaries/regenerate", summariesH.Regenerate)
 
 					r.Post("/push/subscribe", pushH.Subscribe)
@@ -253,6 +273,10 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 				r.Get("/history/heatmap", entriesH.Heatmap)
 
 				r.Get("/daily/inputs", dailyInputsH.Get)
+
+				r.Get("/tags", tagsH.List)
+
+				r.Get("/goals", goalsH.List)
 
 				r.Get("/summaries", summariesH.List)
 				r.Get("/summaries/stats", summariesH.Stats)
@@ -287,6 +311,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 				r.Use(mw.CSRF)
 				r.Post("/sessions", chatH.CreateOrResume)
 				r.Post("/sessions/{id}/messages", chatH.StreamMessage)
+				r.Post("/sessions/{id}/wrap-up", chatH.WrapUp)
 				r.Post("/sessions/{id}/finalize", chatH.Finalize)
 				r.Post("/sessions/{id}/reset", chatH.Reset)
 			})

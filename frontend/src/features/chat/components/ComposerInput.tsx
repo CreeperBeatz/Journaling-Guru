@@ -9,6 +9,11 @@ interface Props {
   disabled?: boolean;
   pending?: boolean;
   placeholder?: string;
+  // bare=true drops the outer rounded border + bg so the composer can
+  // be embedded inside a larger floating pill without visual nesting.
+  // The textarea + send button still render normally; only the wrapper
+  // changes.
+  bare?: boolean;
 }
 
 const MAX_LEN = 4_000;
@@ -17,7 +22,7 @@ const MAX_LEN = 4_000;
 // chat. Auto-grows up to ~6 lines, then scrolls. Enter submits;
 // Shift+Enter inserts a newline. The send button is the only mouse
 // affordance — Cmd/Ctrl+Enter also fires it for keyboard heavies.
-export function ComposerInput({ onSend, disabled, pending, placeholder }: Props) {
+export function ComposerInput({ onSend, disabled, pending, placeholder, bare }: Props) {
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -49,9 +54,14 @@ export function ComposerInput({ onSend, disabled, pending, placeholder }: Props)
   return (
     <div
       className={cn(
-        "flex items-end gap-2 rounded-xl border border-border/80 bg-background px-3 py-2",
-        "focus-within:border-foreground/30 focus-within:ring-1 focus-within:ring-foreground/10",
-        disabled && "opacity-60",
+        "flex items-end gap-2",
+        bare
+          ? cn("px-1 py-1", disabled && "opacity-60")
+          : cn(
+              "rounded-xl border border-border/80 bg-background px-3 py-2",
+              "focus-within:border-foreground/30 focus-within:ring-1 focus-within:ring-foreground/10",
+              disabled && "opacity-60",
+            ),
       )}
     >
       <textarea

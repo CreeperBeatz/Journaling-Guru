@@ -15,12 +15,9 @@ type Question struct {
 	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
-// DefaultQuestions seeds a new account on first /api/questions GET. Order
-// here matches the order they'll be presented in DailyEntry.
-var DefaultQuestions = []string{
-	"What stood out about today?",
-	"What are you grateful for?",
-	"What's on your mind right now?",
-	"What did you learn today?",
-	"What's one thing you'd like to do better tomorrow?",
-}
+// DefaultQuestions is empty under the Energy Audit pivot — the daily
+// flow's five prompts (mood / drained / charged / gratitude /
+// reflection) are baked into the DailyInputs surface, not modeled as
+// rows in the `questions` table. The table itself remains as
+// scaffolding for a future "user adds custom prompts" expansion.
+var DefaultQuestions = []string{}

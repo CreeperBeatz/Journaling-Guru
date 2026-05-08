@@ -207,6 +207,22 @@ export async function* streamOpener(
   yield* parseSseStream(res.body!, signal);
 }
 
+// streamWrapUp opens POST /sessions/:id/wrap-up for the user-initiated
+// closing pass. Server inserts a system_event into the transcript,
+// advances phase to wrapping_up, and streams a single assistant turn
+// covering remaining topics + a propose_wrap_up.
+export async function* streamWrapUp(
+  sessionId: string,
+  signal: AbortSignal,
+): AsyncGenerator<ChatStreamEvent> {
+  const res = await openSseStream({
+    path: `/api/chat/sessions/${encodeURIComponent(sessionId)}/wrap-up`,
+    method: "POST",
+    signal,
+  });
+  yield* parseSseStream(res.body!, signal);
+}
+
 async function* parseSseStream(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,

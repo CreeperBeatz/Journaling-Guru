@@ -13,6 +13,8 @@ export interface User {
   reminder_time: string;
   reminder_enabled: boolean;
   day_start_minutes: number;
+  reflection_weekday: number; // 0=Sun..6=Sat — day for the weekly reflection flow
+
   created_at: string;
   updated_at: string;
 }

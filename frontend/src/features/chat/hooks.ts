@@ -23,6 +23,7 @@ import {
   resetSession,
   streamMessage,
   streamOpener,
+  streamWrapUp,
 } from "./api";
 
 // ---------- query keys ----------
@@ -100,8 +101,15 @@ export interface UseStreamingChatResult {
   state: StreamingState;
   sendMessage: (content: string) => Promise<void>;
   startOpener: () => Promise<void>;
+  triggerWrapUp: () => Promise<void>;
   abort: () => void;
   dismissCrisis: () => void;
+  // clearPartial drops the in-flight streaming text. Consumers call this
+  // once they've observed the persisted assistant turn arrive in the
+  // messages cache — the streaming bubble (driven by partial) stays
+  // mounted until then so there's no flicker between stream-ended and
+  // refetch-completed.
+  clearPartial: () => void;
 }
 
 // useStreamingChat is the streaming state machine for the active session.
@@ -170,24 +178,28 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
               setState((s) => ({ ...s, status: "error", lastError: ev.message }));
               return;
             case "done":
-              setState((s) => ({ ...s, status: "done", partial: "" }));
-              // Refetch the session envelope so the persisted assistant
-              // turn replaces the streaming partial and tool calls
-              // become real chat_messages rows.
+              setState((s) => ({ ...s, status: "done" }));
+              // Refetch the session envelope. We deliberately do NOT
+              // clear `partial` here — that's the consumer's job, via
+              // clearPartial(), once it sees the persisted assistant
+              // turn land in the messages array. Clearing eagerly was
+              // the source of the flicker where the bubble briefly
+              // disappeared and reappeared.
               qc.invalidateQueries({ queryKey: chatSessionKey() });
               // NOTE: don't return — the server emits `done` BEFORE
               // the post-turn coverage classifier so the composer
               // re-enables immediately. A `coverage_update` frame may
               // still arrive on the same connection; keep iterating
-              // until the generator naturally ends (server closes the
-              // stream after the classifier persists).
+              // until the generator naturally ends.
               break;
           }
         }
         // Stream ended naturally (post-`done` close, or server closed
         // early without a `done` frame). Flip to 'done' if we were
-        // still streaming so the composer doesn't get stuck.
-        setState((s) => ({ ...s, status: s.status === "streaming" ? "done" : s.status, partial: "" }));
+        // still streaming so the composer doesn't get stuck. Don't
+        // clear partial here — the consumer's clearPartial will fire
+        // once the persisted message arrives.
+        setState((s) => ({ ...s, status: s.status === "streaming" ? "done" : s.status }));
       } catch (err) {
         if ((err as { name?: string })?.name === "AbortError") {
           setState((s) => ({ ...s, status: "idle", partial: "" }));
@@ -255,6 +267,28 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
     }
   }, [sessionId, state.status, consumeStream]);
 
+  // triggerWrapUp fires the user-initiated closing pass. The server
+  // appends a system_event ("user_wrap_up"), advances phase to
+  // wrapping_up, and streams a single assistant turn that covers any
+  // remaining topics and proposes wrap-up. Same SSE consumer as a
+  // normal message.
+  const triggerWrapUp = useCallback(async () => {
+    if (!sessionId) return;
+    if (state.status === "streaming") return;
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setState({ ...initialStreamState, status: "streaming" });
+    try {
+      await consumeStream(streamWrapUp(sessionId, ac.signal));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "wrap-up failed";
+      setState((s) => ({ ...s, status: "error", lastError: msg }));
+      qc.invalidateQueries({ queryKey: chatSessionKey() });
+      toast.error("Couldn't wrap up", { description: msg });
+    }
+  }, [sessionId, state.status, qc, consumeStream]);
+
   const abort = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -265,6 +299,10 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
     setState((s) => ({ ...s, status: "idle", crisis: null, partial: "" }));
   }, []);
 
+  const clearPartial = useCallback(() => {
+    setState((s) => (s.partial ? { ...s, partial: "" } : s));
+  }, []);
+
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
@@ -272,7 +310,7 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
     };
   }, []);
 
-  return { state, sendMessage, startOpener, abort, dismissCrisis };
+  return { state, sendMessage, startOpener, triggerWrapUp, abort, dismissCrisis, clearPartial };
 }
 
 // ---------- finalize + extraction polling ----------

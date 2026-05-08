@@ -1,67 +1,149 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, X } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusPill } from "@/components/ui/status-pill";
 import { useDebouncedFlag } from "@/lib/useDebouncedFlag";
 import { cn } from "@/lib/utils";
 
-import type { DailyInput } from "./api";
+import type { DailyInput, DailyInputUpsertBody, TagDayLink } from "./api";
+import { TagPicker } from "./TagPicker";
 
 interface Props {
   // Existing data, or null when nothing has been logged yet.
   input: DailyInput | null;
-  // Save callback — `null` mood means "unset", empty strings are valid.
-  // The hook layer turns "everything empty" into a delete.
-  onSave: (body: { mood_score: number | null; emotions_text: string; notes: string }) => void;
+  // The day's tag links (drainer + charger), as returned by GET
+  // /api/daily/inputs. Split by role inside this component.
+  tags: TagDayLink[];
+  // Save callback. The hook layer turns "everything empty" into a delete.
+  onSave: (body: DailyInputUpsertBody) => void;
   // Whether a save is currently in flight. Used for the spinner.
   isSaving: boolean;
   // Optional title override; defaults to "Today's check-in".
   title?: string;
 }
 
-export function DailyInputs({ input, onSave, isSaving, title }: Props) {
-  // Mood: -1 means "no value" since Radix Slider can't show null. We
-  // map between (slider value, internal nullable state) at the edges.
-  const [mood, setMood] = useState<number | null>(input?.mood_score ?? null);
-  const [emotionsText, setEmotionsText] = useState<string>(input?.emotions_text ?? "");
-  const [notes, setNotes] = useState<string>(input?.notes ?? "");
+// DailyInputs — the Manual tab's five-prompt Energy Audit. Five field
+// cards in fixed order: mood faces / drainer + tags / charger + tags /
+// gratitude / reflection. Save-on-blur for text; save-on-click for
+// mood faces and tag picks. The hook layer collapses an all-empty save
+// into a row delete.
+export function DailyInputs({ input, tags, onSave, isSaving, title }: Props) {
+  // Server snapshot — what we last saw from the server, used to detect
+  // dirty state and to re-sync after a refetch lands.
+  const initialDrainerIds = useMemo(
+    () => tags.filter((t) => t.role === "drainer").map((t) => t.tag_id),
+    [tags],
+  );
+  const initialChargerIds = useMemo(
+    () => tags.filter((t) => t.role === "charger").map((t) => t.tag_id),
+    [tags],
+  );
+
+  const [mood, setMood] = useState<number | null>(input?.mood ?? null);
+  const [drainedText, setDrainedText] = useState(input?.drained_text ?? "");
+  const [chargedText, setChargedText] = useState(input?.charged_text ?? "");
+  const [gratitudeText, setGratitudeText] = useState(input?.gratitude_text ?? "");
+  const [reflectionText, setReflectionText] = useState(input?.reflection_text ?? "");
+  const [drainerIds, setDrainerIds] = useState<string[]>(initialDrainerIds);
+  const [chargerIds, setChargerIds] = useState<string[]>(initialChargerIds);
+
   const [serverSnap, setServerSnap] = useState({
-    mood: input?.mood_score ?? null,
-    emotionsText: input?.emotions_text ?? "",
-    notes: input?.notes ?? "",
+    mood: input?.mood ?? null,
+    drainedText: input?.drained_text ?? "",
+    chargedText: input?.charged_text ?? "",
+    gratitudeText: input?.gratitude_text ?? "",
+    reflectionText: input?.reflection_text ?? "",
+    drainerIds: initialDrainerIds,
+    chargerIds: initialChargerIds,
   });
   const showSpinner = useDebouncedFlag(isSaving, 300);
 
-  // Re-sync when the server-state prop changes (e.g. after refetch),
-  // but only when the user hasn't started editing — drafts win.
+  // Re-sync when the server-state prop changes, but only when the user
+  // hasn't started editing — drafts win.
   useEffect(() => {
-    const serverMood = input?.mood_score ?? null;
-    const serverEmotionsText = input?.emotions_text ?? "";
-    const serverNotes = input?.notes ?? "";
+    const next = {
+      mood: input?.mood ?? null,
+      drainedText: input?.drained_text ?? "",
+      chargedText: input?.charged_text ?? "",
+      gratitudeText: input?.gratitude_text ?? "",
+      reflectionText: input?.reflection_text ?? "",
+      drainerIds: initialDrainerIds,
+      chargerIds: initialChargerIds,
+    };
     const stillPristine =
-      eq(mood, serverSnap.mood) &&
-      emotionsText === serverSnap.emotionsText &&
-      notes === serverSnap.notes;
+      mood === serverSnap.mood &&
+      drainedText === serverSnap.drainedText &&
+      chargedText === serverSnap.chargedText &&
+      gratitudeText === serverSnap.gratitudeText &&
+      reflectionText === serverSnap.reflectionText &&
+      idsEqual(drainerIds, serverSnap.drainerIds) &&
+      idsEqual(chargerIds, serverSnap.chargerIds);
     if (stillPristine) {
-      setMood(serverMood);
-      setEmotionsText(serverEmotionsText);
-      setNotes(serverNotes);
+      setMood(next.mood);
+      setDrainedText(next.drainedText);
+      setChargedText(next.chargedText);
+      setGratitudeText(next.gratitudeText);
+      setReflectionText(next.reflectionText);
+      setDrainerIds(next.drainerIds);
+      setChargerIds(next.chargerIds);
     }
-    setServerSnap({ mood: serverMood, emotionsText: serverEmotionsText, notes: serverNotes });
+    setServerSnap(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input?.id, input?.updated_at]);
+  }, [input?.id, input?.updated_at, tags]);
 
   const dirty =
-    !eq(mood, serverSnap.mood) ||
-    emotionsText !== serverSnap.emotionsText ||
-    notes !== serverSnap.notes;
+    mood !== serverSnap.mood ||
+    drainedText !== serverSnap.drainedText ||
+    chargedText !== serverSnap.chargedText ||
+    gratitudeText !== serverSnap.gratitudeText ||
+    reflectionText !== serverSnap.reflectionText ||
+    !idsEqual(drainerIds, serverSnap.drainerIds) ||
+    !idsEqual(chargerIds, serverSnap.chargerIds);
 
   const flush = () => {
     if (!dirty) return;
-    onSave({ mood_score: mood, emotions_text: emotionsText, notes });
+    onSave({
+      mood,
+      drained_text: drainedText,
+      charged_text: chargedText,
+      gratitude_text: gratitudeText,
+      reflection_text: reflectionText,
+      drained_tag_ids: drainerIds,
+      charged_tag_ids: chargerIds,
+    });
+  };
+
+  // Tag picks should commit on the next microtask so the optimistic
+  // pill renders, then save fires.
+  const setDrainerIdsAndCommit = (ids: string[]) => {
+    setDrainerIds(ids);
+    queueMicrotask(() =>
+      onSave({
+        mood,
+        drained_text: drainedText,
+        charged_text: chargedText,
+        gratitude_text: gratitudeText,
+        reflection_text: reflectionText,
+        drained_tag_ids: ids,
+        charged_tag_ids: chargerIds,
+      }),
+    );
+  };
+  const setChargerIdsAndCommit = (ids: string[]) => {
+    setChargerIds(ids);
+    queueMicrotask(() =>
+      onSave({
+        mood,
+        drained_text: drainedText,
+        charged_text: chargedText,
+        gratitude_text: gratitudeText,
+        reflection_text: reflectionText,
+        drained_tag_ids: drainerIds,
+        charged_tag_ids: ids,
+      }),
+    );
   };
 
   return (
@@ -78,193 +160,181 @@ export function DailyInputs({ input, onSave, isSaving, title }: Props) {
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        <MoodInput
+        <MoodFaces
           value={mood}
-          onChange={setMood}
-          onCommit={flush}
+          onChange={(v) => {
+            setMood(v);
+            queueMicrotask(() =>
+              onSave({
+                mood: v,
+                drained_text: drainedText,
+                charged_text: chargedText,
+                gratitude_text: gratitudeText,
+                reflection_text: reflectionText,
+                drained_tag_ids: drainerIds,
+                charged_tag_ids: chargerIds,
+              }),
+            );
+          }}
         />
-        <EmotionsInput
-          value={emotionsText}
-          onChange={setEmotionsText}
-          onCommit={flush}
-        />
-        <NotesInput
-          value={notes}
-          onChange={setNotes}
-          onCommit={flush}
-        />
+        <FieldSection
+          label="What drained you?"
+          help="In the user's words. ‘Nothing today’ is a valid answer."
+        >
+          <Textarea
+            value={drainedText}
+            onChange={(e) => setDrainedText(e.target.value)}
+            onBlur={flush}
+            rows={2}
+            maxLength={1000}
+            placeholder="Back-to-back meetings…"
+            className={fieldClass}
+          />
+          <TagPicker
+            valence="negative"
+            selectedIds={drainerIds}
+            onChange={setDrainerIdsAndCommit}
+            placeholder="drainer…"
+          />
+        </FieldSection>
+        <FieldSection
+          label="What charged you?"
+          help="In the user's words. ‘Nothing today’ is fine."
+        >
+          <Textarea
+            value={chargedText}
+            onChange={(e) => setChargedText(e.target.value)}
+            onBlur={flush}
+            rows={2}
+            maxLength={1000}
+            placeholder="A walk after lunch…"
+            className={fieldClass}
+          />
+          <TagPicker
+            valence="positive"
+            selectedIds={chargerIds}
+            onChange={setChargerIdsAndCommit}
+            placeholder="charger…"
+          />
+        </FieldSection>
+        <FieldSection label="What are you grateful for?">
+          <Textarea
+            value={gratitudeText}
+            onChange={(e) => setGratitudeText(e.target.value)}
+            onBlur={flush}
+            rows={2}
+            maxLength={1000}
+            placeholder="One thing — small or large."
+            className={fieldClass}
+          />
+        </FieldSection>
+        <FieldSection label="Anything else on your mind?">
+          <Textarea
+            value={reflectionText}
+            onChange={(e) => setReflectionText(e.target.value)}
+            onBlur={flush}
+            rows={3}
+            maxLength={4000}
+            placeholder="Optional — anything that doesn't fit the slots above."
+            className={fieldClass}
+          />
+        </FieldSection>
       </CardContent>
     </Card>
   );
 }
 
-// ---------------- Mood ----------------
+const fieldClass = cn(
+  "border-transparent bg-transparent px-0 leading-prose text-body",
+  "focus-visible:ring-0 focus-visible:ring-offset-0",
+  "focus-visible:border-b-border focus-visible:border-b rounded-none",
+);
 
-const MOOD_LABELS: Array<[number, string]> = [
-  [4, "negative"],
-  [6, "neutral"],
-  [10, "positive"],
-];
-
-function moodLabel(score: number): string {
-  for (const [hi, label] of MOOD_LABELS) if (score <= hi) return label;
-  return "positive";
-}
-
-function moodLabelClass(score: number): string {
-  if (score <= 4) return "text-destructive";
-  if (score <= 6) return "text-muted-foreground";
-  return "text-accent";
-}
-
-function MoodInput({
-  value,
-  onChange,
-  onCommit,
+function FieldSection({
+  label,
+  help,
+  children,
 }: {
-  value: number | null;
-  onChange: (v: number | null) => void;
-  onCommit: () => void;
+  label: string;
+  help?: string;
+  children: React.ReactNode;
 }) {
-  const display = value ?? 5;
-  const set = value !== null;
   return (
     <section className="space-y-2">
       <div className="flex items-baseline justify-between gap-3">
         <label className="text-xs uppercase tracking-wider text-muted-foreground">
-          Mood
+          {label}
         </label>
-        <div className="flex items-center gap-2">
-          {set ? (
-            <span className="font-mono text-base tabular-nums">
-              {display}
-              <span className="text-muted-foreground">/10</span>
-              <span className={cn("ml-2 text-sm capitalize", moodLabelClass(display))}>
-                {moodLabel(display)}
-              </span>
-            </span>
-          ) : (
-            <span className="text-sm text-muted-foreground italic">not set</span>
-          )}
-          {set ? (
+        {help ? (
+          <span className="text-[11px] italic text-muted-foreground">{help}</span>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+// ---------------- Mood faces ----------------
+
+const FACES: Array<{ value: 1 | 2 | 3; emoji: string; label: string }> = [
+  { value: 1, emoji: "🙁", label: "Sad" },
+  { value: 2, emoji: "😐", label: "Neutral" },
+  { value: 3, emoji: "🙂", label: "Happy" },
+];
+
+function MoodFaces({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <label className="text-xs uppercase tracking-wider text-muted-foreground">
+          Mood today
+        </label>
+        {value !== null ? (
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            aria-label="Clear mood"
+            className="rounded p-1 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-2">
+        {FACES.map((f) => {
+          const active = value === f.value;
+          return (
             <button
+              key={f.value}
               type="button"
-              onClick={() => {
-                onChange(null);
-                // Commit immediately so unset propagates without a focus dance.
-                queueMicrotask(onCommit);
-              }}
-              aria-label="Clear mood"
-              title="Clear mood"
+              onClick={() => onChange(f.value)}
+              aria-pressed={active}
+              aria-label={f.label}
               className={cn(
-                "ml-1 rounded p-1 text-muted-foreground transition-colors",
-                "hover:bg-secondary hover:text-foreground",
+                "h-12 w-12 rounded-full border text-2xl transition-transform",
+                "flex items-center justify-center",
+                active
+                  ? "border-accent bg-accent/10 scale-110"
+                  : "border-border bg-card hover:bg-secondary",
               )}
             >
-              <X className="h-3.5 w-3.5" />
+              {f.emoji}
             </button>
-          ) : null}
-        </div>
+          );
+        })}
       </div>
-      <Slider
-        value={[display]}
-        min={1}
-        max={10}
-        step={1}
-        ticks
-        onValueChange={([v]) => onChange(v)}
-        onValueCommit={onCommit}
-      />
-      {!set ? (
-        <button
-          type="button"
-          onClick={() => {
-            onChange(5);
-            queueMicrotask(onCommit);
-          }}
-          className="text-xs text-accent underline-offset-4 hover:underline"
-        >
-          Tap to set
-        </button>
-      ) : null}
     </section>
   );
 }
 
-// ---------------- Emotions ----------------
-
-const EMOTIONS_TEXT_MAX = 1000;
-
-// Free-text emotions. The server fires an async River job that
-// classifies this into Plutchik's wheel (base + subtype); the
-// classified emotions only appear in summaries — never echoed back
-// here. Save-on-blur, same as Notes.
-function EmotionsInput({
-  value,
-  onChange,
-  onCommit,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  onCommit: () => void;
-}) {
-  return (
-    <section className="space-y-2">
-      <label className="text-xs uppercase tracking-wider text-muted-foreground">
-        Emotions felt
-      </label>
-      <Textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onCommit}
-        rows={3}
-        maxLength={EMOTIONS_TEXT_MAX}
-        placeholder="Anxious before the meeting, then relieved when it went well…"
-        className={cn(
-          "border-transparent bg-transparent px-0 leading-prose text-body",
-          "focus-visible:ring-0 focus-visible:ring-offset-0",
-          "focus-visible:border-b-border focus-visible:border-b rounded-none",
-        )}
-      />
-    </section>
-  );
-}
-
-// ---------------- Notes ----------------
-
-function NotesInput({
-  value,
-  onChange,
-  onCommit,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  onCommit: () => void;
-}) {
-  return (
-    <section className="space-y-2">
-      <label className="text-xs uppercase tracking-wider text-muted-foreground">
-        Notes
-      </label>
-      <Textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onCommit}
-        rows={3}
-        maxLength={4000}
-        placeholder="Anything else worth remembering — feeds into the daily reflection."
-        className={cn(
-          "border-transparent bg-transparent px-0 leading-prose text-body",
-          "focus-visible:ring-0 focus-visible:ring-offset-0",
-          "focus-visible:border-b-border focus-visible:border-b rounded-none",
-        )}
-      />
-    </section>
-  );
-}
-
-// ---------------- helpers ----------------
-
-function eq(a: number | null, b: number | null) {
-  return a === b;
+function idsEqual(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }

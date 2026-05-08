@@ -12,13 +12,23 @@ import (
 )
 
 // ExtractionResult is the validated output of the single-shot
-// extraction LLM call. Fields mirror the JSON schema in
-// chatExtractionSystemPrompt; bounds are enforced after parse.
+// extraction LLM call under the Energy Audit pivot. Fields mirror the
+// JSON schema in chatExtractionSystemPrompt; bounds are enforced after
+// parse.
+//
+// Tag proposals (drainer/charger labels) are short, lowercased phrases
+// that the worker reconciles against the user's existing tag list via
+// TagStore.UpsertByLabel before writing daily_entry_tags rows. Labels
+// here are pre-normalization — the store owns the dedup rule.
 type ExtractionResult struct {
-	MoodScore *int              // 1..10 or nil
-	Emotions  []string          // ≤ 8, lowercase, deduped
-	Notes     string            // ≤ 400 chars, trimmed
-	Answers   map[string]string // question_id → text; omitted-keys absent
+	Mood                  *int              // 1..3 or nil
+	DrainedText           string            // ≤ 1000 chars
+	ChargedText           string            // ≤ 1000 chars
+	GratitudeText         string            // ≤ 1000 chars
+	ReflectionText        string            // ≤ 4000 chars
+	DrainedTagProposals   []string          // ≤ 5 short labels for negative tags
+	ChargedTagProposals   []string          // ≤ 5 short labels for positive tags
+	Answers               map[string]string // question_id → text; omitted-keys absent
 }
 
 // extractionMaxTokens caps the response. The schema is small but the
@@ -26,12 +36,13 @@ type ExtractionResult struct {
 // for users with 6+ questions and verbose conversations.
 const extractionMaxTokens = 1500
 
-// extractionMaxEmotions / extractionMaxNotes are the post-parse caps.
-// Validation drops/trims rather than failing — we'd rather persist a
-// trimmed result than reject a 401-char notes field.
+// Per-field caps. Validation trims rather than fails — we'd rather
+// persist a trimmed result than reject a slightly-too-long field.
 const (
-	extractionMaxEmotions = 8
-	extractionMaxNotes    = 400
+	extractionMaxAuditText      = 1000
+	extractionMaxReflectionText = 4000
+	extractionMaxTagsPerRole    = 5
+	extractionMaxTagLabel       = 60 // matches store/tags maxTagLabelLen
 )
 
 // ExtractParams bundles the inputs to Extract.
@@ -78,10 +89,14 @@ func Extract(
 
 // rawExtraction is the wire shape of the LLM's JSON output.
 type rawExtraction struct {
-	MoodScore *int              `json:"mood_score"`
-	Emotions  []string          `json:"emotions"`
-	Notes     string             `json:"notes"`
-	Answers   map[string]string `json:"answers"`
+	Mood                *int              `json:"mood"`
+	DrainedText         string            `json:"drained_text"`
+	ChargedText         string            `json:"charged_text"`
+	GratitudeText       string            `json:"gratitude_text"`
+	ReflectionText      string            `json:"reflection_text"`
+	DrainedTagProposals []string          `json:"drained_tag_proposals"`
+	ChargedTagProposals []string          `json:"charged_tag_proposals"`
+	Answers             map[string]string `json:"answers"`
 }
 
 func parseExtractionJSON(content string) (*rawExtraction, error) {
@@ -94,41 +109,27 @@ func parseExtractionJSON(content string) (*rawExtraction, error) {
 }
 
 // validateExtraction clamps and de-hallucinates the raw LLM output:
-//   - mood_score: out-of-range (anything not 1..10) becomes nil.
-//   - emotions: trimmed, lowercased, deduped, capped at 8.
-//   - notes: trimmed, capped at 400 chars (with ellipsis on overflow).
+//   - mood: out-of-range (anything not 1..3) becomes nil.
+//   - drained/charged/gratitude_text: trimmed, capped at 1000 chars.
+//   - reflection_text: trimmed, capped at 4000 chars.
 //   - answers: only keys matching one of `params.Questions` are kept.
 //     Empty/whitespace bodies are dropped.
 //
-// The returned result is safe to write to daily_inputs and journal_entries.
+// The returned result is safe to feed into MergeFromExtraction.
 func validateExtraction(raw *rawExtraction, questions []QuestionView) *ExtractionResult {
 	out := &ExtractionResult{
 		Answers: map[string]string{},
 	}
-	if raw.MoodScore != nil && *raw.MoodScore >= 1 && *raw.MoodScore <= 10 {
-		score := *raw.MoodScore
-		out.MoodScore = &score
+	if raw.Mood != nil && *raw.Mood >= 1 && *raw.Mood <= 3 {
+		m := *raw.Mood
+		out.Mood = &m
 	}
-	seen := map[string]struct{}{}
-	for _, e := range raw.Emotions {
-		v := strings.ToLower(strings.TrimSpace(e))
-		if v == "" {
-			continue
-		}
-		if _, ok := seen[v]; ok {
-			continue
-		}
-		seen[v] = struct{}{}
-		out.Emotions = append(out.Emotions, v)
-		if len(out.Emotions) >= extractionMaxEmotions {
-			break
-		}
-	}
-	notes := strings.TrimSpace(raw.Notes)
-	if len(notes) > extractionMaxNotes {
-		notes = notes[:extractionMaxNotes-1] + "…"
-	}
-	out.Notes = notes
+	out.DrainedText = clampText(raw.DrainedText, extractionMaxAuditText)
+	out.ChargedText = clampText(raw.ChargedText, extractionMaxAuditText)
+	out.GratitudeText = clampText(raw.GratitudeText, extractionMaxAuditText)
+	out.ReflectionText = clampText(raw.ReflectionText, extractionMaxReflectionText)
+	out.DrainedTagProposals = clampTagList(raw.DrainedTagProposals)
+	out.ChargedTagProposals = clampTagList(raw.ChargedTagProposals)
 
 	validIDs := map[string]struct{}{}
 	for _, q := range questions {
@@ -147,11 +148,39 @@ func validateExtraction(raw *rawExtraction, questions []QuestionView) *Extractio
 	return out
 }
 
-// EmotionsToText flattens the extracted emotions list back into the
-// `daily_inputs.emotions_text` shape — comma-separated phrases. The
-// async EmotionClassifyWorker re-classifies on the next tick.
-func (r *ExtractionResult) EmotionsToText() string {
-	return strings.Join(r.Emotions, ", ")
+func clampText(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > max {
+		s = s[:max-1] + "…"
+	}
+	return s
+}
+
+// clampTagList trims labels, drops empty, dedupes by lowercased value,
+// caps at extractionMaxTagsPerRole, and clamps each label to the
+// extractionMaxTagLabel cap.
+func clampTagList(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, raw := range in {
+		s := strings.TrimSpace(raw)
+		if len(s) > extractionMaxTagLabel {
+			s = s[:extractionMaxTagLabel]
+		}
+		if s == "" {
+			continue
+		}
+		key := strings.ToLower(s)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, s)
+		if len(out) >= extractionMaxTagsPerRole {
+			break
+		}
+	}
+	return out
 }
 
 // stripFences removes ```json ... ``` wrappers some models still emit

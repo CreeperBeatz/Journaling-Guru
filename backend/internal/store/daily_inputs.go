@@ -2,9 +2,7 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -25,23 +23,19 @@ func NewDailyInputStore(db *pgxpool.Pool) *DailyInputStore { return &DailyInputS
 
 const dailyInputColumns = `id, user_id,
     to_char(local_date, 'YYYY-MM-DD') AS local_date,
-    mood_score, emotions_text, classified_emotions, notes, created_at, updated_at`
+    mood, drained_text, charged_text, gratitude_text, reflection_text,
+    backfilled, edited_at, created_at, updated_at`
 
 func scanDailyInput(row pgx.Row) (*domain.DailyInput, error) {
 	var d domain.DailyInput
-	var classified []byte
 	if err := row.Scan(
 		&d.ID, &d.UserID, &d.LocalDate,
-		&d.MoodScore, &d.EmotionsText, &classified, &d.Notes,
+		&d.Mood,
+		&d.DrainedText, &d.ChargedText, &d.GratitudeText, &d.ReflectionText,
+		&d.Backfilled, &d.EditedAt,
 		&d.CreatedAt, &d.UpdatedAt,
 	); err != nil {
 		return nil, err
-	}
-	d.ClassifiedEmotions = []domain.ClassifiedEmotion{}
-	if len(classified) > 0 {
-		if err := json.Unmarshal(classified, &d.ClassifiedEmotions); err != nil {
-			return nil, fmt.Errorf("unmarshal classified_emotions: %w", err)
-		}
 	}
 	return &d, nil
 }
@@ -63,16 +57,38 @@ func (s *DailyInputStore) GetByDate(
 	return out, err
 }
 
-// Upsert writes (or overwrites) the row for one (user, local_date).
-// If all three user-controlled fields would be empty (mood nil,
-// emotions_text blank, notes blank), the row is *deleted* — keeps the
-// table free of empty rows and matches the "empty body deletes" pattern
-// from journal_entries.
+// DailyInputUpsert is the bag of fields the handler passes for a manual
+// save. Pointer/string semantics:
 //
-// classified_emotions is owned by the EmotionClassifyWorker — handler
-// writes never touch it. On INSERT it stays at the column default '[]';
-// on UPDATE we deliberately omit it from SET so a re-save preserves the
-// previous classification until the worker re-runs.
+//   - Mood nil  → unset (delete the row when all-empty, otherwise set
+//     mood to NULL on conflict).
+//   - text fields: trimmed before write. Empty string is a *legitimate*
+//     value for "user cleared the field"; under Upsert it's treated as
+//     "not set yet" only when *every* field is empty (then we delete).
+//
+// Backfilled is set by the handler when the local_date being written is
+// older than today's user_local_date.
+type DailyInputUpsert struct {
+	Mood           *int
+	DrainedText    string
+	ChargedText    string
+	GratitudeText  string
+	ReflectionText string
+	Backfilled     bool
+}
+
+func (u DailyInputUpsert) allEmpty() bool {
+	return u.Mood == nil &&
+		strings.TrimSpace(u.DrainedText) == "" &&
+		strings.TrimSpace(u.ChargedText) == "" &&
+		strings.TrimSpace(u.GratitudeText) == "" &&
+		strings.TrimSpace(u.ReflectionText) == ""
+}
+
+// Upsert writes (or overwrites) the row for one (user, local_date).
+// If every user-controlled field would be empty, the row is *deleted* —
+// keeps the table free of empty rows and matches the "empty body
+// deletes" pattern from journal_entries.
 //
 // Returns (input, true, nil) on insert/update; (nil, true, nil) on
 // delete-because-empty; (input, false, nil) on no-op (no existing row
@@ -81,13 +97,13 @@ func (s *DailyInputStore) Upsert(
 	ctx context.Context,
 	userID string,
 	localDate time.Time,
-	mood *int,
-	emotionsText string,
-	notes string,
+	in DailyInputUpsert,
 ) (*domain.DailyInput, bool, error) {
-	emotionsText = strings.TrimSpace(emotionsText)
-	allEmpty := mood == nil && emotionsText == "" && notes == ""
-	if allEmpty {
+	in.DrainedText = strings.TrimSpace(in.DrainedText)
+	in.ChargedText = strings.TrimSpace(in.ChargedText)
+	in.GratitudeText = strings.TrimSpace(in.GratitudeText)
+	in.ReflectionText = strings.TrimSpace(in.ReflectionText)
+	if in.allEmpty() {
 		ct, err := s.DB.Exec(ctx,
 			`DELETE FROM daily_inputs WHERE user_id = $1 AND local_date = $2`,
 			userID, localDate)
@@ -97,15 +113,25 @@ func (s *DailyInputStore) Upsert(
 		return nil, ct.RowsAffected() > 0, nil
 	}
 	const q = `
-		INSERT INTO daily_inputs (user_id, local_date, mood_score, emotions_text, notes)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO daily_inputs
+		    (user_id, local_date, mood, drained_text, charged_text,
+		     gratitude_text, reflection_text, backfilled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (user_id, local_date) DO UPDATE
-		   SET mood_score    = EXCLUDED.mood_score,
-		       emotions_text = EXCLUDED.emotions_text,
-		       notes         = EXCLUDED.notes,
-		       updated_at    = now()
+		   SET mood            = EXCLUDED.mood,
+		       drained_text    = EXCLUDED.drained_text,
+		       charged_text    = EXCLUDED.charged_text,
+		       gratitude_text  = EXCLUDED.gratitude_text,
+		       reflection_text = EXCLUDED.reflection_text,
+		       backfilled      = EXCLUDED.backfilled OR daily_inputs.backfilled,
+		       edited_at       = CASE WHEN daily_inputs.created_at < now() - interval '5 seconds'
+		                              THEN now()
+		                              ELSE daily_inputs.edited_at
+		                         END,
+		       updated_at      = now()
 		RETURNING ` + dailyInputColumns
-	row := s.DB.QueryRow(ctx, q, userID, localDate, mood, emotionsText, notes)
+	row := s.DB.QueryRow(ctx, q, userID, localDate,
+		in.Mood, in.DrainedText, in.ChargedText, in.GratitudeText, in.ReflectionText, in.Backfilled)
 	out, err := scanDailyInput(row)
 	if err != nil {
 		return nil, false, err
@@ -113,86 +139,56 @@ func (s *DailyInputStore) Upsert(
 	return out, true, nil
 }
 
-// OverwriteFromExtraction is the chat extraction writer. Overwrites
-// mood/emotions/notes from extraction output — the user is warned at
-// the FE before clicking "Update check-in", so they consent to losing
-// any prior manual values for those fields.
+// MergeFromExtraction is the chat extraction writer with manual-wins
+// semantics: existing user values survive, extracted values fill gaps.
 //
-// Empty extracted values DO NOT blank existing fields. If chat covered
-// mood but not notes, manual notes are preserved. classified_emotions
-// is owned by the EmotionClassifyWorker and is never touched here; the
-// caller schedules a re-classify after writing emotions_text so the
-// classifier output catches up to the new text.
-func (s *DailyInputStore) OverwriteFromExtraction(
-	ctx context.Context,
-	userID string,
-	localDate time.Time,
-	mood *int,
-	emotions string,
-	notes string,
-) (*domain.DailyInput, error) {
-	emotions = strings.TrimSpace(emotions)
-	notes = strings.TrimSpace(notes)
-	if mood == nil && emotions == "" && notes == "" {
-		return s.GetByDate(ctx, userID, localDate)
-	}
-	const q = `
-		INSERT INTO daily_inputs (user_id, local_date, mood_score, emotions_text, notes)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (user_id, local_date) DO UPDATE
-		   SET mood_score    = COALESCE(EXCLUDED.mood_score, daily_inputs.mood_score),
-		       emotions_text = CASE WHEN EXCLUDED.emotions_text = ''
-		                            THEN daily_inputs.emotions_text
-		                            ELSE EXCLUDED.emotions_text
-		                       END,
-		       notes         = CASE WHEN EXCLUDED.notes = ''
-		                            THEN daily_inputs.notes
-		                            ELSE EXCLUDED.notes
-		                       END,
-		       updated_at    = now()
-		RETURNING ` + dailyInputColumns
-	row := s.DB.QueryRow(ctx, q, userID, localDate, mood, emotions, notes)
-	out, err := scanDailyInput(row)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// MergeFromExtraction (legacy) — left in place for backwards-compat
-// but no longer the default chat extraction writer. Was used to give
-// "manual-wins per field"; the new chat UX explicitly warns the user
-// before overwriting, so OverwriteFromExtraction is preferred.
+//   - Mood: COALESCE(existing, extracted) — manual wins if set.
+//   - Each text field: existing wins if non-empty; otherwise extracted.
+//
+// Empty extraction values DO NOT blank existing fields. This is the
+// "manual edit during extraction window is never clobbered" guarantee
+// referenced in CLAUDE.md.
+//
+// Tag attachments live in daily_entry_tags and are written by the
+// extraction worker via DailyEntryTagStore.ReplaceForDay — they are
+// additive to whatever the user manually picked, NOT routed through
+// this method.
 func (s *DailyInputStore) MergeFromExtraction(
 	ctx context.Context,
 	userID string,
 	localDate time.Time,
-	mood *int,
-	emotions string,
-	notes string,
+	in DailyInputUpsert,
 ) (*domain.DailyInput, error) {
-	emotions = strings.TrimSpace(emotions)
-	notes = strings.TrimSpace(notes)
-	allEmpty := mood == nil && emotions == "" && notes == ""
-	if allEmpty {
+	in.DrainedText = strings.TrimSpace(in.DrainedText)
+	in.ChargedText = strings.TrimSpace(in.ChargedText)
+	in.GratitudeText = strings.TrimSpace(in.GratitudeText)
+	in.ReflectionText = strings.TrimSpace(in.ReflectionText)
+	if in.allEmpty() {
 		return s.GetByDate(ctx, userID, localDate)
 	}
 	const q = `
-		INSERT INTO daily_inputs (user_id, local_date, mood_score, emotions_text, notes)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO daily_inputs
+		    (user_id, local_date, mood, drained_text, charged_text,
+		     gratitude_text, reflection_text, backfilled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, false)
 		ON CONFLICT (user_id, local_date) DO UPDATE
-		   SET mood_score    = COALESCE(daily_inputs.mood_score, EXCLUDED.mood_score),
-		       emotions_text = CASE WHEN daily_inputs.emotions_text = ''
-		                            THEN EXCLUDED.emotions_text
-		                            ELSE daily_inputs.emotions_text
-		                       END,
-		       notes         = CASE WHEN daily_inputs.notes = ''
-		                            THEN EXCLUDED.notes
-		                            ELSE daily_inputs.notes
-		                       END,
-		       updated_at    = now()
+		   SET mood            = COALESCE(daily_inputs.mood, EXCLUDED.mood),
+		       drained_text    = CASE WHEN daily_inputs.drained_text = ''
+		                              THEN EXCLUDED.drained_text
+		                              ELSE daily_inputs.drained_text END,
+		       charged_text    = CASE WHEN daily_inputs.charged_text = ''
+		                              THEN EXCLUDED.charged_text
+		                              ELSE daily_inputs.charged_text END,
+		       gratitude_text  = CASE WHEN daily_inputs.gratitude_text = ''
+		                              THEN EXCLUDED.gratitude_text
+		                              ELSE daily_inputs.gratitude_text END,
+		       reflection_text = CASE WHEN daily_inputs.reflection_text = ''
+		                              THEN EXCLUDED.reflection_text
+		                              ELSE daily_inputs.reflection_text END,
+		       updated_at      = now()
 		RETURNING ` + dailyInputColumns
-	row := s.DB.QueryRow(ctx, q, userID, localDate, mood, emotions, notes)
+	row := s.DB.QueryRow(ctx, q, userID, localDate,
+		in.Mood, in.DrainedText, in.ChargedText, in.GratitudeText, in.ReflectionText)
 	out, err := scanDailyInput(row)
 	if err != nil {
 		return nil, err
@@ -200,52 +196,25 @@ func (s *DailyInputStore) MergeFromExtraction(
 	return out, nil
 }
 
-// WriteClassifiedEmotions overwrites the classifier output column. Called
-// by the EmotionClassifyWorker on completion (or to clear the column to
-// `[]` when emotions_text becomes empty). No-op if the row is gone (the
-// worker raced a delete; harmless).
-func (s *DailyInputStore) WriteClassifiedEmotions(
-	ctx context.Context,
-	userID string,
-	localDate time.Time,
-	classified []domain.ClassifiedEmotion,
-) error {
-	if classified == nil {
-		classified = []domain.ClassifiedEmotion{}
-	}
-	buf, err := json.Marshal(classified)
-	if err != nil {
-		return fmt.Errorf("marshal classified_emotions: %w", err)
-	}
-	_, err = s.DB.Exec(ctx,
-		`UPDATE daily_inputs
-		    SET classified_emotions = $3,
-		        updated_at = now()
-		  WHERE user_id = $1 AND local_date = $2`,
-		userID, localDate, buf)
-	return err
-}
-
-// MoodPoint mirrors the existing summaries.MoodSeries shape so the
-// stats panel's chart code stays the same after the source-of-truth
-// switch.
+// DailyMoodPoint is one (date, mood) pair on the 30-day sparkline.
 type DailyMoodPoint struct {
 	LocalDate string  `json:"local_date"`
 	Score     float64 `json:"score"`
 }
 
-// MoodSeries returns daily mood scores over the last `days` days, oldest
-// first. Days where mood_score IS NULL are skipped (the chart renders
-// a discontinuous line).
+// MoodSeries returns daily mood values over the last `days` days, oldest
+// first. Days where mood IS NULL are skipped (the chart renders a
+// discontinuous line). The mood scale is 1..3 — Score is float64 to
+// share the existing chart rendering pipeline that expects float points.
 func (s *DailyInputStore) MoodSeries(
 	ctx context.Context, userID string, days int,
 ) ([]DailyMoodPoint, error) {
 	const q = `
 		SELECT to_char(local_date, 'YYYY-MM-DD') AS local_date,
-		       mood_score::float8                AS score
+		       mood::float8                       AS score
 		  FROM daily_inputs
 		 WHERE user_id = $1
-		   AND mood_score IS NOT NULL
+		   AND mood IS NOT NULL
 		   AND local_date >= (current_date - $2::int)
 		ORDER BY local_date ASC`
 	rows, err := s.DB.Query(ctx, q, userID, days)
@@ -264,119 +233,37 @@ func (s *DailyInputStore) MoodSeries(
 	return out, rows.Err()
 }
 
-// EmotionCount mirrors summaries.EmotionCount so the stats endpoint can
-// keep returning the same shape. The string is now a Plutchik subtype
-// ("ecstasy", "annoyance") rather than a free-form chip word.
-type DailyEmotionCount struct {
-	Emotion string `json:"emotion"`
-	Count   int    `json:"count"`
-}
-
-// TopEmotions returns the most-frequent classified subtypes across
-// daily_inputs in the last `days` days. Limit caps the result; pass 0
-// for "no cap". Reads classified_emotions[*].subtype — rows where the
-// classifier hasn't run yet (or returned no entries) contribute nothing.
-func (s *DailyInputStore) TopEmotions(
-	ctx context.Context, userID string, days, limit int,
-) ([]DailyEmotionCount, error) {
-	q := `
-		SELECT lower(e->>'subtype') AS emotion, COUNT(*)::int AS count
-		  FROM daily_inputs,
-		       jsonb_array_elements(classified_emotions) AS e
-		 WHERE user_id = $1
-		   AND local_date >= (current_date - $2::int)
-		   AND e ? 'subtype'
-		GROUP BY lower(e->>'subtype')
-		ORDER BY count DESC, emotion ASC`
-	args := []any{userID, days}
-	if limit > 0 {
-		q += ` LIMIT $3`
-		args = append(args, limit)
-	}
-	rows, err := s.DB.Query(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]DailyEmotionCount, 0)
-	for rows.Next() {
-		var e DailyEmotionCount
-		if err := rows.Scan(&e.Emotion, &e.Count); err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
-}
-
-// AggregatedMetadata bundles the pieces the worker needs to compose
-// summaries.metadata for a higher-level period (week/month/year):
-// weighted-average mood, top-N emotions by frequency, and the day
-// count. Computed in SQL so we don't haul N rows into Go just to count.
+// AggregatedMetadata is the minimal shape kept after the Energy Audit
+// pivot. Mood is the arithmetic mean of non-null mood values in range,
+// EntryCount is the number of distinct local_dates with any input.
+// Topics/Emotions are no longer tracked here — drainer/charger tags
+// live in daily_entry_tags and are queried via TagStore + DailyEntryTagStore.
 type AggregatedMetadata struct {
 	MoodScore  *float64 `json:"mood_score"`
-	Emotions   []string `json:"emotions"`
 	EntryCount int      `json:"entry_count"`
 }
 
-// AggregateForRange computes the aggregated metadata over all
-// daily_inputs rows in [since, until] inclusive for the user.
-//
-// Mood: arithmetic mean of non-null mood_scores. Empty range → MoodScore=nil.
-// Emotions: top `topN` Plutchik subtypes by occurrence count across the
-// classified_emotions arrays in range.
-// EntryCount: number of distinct local_dates with any input in range.
+// AggregateForRange computes mean mood + entry count across daily_inputs
+// in [since, until] inclusive. Used by the surviving weekly summary
+// worker (Zone-1 headline insight).
 func (s *DailyInputStore) AggregateForRange(
-	ctx context.Context, userID string, since, until time.Time, topN int,
+	ctx context.Context, userID string, since, until time.Time,
 ) (*AggregatedMetadata, error) {
-	out := &AggregatedMetadata{Emotions: []string{}}
-
-	const moodQuery = `
-		SELECT AVG(mood_score)::float8, COUNT(*)::int
+	const q = `
+		SELECT AVG(mood)::float8, COUNT(*)::int
 		  FROM daily_inputs
 		 WHERE user_id = $1
 		   AND local_date BETWEEN $2 AND $3`
-	var moodAvg *float64
-	if err := s.DB.QueryRow(ctx, moodQuery, userID, since, until).Scan(&moodAvg, &out.EntryCount); err != nil {
+	out := &AggregatedMetadata{}
+	if err := s.DB.QueryRow(ctx, q, userID, since, until).Scan(&out.MoodScore, &out.EntryCount); err != nil {
 		return nil, err
 	}
-	out.MoodScore = moodAvg
-
-	emoQuery := `
-		SELECT lower(e->>'subtype') AS emotion, COUNT(*)::int AS count
-		  FROM daily_inputs,
-		       jsonb_array_elements(classified_emotions) AS e
-		 WHERE user_id = $1
-		   AND local_date BETWEEN $2 AND $3
-		   AND e ? 'subtype'
-		GROUP BY lower(e->>'subtype')
-		ORDER BY count DESC, emotion ASC`
-	args := []any{userID, since, until}
-	if topN > 0 {
-		emoQuery += ` LIMIT $4`
-		args = append(args, topN)
-	}
-	rows, err := s.DB.Query(ctx, emoQuery, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var e string
-		var count int
-		if err := rows.Scan(&e, &count); err != nil {
-			return nil, err
-		}
-		out.Emotions = append(out.Emotions, e)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
-// HasContentInRange reports whether the user has any daily_inputs row
-// (with mood, emotions_text, or notes) in [since, until]. Used by the
-// daily worker's skip check — a "just notes" or "just mood" day still
-// warrants a summary. Raw text counts as content; whether classification
-// has finished doesn't gate the daily summary.
+// HasContentInRange reports whether the user has any non-empty
+// daily_inputs row in [since, until]. A "just mood" or "just gratitude"
+// day still counts.
 func (s *DailyInputStore) HasContentInRange(
 	ctx context.Context, userID string, since, until time.Time,
 ) (bool, error) {
@@ -384,9 +271,11 @@ func (s *DailyInputStore) HasContentInRange(
 	    SELECT 1 FROM daily_inputs
 	     WHERE user_id = $1
 	       AND local_date BETWEEN $2 AND $3
-	       AND (mood_score IS NOT NULL
-	            OR emotions_text <> ''
-	            OR notes <> '')
+	       AND (mood IS NOT NULL
+	            OR drained_text <> ''
+	            OR charged_text <> ''
+	            OR gratitude_text <> ''
+	            OR reflection_text <> '')
 	)`
 	var exists bool
 	if err := s.DB.QueryRow(ctx, q, userID, since, until).Scan(&exists); err != nil {

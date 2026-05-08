@@ -11,33 +11,30 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/cosmosthrace/journai/backend/internal/domain"
 	"github.com/cosmosthrace/journai/backend/internal/httpapi/middleware"
 	"github.com/cosmosthrace/journai/backend/internal/store"
 	"github.com/cosmosthrace/journai/backend/internal/timezone"
 )
 
-// EmotionClassifyScheduler is the queue interface the handler uses to
-// arm the async Plutchik classifier on every save. Implemented by
-// *store.EmotionClassifyJobStore. Wrapped behind an interface so the
-// handler tests can pass a fake.
-type EmotionClassifyScheduler interface {
-	Schedule(ctx context.Context, userID string, localDate time.Time, fireAt time.Time) (bool, error)
-}
-
 // DailyInputHandler hosts /api/daily/inputs/*. The check-in surface for
-// mood, emotions, and notes — paralleling the journal_entries handlers
-// but per-day instead of per-question.
+// the Energy Audit pivot's five-prompt template: 1..3 mood plus drainer
+// / charger / gratitude / reflection text. Drainer/charger tags are
+// attached in the same write — the handler links daily_entry_tags rows
+// after the daily_inputs upsert.
 type DailyInputHandler struct {
-	Inputs      *store.DailyInputStore
-	Users       *store.UserStore
-	Logger      *slog.Logger
-	Scheduler   SummaryScheduler         // shares the interface with EntryHandler — same lazy-seed contract
-	EmotionJobs EmotionClassifyScheduler // armed on every save with non-empty emotions_text
+	Inputs         *store.DailyInputStore
+	Users          *store.UserStore
+	Tags           *store.TagStore
+	DailyEntryTags *store.DailyEntryTagStore
+	Logger         *slog.Logger
+	Scheduler      SummaryScheduler // shares the interface with EntryHandler — same lazy-seed contract
 }
 
 const (
-	maxNotesLen         = 4_000
-	maxEmotionsTextLen  = 1_000
+	maxReflectionTextLen = 4_000
+	maxAuditTextLen      = 1_000 // drained / charged / gratitude
+	maxTagsPerRolePerDay = 10
 )
 
 // resolveDate is the same convention used by EntryHandler: empty/"today"
@@ -63,10 +60,17 @@ func (h *DailyInputHandler) resolveDate(r *http.Request, userID, param string) (
 	return d, nil
 }
 
+// dailyInputResponse is the GET payload. `tags` is the union of drainer
+// + charger links for the day; FE splits by role for rendering.
+type dailyInputResponse struct {
+	LocalDate string                  `json:"local_date"`
+	Input     *domain.DailyInput      `json:"input"`
+	Tags      []store.TagDayLink      `json:"tags"`
+}
+
 // Get handles GET /api/daily/inputs?date=YYYY-MM-DD (or omitted = today).
-// Returns 200 with the row, or 200 with `{input: null, local_date: ...}`
-// when nothing has been logged for the day yet — DailyInputs UI uses
-// the null to render the empty state.
+// Returns 200 with the row + linked tags, or 200 with `{input: null,
+// tags: [], local_date: ...}` when nothing has been logged yet.
 func (h *DailyInputHandler) Get(w http.ResponseWriter, r *http.Request) {
 	sess := middleware.SessionFromCtx(r.Context())
 	if sess == nil {
@@ -84,21 +88,36 @@ func (h *DailyInputHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "get failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"local_date": timezone.FormatDate(d),
-		"input":      row, // nil when no row exists yet
+	tags := []store.TagDayLink{}
+	if h.DailyEntryTags != nil {
+		tags, err = h.DailyEntryTags.ListByDate(r.Context(), sess.UserID, d)
+		if err != nil {
+			h.Logger.Error("get day tags", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "get failed")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, dailyInputResponse{
+		LocalDate: timezone.FormatDate(d),
+		Input:     row,
+		Tags:      tags,
 	})
 }
 
 type upsertDailyInputRequest struct {
-	MoodScore    *int   `json:"mood_score"`
-	EmotionsText string `json:"emotions_text"`
-	Notes        string `json:"notes"`
+	Mood            *int     `json:"mood"`
+	DrainedText     string   `json:"drained_text"`
+	ChargedText     string   `json:"charged_text"`
+	GratitudeText   string   `json:"gratitude_text"`
+	ReflectionText  string   `json:"reflection_text"`
+	DrainedTagIDs   []string `json:"drained_tag_ids"`
+	ChargedTagIDs   []string `json:"charged_tag_ids"`
 }
 
 // Upsert handles PUT /api/daily/inputs — write today's check-in.
-// Empty (mood=null, emotions_text="", notes="") deletes the row,
-// matching the journal_entries empty-deletes convention.
+// Empty body deletes the row, matching the journal_entries
+// empty-deletes convention. Tag links are rewritten in lockstep —
+// passing an empty array clears that role's tags for the day.
 func (h *DailyInputHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 	sess := middleware.SessionFromCtx(r.Context())
 	if sess == nil {
@@ -116,7 +135,7 @@ func (h *DailyInputHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "could not resolve today")
 		return
 	}
-	h.write(r.Context(), w, sess.UserID, today, req, true)
+	h.write(r.Context(), w, sess.UserID, today, req, true, false)
 }
 
 // UpdateByDate handles PATCH /api/daily/inputs/by-date/:date — past-day
@@ -139,48 +158,57 @@ func (h *DailyInputHandler) UpdateByDate(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Past edits don't lazy-seed — the summary_jobs row for that day
-	// already exists (or was scheduled when entries were first
-	// written). Re-seeding would only insert ON CONFLICT-NOTHING.
-	h.write(r.Context(), w, sess.UserID, d, req, false)
+	today, err := h.resolveDate(r, sess.UserID, "today")
+	if err != nil {
+		h.Logger.Error("resolve today", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "could not resolve today")
+		return
+	}
+	backfilled := d.Before(today)
+	h.write(r.Context(), w, sess.UserID, d, req, false, backfilled)
 }
 
 func (h *DailyInputHandler) write(
 	ctx context.Context, w http.ResponseWriter,
 	userID string, localDate time.Time,
-	req *upsertDailyInputRequest, lazySeed bool,
+	req *upsertDailyInputRequest, lazySeed, backfilled bool,
 ) {
-	row, mutated, err := h.Inputs.Upsert(
-		ctx, userID, localDate,
-		req.MoodScore, req.EmotionsText, req.Notes,
-	)
+	row, mutated, err := h.Inputs.Upsert(ctx, userID, localDate, store.DailyInputUpsert{
+		Mood:           req.Mood,
+		DrainedText:    req.DrainedText,
+		ChargedText:    req.ChargedText,
+		GratitudeText:  req.GratitudeText,
+		ReflectionText: req.ReflectionText,
+		Backfilled:     backfilled,
+	})
 	if err != nil {
 		h.Logger.Error("upsert daily input", "err", err, "user_id", userID)
 		writeJSONError(w, http.StatusInternalServerError, "save failed")
 		return
 	}
-	// Lazy-seed: a "just notes + mood" day still produces a daily
-	// summary, so the worker should know to fire even if the user
-	// never answered any questions.
+	// Tag links are owned by the handler, not the store — we don't want
+	// daily_inputs to know about tags. ReplaceForDay is idempotent.
+	// On all-empty (row==nil), tag arrays are also wiped.
+	if h.DailyEntryTags != nil {
+		drained := req.DrainedTagIDs
+		charged := req.ChargedTagIDs
+		if row == nil {
+			drained, charged = nil, nil
+		}
+		if err := h.DailyEntryTags.ReplaceForDay(ctx, userID, localDate, domain.TagRoleDrainer, drained); err != nil {
+			h.Logger.Error("link drainer tags", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "link tags failed")
+			return
+		}
+		if err := h.DailyEntryTags.ReplaceForDay(ctx, userID, localDate, domain.TagRoleCharger, charged); err != nil {
+			h.Logger.Error("link charger tags", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "link tags failed")
+			return
+		}
+	}
 	if lazySeed && row != nil && h.Scheduler != nil {
 		if err := h.Scheduler.LazySeed(ctx, userID, time.Now()); err != nil {
 			h.Logger.Warn("lazy seed (daily input)", "err", err, "user_id", userID)
-		}
-	}
-	// Arm the Plutchik classifier whenever emotions_text has content.
-	// When the user clears the text, write an empty classified_emotions
-	// synchronously so SummaryDetail/EmotionBars stop showing stale
-	// pills before the worker would have run. (Skipping this would let
-	// the previous classification linger forever for that day.)
-	if h.EmotionJobs != nil {
-		if row != nil && strings.TrimSpace(row.EmotionsText) != "" {
-			if _, err := h.EmotionJobs.Schedule(ctx, userID, localDate, time.Now()); err != nil {
-				h.Logger.Warn("schedule emotion classify", "err", err, "user_id", userID)
-			}
-		} else {
-			if err := h.Inputs.WriteClassifiedEmotions(ctx, userID, localDate, nil); err != nil {
-				h.Logger.Warn("clear classified_emotions", "err", err, "user_id", userID)
-			}
 		}
 	}
 	if row == nil {
@@ -190,7 +218,15 @@ func (h *DailyInputHandler) write(
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, row)
+	tags := []store.TagDayLink{}
+	if h.DailyEntryTags != nil {
+		tags, _ = h.DailyEntryTags.ListByDate(ctx, userID, localDate)
+	}
+	writeJSON(w, http.StatusOK, dailyInputResponse{
+		LocalDate: timezone.FormatDate(localDate),
+		Input:     row,
+		Tags:      tags,
+	})
 }
 
 func decodeUpsert(r *http.Request) (*upsertDailyInputRequest, error) {
@@ -198,16 +234,28 @@ func decodeUpsert(r *http.Request) (*upsertDailyInputRequest, error) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return nil, errors.New("invalid json")
 	}
-	if req.MoodScore != nil {
-		if *req.MoodScore < 1 || *req.MoodScore > 10 {
-			return nil, errors.New("mood_score must be 1-10")
+	if req.Mood != nil {
+		if *req.Mood < 1 || *req.Mood > 3 {
+			return nil, errors.New("mood must be 1-3")
 		}
 	}
-	if len(req.EmotionsText) > maxEmotionsTextLen {
-		return nil, errors.New("emotions text too long")
+	if len(req.DrainedText) > maxAuditTextLen {
+		return nil, errors.New("drained text too long")
 	}
-	if len(req.Notes) > maxNotesLen {
-		return nil, errors.New("notes too long")
+	if len(req.ChargedText) > maxAuditTextLen {
+		return nil, errors.New("charged text too long")
+	}
+	if len(req.GratitudeText) > maxAuditTextLen {
+		return nil, errors.New("gratitude text too long")
+	}
+	if len(req.ReflectionText) > maxReflectionTextLen {
+		return nil, errors.New("reflection text too long")
+	}
+	if len(req.DrainedTagIDs) > maxTagsPerRolePerDay {
+		return nil, errors.New("too many drainer tags")
+	}
+	if len(req.ChargedTagIDs) > maxTagsPerRolePerDay {
+		return nil, errors.New("too many charger tags")
 	}
 	return &req, nil
 }

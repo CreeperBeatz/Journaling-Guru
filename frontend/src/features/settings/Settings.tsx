@@ -38,6 +38,16 @@ import { updateMe, UpdateMePatch } from "./api";
 import { AppearanceCard } from "./AppearanceCard";
 
 const VALID_TABS = ["general", "notifications", "questions", "account"] as const;
+
+const WEEKDAY_LABELS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 type SettingsTab = (typeof VALID_TABS)[number];
 
 const COMMON_TIMEZONES = [
@@ -118,6 +128,7 @@ export function Settings() {
   const [reminderTime, setReminderTime] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [dayStart, setDayStart] = useState("06:00");
+  const [reflectionWeekday, setReflectionWeekday] = useState<number>(0);
 
   useEffect(() => {
     if (me.data) {
@@ -125,6 +136,7 @@ export function Settings() {
       setReminderTime(me.data.reminder_time.slice(0, 5));
       setDisplayName(me.data.display_name ?? "");
       setDayStart(minutesToHHMM(me.data.day_start_minutes));
+      setReflectionWeekday(me.data.reflection_weekday ?? 0);
     }
   }, [me.data]);
 
@@ -139,7 +151,8 @@ export function Settings() {
     tz !== me.data.timezone ||
     reminderTime !== me.data.reminder_time.slice(0, 5) ||
     displayName !== (me.data.display_name ?? "") ||
-    (dayStartMinutes !== null && dayStartMinutes !== me.data.day_start_minutes);
+    (dayStartMinutes !== null && dayStartMinutes !== me.data.day_start_minutes) ||
+    reflectionWeekday !== (me.data.reflection_weekday ?? 0);
 
   const handleSave = () => {
     const patch: UpdateMePatch = {};
@@ -151,6 +164,9 @@ export function Settings() {
       dayStartMinutes !== me.data?.day_start_minutes
     ) {
       patch.day_start_minutes = dayStartMinutes;
+    }
+    if (reflectionWeekday !== (me.data?.reflection_weekday ?? 0)) {
+      patch.reflection_weekday = reflectionWeekday;
     }
     if (Object.keys(patch).length === 0) return;
     update.mutate(patch);
@@ -250,6 +266,36 @@ export function Settings() {
               {dayStartMinutes === null ? (
                 <p className="text-xs text-destructive">Use HH:MM format.</p>
               ) : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-serif">Weekly reflection day</CardTitle>
+              <CardDescription>
+                The day each week your check-in becomes a pattern view —
+                top drainers, top chargers, and a chance to set a goal.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <label htmlFor="reflection-day" className="block text-sm font-medium">
+                Day
+              </label>
+              <Select
+                value={String(reflectionWeekday)}
+                onValueChange={(v) => setReflectionWeekday(Number(v))}
+              >
+                <SelectTrigger id="reflection-day" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WEEKDAY_LABELS.map((label, idx) => (
+                    <SelectItem key={idx} value={String(idx)}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </CardContent>
           </Card>
         </TabsContent>

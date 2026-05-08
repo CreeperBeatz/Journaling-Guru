@@ -2,46 +2,56 @@ import { motion, useReducedMotion } from "motion/react";
 
 import { cn } from "@/lib/utils";
 import { springTactile } from "@/lib/motion";
-import type { Question } from "@/features/journal/api";
 
 interface Props {
-  questions: Question[];
-  coveredIds: Set<string>;
+  // Topic codes covered so far. Source: chat_sessions.covered_question_ids
+  // (column name retained from the per-question era; under the Energy
+  // Audit pivot it stores topic codes — see backend/internal/llm/chat/
+  // coverage.go).
+  coveredCodes: Set<string>;
 }
 
-// CoverageChips renders one pill per active question, lit when the
-// post-turn classifier has marked that question_id covered during the
-// session. Hidden when the user has no questions. Long lists scroll
-// horizontally on narrow screens.
-export function CoverageChips({ questions, coveredIds }: Props) {
+// Fixed Energy Audit topics, in the spec's prompt order.
+//
+// `code` matches the backend coverage classifier's vocabulary
+// (drained / charged / grateful / else); `label` is what the user
+// sees on the chip.
+const TOPICS: Array<{ code: string; label: string }> = [
+  { code: "drained", label: "Drained" },
+  { code: "charged", label: "Charged" },
+  { code: "grateful", label: "Grateful" },
+  { code: "else", label: "Anything else" },
+];
+
+// CoverageChips renders four pills — one per fixed Energy Audit topic.
+// A pill lights up when the post-turn classifier has marked that topic
+// substantively covered in the session transcript.
+export function CoverageChips({ coveredCodes }: Props) {
   const reduced = useReducedMotion();
-  if (questions.length === 0) return null;
 
   return (
     <div
       role="list"
-      className="flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      aria-label="Question coverage"
+      aria-label="Topic coverage"
+      className="flex flex-wrap gap-1.5"
     >
-      {questions.map((q) => {
-        const covered = coveredIds.has(q.id);
-        const truncated = q.prompt.length > 32 ? q.prompt.slice(0, 32) + "…" : q.prompt;
+      {TOPICS.map((t) => {
+        const covered = coveredCodes.has(t.code);
         return (
           <motion.span
-            key={q.id}
+            key={t.code}
             role="listitem"
             layout={!reduced}
             transition={reduced ? undefined : springTactile}
             className={cn(
-              "shrink-0 rounded-full border px-3 py-1 text-xs leading-tight transition-colors",
+              "shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] leading-tight transition-colors",
               covered
                 ? "border-accent/40 bg-accent/15 text-accent"
                 : "border-border/60 bg-muted text-muted-foreground",
             )}
             aria-pressed={covered}
-            title={q.prompt}
           >
-            {truncated}
+            {t.label}
           </motion.span>
         );
       })}

@@ -111,7 +111,7 @@ function SummaryCard({ summary: s }: { summary: Summary }) {
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         {meta.mood_score != null ? (
-          <span className="font-mono tabular-nums">mood {meta.mood_score.toFixed(1)}/10</span>
+          <span className="font-mono tabular-nums">mood {meta.mood_score.toFixed(1)}/3</span>
         ) : null}
         {meta.entry_count ? (
           <span className="font-mono tabular-nums">{meta.entry_count} entries</span>

@@ -91,10 +91,10 @@ func main() {
 	fmt.Printf("classify model: %s\n\n", model)
 
 	t0 := time.Now()
+	_ = views // questions retained for diagnostic printing only
 	covered, err := chat.Classify(ctx, client, chat.CoverageParams{
-		Model:     "", // use client default
-		Questions: views,
-		Messages:  transcript,
+		Model:    "", // use client default
+		Messages: transcript,
 	})
 	elapsed := time.Since(t0)
 	if err != nil {

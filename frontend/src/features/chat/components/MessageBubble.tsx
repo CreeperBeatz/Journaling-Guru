@@ -33,7 +33,7 @@ export function MessageBubble({ message }: Props) {
         className={cn(
           "min-w-0 max-w-[85%] rounded-2xl px-4 py-3 text-base leading-relaxed sm:max-w-[75%]",
           isUser
-            ? "bg-primary/8 text-foreground"
+            ? "border border-accent/30 bg-accent/15 text-foreground"
             : "border border-border/60 bg-card text-card-foreground",
         )}
       >

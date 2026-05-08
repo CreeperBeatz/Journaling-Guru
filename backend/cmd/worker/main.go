@@ -20,17 +20,20 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/store"
 )
 
-// Worker binary: River-backed pipeline for summaries (Phase 4),
-// emotion classification (Phase 4.2), and push reminders (Phase 5).
+// Worker binary: River-backed pipeline for summaries, push reminders,
+// and chat extraction. Under the Energy Audit pivot the daily/monthly/
+// yearly summary branches and the standalone emotion classifier are
+// retired — only the weekly summary survives, and emotions are no
+// longer extracted as Plutchik subtypes.
 //
 // Two cooperating loops:
 //   - dispatcher tick: every SUMMARY_DISPATCH_INTERVAL_SECONDS, atomically
-//     claim due rows from summary_jobs, emotion_classify_jobs, AND
-//     reminder_jobs, enqueuing a River job per row. Single source of
-//     truth for "what should run."
-//   - River worker pool: consumes SummaryArgs / EmotionClassifyArgs /
-//     ReminderArgs, runs the LLM call (or push fan-out), writes the
-//     row, and schedules the next slot.
+//     claim due rows from summary_jobs, reminder_jobs, and
+//     chat_extraction_jobs, enqueuing a River job per row. Single source
+//     of truth for "what should run."
+//   - River worker pool: consumes SummaryArgs / ReminderArgs /
+//     ChatExtractionArgs, runs the LLM call (or push fan-out), writes
+//     the row, and schedules the next slot.
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
@@ -56,7 +59,8 @@ func main() {
 	dailyInputs := store.NewDailyInputStore(db)
 	summaries := store.NewSummaryStore(db)
 	jobsStore := store.NewSummaryJobStore(db)
-	emotionJobs := store.NewEmotionClassifyJobStore(db)
+	tagStore := store.NewTagStore(db)
+	dailyEntryTags := store.NewDailyEntryTagStore(db)
 	pushSubs := store.NewPushSubscriptionStore(db)
 	reminderJobs := store.NewReminderJobStore(db)
 	questions := store.NewQuestionStore(db)
@@ -90,14 +94,6 @@ func main() {
 		LLM:         summaryLLM,
 		Logger:      logger,
 	}
-	emotionWorker := &jobs.EmotionClassifyWorker{
-		DailyInputs: dailyInputs,
-		EmotionJobs: emotionJobs,
-		Users:       users,
-		LLM:         classifyLLM,
-		Logger:      logger,
-	}
-
 	reminderScheduler := &jobs.ReminderScheduler{
 		Jobs:   reminderJobs,
 		Users:  users,
@@ -129,17 +125,18 @@ func main() {
 	}
 
 	chatExtractWorker := &jobs.ChatExtractionWorker{
-		Sessions:    chatSessions,
-		Messages:    chatMessages,
-		Jobs:        chatExtractionJobs,
-		Entries:     entries,
-		DailyInputs: dailyInputs,
-		Questions:   questions,
-		Users:       users,
-		EmotionJobs: emotionJobs,
-		Scheduler:   scheduler,
-		LLM:         classifyLLM,
-		Logger:      logger,
+		Sessions:       chatSessions,
+		Messages:       chatMessages,
+		Jobs:           chatExtractionJobs,
+		Entries:        entries,
+		DailyInputs:    dailyInputs,
+		Tags:           tagStore,
+		DailyEntryTags: dailyEntryTags,
+		Questions:      questions,
+		Users:          users,
+		Scheduler:      scheduler,
+		LLM:            classifyLLM,
+		Logger:         logger,
 	}
 
 	chatIdleSweeper := &jobs.ChatIdleSweeper{
@@ -151,7 +148,6 @@ func main() {
 
 	workers := river.NewWorkers()
 	river.AddWorker(workers, worker)
-	river.AddWorker(workers, emotionWorker)
 	river.AddWorker(workers, pushWorker)
 	river.AddWorker(workers, chatExtractWorker)
 
@@ -180,7 +176,7 @@ func main() {
 		"push_sender_set", pushSender != nil,
 	)
 
-	go runDispatchLoop(rootCtx, logger, jobsStore, emotionJobs, reminderJobs,
+	go runDispatchLoop(rootCtx, logger, jobsStore, reminderJobs,
 		chatExtractionJobs, chatIdleSweeper,
 		riverClient, time.Duration(cfg.SummaryDispatchInterval)*time.Second)
 
@@ -193,15 +189,14 @@ func main() {
 	}
 }
 
-// runDispatchLoop is the every-N-seconds tick that drains all four job
-// queues (summary, emotion, reminder, chat extraction) and runs the
+// runDispatchLoop is the every-N-seconds tick that drains the surviving
+// three job queues (summary, reminder, chat extraction) and runs the
 // chat idle sweeper. Atomic claim (FOR UPDATE SKIP LOCKED) means
 // concurrent worker replicas can't double-enqueue.
 func runDispatchLoop(
 	ctx context.Context,
 	logger *slog.Logger,
 	jobsStore *store.SummaryJobStore,
-	emotionJobs *store.EmotionClassifyJobStore,
 	reminderJobs *store.ReminderJobStore,
 	chatExtractionJobs *store.ChatExtractionJobStore,
 	chatIdleSweeper *jobs.ChatIdleSweeper,
@@ -216,14 +211,14 @@ func runDispatchLoop(
 
 	// Run once immediately so a freshly-restarted worker doesn't sit
 	// idle for a full interval if there's a backlog.
-	tick(ctx, logger, jobsStore, emotionJobs, reminderJobs, chatExtractionJobs, chatIdleSweeper, riverClient)
+	tick(ctx, logger, jobsStore, reminderJobs, chatExtractionJobs, chatIdleSweeper, riverClient)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tick(ctx, logger, jobsStore, emotionJobs, reminderJobs, chatExtractionJobs, chatIdleSweeper, riverClient)
+			tick(ctx, logger, jobsStore, reminderJobs, chatExtractionJobs, chatIdleSweeper, riverClient)
 		}
 	}
 }
@@ -232,7 +227,6 @@ func tick(
 	ctx context.Context,
 	logger *slog.Logger,
 	jobsStore *store.SummaryJobStore,
-	emotionJobs *store.EmotionClassifyJobStore,
 	reminderJobs *store.ReminderJobStore,
 	chatExtractionJobs *store.ChatExtractionJobStore,
 	chatIdleSweeper *jobs.ChatIdleSweeper,
@@ -249,19 +243,6 @@ func tick(
 			if _, err := riverClient.Insert(ctx, jobs.SummaryArgs{JobID: c.ID}, nil); err != nil {
 				logger.Warn("river insert (summary)", "err", err, "job_id", c.ID)
 				_ = jobsStore.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
-			}
-		}
-	}
-
-	claimedEmotions, err := emotionJobs.ClaimDue(ctx, batch)
-	if err != nil {
-		logger.Warn("claim due emotions", "err", err)
-	} else if len(claimedEmotions) > 0 {
-		logger.Info("dispatching emotion classify jobs", "count", len(claimedEmotions))
-		for _, c := range claimedEmotions {
-			if _, err := riverClient.Insert(ctx, jobs.EmotionClassifyArgs{JobID: c.ID}, nil); err != nil {
-				logger.Warn("river insert (emotion)", "err", err, "job_id", c.ID)
-				_ = emotionJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
 			}
 		}
 	}

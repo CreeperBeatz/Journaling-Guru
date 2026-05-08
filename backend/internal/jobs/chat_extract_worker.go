@@ -26,15 +26,16 @@ import (
 type ChatExtractionWorker struct {
 	river.WorkerDefaults[ChatExtractionArgs]
 
-	Sessions    *store.ChatSessionStore
-	Messages    *store.ChatMessageStore
-	Jobs        *store.ChatExtractionJobStore
-	Entries     *store.EntryStore
-	DailyInputs *store.DailyInputStore
-	Questions   *store.QuestionStore
-	Users       *store.UserStore
-	EmotionJobs *store.EmotionClassifyJobStore
-	Scheduler   *Scheduler // re-seeds summaries after extraction lands
+	Sessions       *store.ChatSessionStore
+	Messages       *store.ChatMessageStore
+	Jobs           *store.ChatExtractionJobStore
+	Entries        *store.EntryStore
+	DailyInputs    *store.DailyInputStore
+	Tags           *store.TagStore
+	DailyEntryTags *store.DailyEntryTagStore
+	Questions      *store.QuestionStore
+	Users          *store.UserStore
+	Scheduler      *Scheduler // re-seeds summaries after extraction lands
 	// LLM is the classify-tier client (CLASSIFY_MODEL default). Per-call
 	// model override comes from the session pin only — no env-level
 	// override beyond what the client constructor pinned.
@@ -158,16 +159,48 @@ func (w *ChatExtractionWorker) process(
 		return fmt.Errorf("parse local_date: %w", err)
 	}
 
-	// Overwrite daily_inputs from the extraction. The FE warns the user
-	// before triggering finalize, so they consent to losing prior
-	// manual values for the fields the chat actually covered. Empty
-	// extracted fields preserve existing manual values (so a chat that
-	// only covered mood doesn't blank manual notes).
-	if _, err := w.DailyInputs.OverwriteFromExtraction(
+	// Manual-wins merge: existing user values survive, extracted values
+	// fill gaps. Per the Energy Audit pivot the chat extraction never
+	// clobbers a manual edit made during the extraction window.
+	if _, err := w.DailyInputs.MergeFromExtraction(
 		ctx, user.ID, localDate,
-		result.MoodScore, result.EmotionsToText(), result.Notes,
+		store.DailyInputUpsert{
+			Mood:           result.Mood,
+			DrainedText:    result.DrainedText,
+			ChargedText:    result.ChargedText,
+			GratitudeText:  result.GratitudeText,
+			ReflectionText: result.ReflectionText,
+		},
 	); err != nil {
-		return fmt.Errorf("overwrite daily_inputs: %w", err)
+		return fmt.Errorf("merge daily_inputs: %w", err)
+	}
+
+	// Tag reconciliation. UpsertByLabel is idempotent on
+	// (user_id, normalized_label) so re-running an extraction with the
+	// same labels reuses the existing tags. ReplaceForDay rewrites the
+	// day's links for one role atomically — this is additive to whatever
+	// the user manually picked (a manual link that isn't in the
+	// extraction's proposals is removed; the user is expected to use
+	// the picker for permanent overrides).
+	if w.Tags != nil && w.DailyEntryTags != nil {
+		drainerIDs, err := w.upsertTagBatch(ctx, user.ID, result.DrainedTagProposals, "negative")
+		if err != nil {
+			return fmt.Errorf("upsert drainer tags: %w", err)
+		}
+		chargerIDs, err := w.upsertTagBatch(ctx, user.ID, result.ChargedTagProposals, "positive")
+		if err != nil {
+			return fmt.Errorf("upsert charger tags: %w", err)
+		}
+		if len(drainerIDs) > 0 {
+			if err := w.DailyEntryTags.ReplaceForDay(ctx, user.ID, localDate, "drainer", drainerIDs); err != nil {
+				return fmt.Errorf("link drainer tags: %w", err)
+			}
+		}
+		if len(chargerIDs) > 0 {
+			if err := w.DailyEntryTags.ReplaceForDay(ctx, user.ID, localDate, "charger", chargerIDs); err != nil {
+				return fmt.Errorf("link charger tags: %w", err)
+			}
+		}
 	}
 
 	// Overwrite each answered question. Same warning-then-overwrite
@@ -185,16 +218,6 @@ func (w *ChatExtractionWorker) process(
 				continue
 			}
 			return fmt.Errorf("upsert entry %s: %w", qid, err)
-		}
-	}
-
-	// Arm the Plutchik classifier if we wrote new emotions text. The
-	// daily-inputs handler does the same on user PUTs; we mirror the
-	// pattern so both sources fan out identically.
-	if result.EmotionsToText() != "" {
-		if _, err := w.EmotionJobs.Schedule(ctx, user.ID, localDate, time.Now()); err != nil {
-			w.Logger.Warn("schedule emotion classify (post-extraction)",
-				"err", err, "session_id", session.ID, "user_id", user.ID)
 		}
 	}
 
@@ -244,3 +267,21 @@ func hasUsableTranscript(messages []domain.ChatMessage) bool {
 }
 
 func ptrString(s string) *string { return &s }
+
+// upsertTagBatch upserts each label in `labels` (via TagStore.UpsertByLabel)
+// and returns the resulting tag IDs in the same order. Empty labels are
+// skipped. Errors abort — partial linking would leave the day in a
+// half-tagged state.
+func (w *ChatExtractionWorker) upsertTagBatch(
+	ctx context.Context, userID string, labels []string, valence string,
+) ([]string, error) {
+	out := make([]string, 0, len(labels))
+	for _, label := range labels {
+		t, err := w.Tags.UpsertByLabel(ctx, userID, label, valence)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t.ID)
+	}
+	return out, nil
+}

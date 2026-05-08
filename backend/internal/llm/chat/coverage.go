@@ -4,95 +4,112 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/cosmosthrace/journai/backend/internal/domain"
 	"github.com/cosmosthrace/journai/backend/internal/llm"
 )
 
-// coverageMaxTokens caps the classifier response. Output is now a
-// short list of Q-indices (e.g. ["Q1","Q3"]) instead of full UUIDs,
-// so 80 tokens is plenty even for 10+ questions and leaves the model
-// no room to ramble. Latency-sensitive: this fires after every
-// assistant turn.
+// Coverage codes for the Energy Audit's four fixed topics. The classifier
+// emits these strings verbatim; anything not in this set is dropped
+// post-parse. Values are persisted in chat_sessions.covered_question_ids
+// (column name retained from the per-question era — under the pivot it
+// stores topic codes, not UUIDs).
+const (
+	CoverageCodeDrained  = "drained"
+	CoverageCodeCharged  = "charged"
+	CoverageCodeGrateful = "grateful"
+	CoverageCodeElse     = "else"
+)
+
+// CoverageCodes is the canonical ordered list rendered as chips in the
+// FE. Stable order: spec's prompt order (drained → charged → grateful →
+// else).
+var CoverageCodes = []string{
+	CoverageCodeDrained,
+	CoverageCodeCharged,
+	CoverageCodeGrateful,
+	CoverageCodeElse,
+}
+
+func validCoverageCode(s string) bool {
+	switch s {
+	case CoverageCodeDrained, CoverageCodeCharged, CoverageCodeGrateful, CoverageCodeElse:
+		return true
+	}
+	return false
+}
+
+// coverageMaxTokens caps the classifier response. Output is a short
+// list of topic codes; 80 tokens is plenty and leaves the model no
+// room to ramble. Latency-sensitive: this fires after every assistant
+// turn.
 const coverageMaxTokens = 80
 
 // coverageRecentWindow is how many trailing chat_messages rows the
 // classifier sees. Coverage is judged in delta mode against the
 // previously-covered set, so the model only needs the latest few
-// turns of context to decide what to add — not the whole transcript.
-// User+assistant pairs only; tool/system_event rows are dropped before
-// counting (see TranscriptLinesFromMessages).
+// turns of context to decide what to add.
 const coverageRecentWindow = 8
 
-// chatCoverageSystemPrompt drives the post-turn classifier. JSON-mode +
-// the classify-tier client (CLASSIFY_MODEL); per-session
-// chat_sessions.extraction_model pin overrides per call.
-//
-// Two key shape changes vs. v1:
-//   - Question identifiers are short tokens (Q1, Q2, ...) that the
-//     handler maps back to UUIDs. Small models hallucinate and typo
-//     long opaque ids; short tokens are reliable.
-//   - The classifier runs in delta mode: the prompt includes the set
-//     already covered as state, and asks ONLY for newly-covered ids.
-//     The handler unions the delta with the prior set.
-//
-// Anti-hallucination is the priority: unknown ids are dropped post-parse.
+// chatCoverageSystemPrompt drives the post-turn classifier under the
+// Energy Audit pivot. JSON-mode + the classify-tier client. Anti-
+// hallucination is the priority: unknown codes are dropped post-parse.
 const chatCoverageSystemPrompt = `You watch a reflective journal conversation and decide which of the
-user's configured questions have JUST become substantively addressed in
-the latest turn(s).
+four fixed Energy Audit topics have JUST become substantively addressed
+in the latest turn(s).
+
+The four topics are:
+  - "drained":   what drained the user today (negative)
+  - "charged":   what charged the user today (positive)
+  - "grateful":  what they're grateful for
+  - "else":      anything else on their mind that doesn't fit the above
 
 You will see:
-- A list of active questions, each labelled Q1, Q2, ...
-- A list of question ids ALREADY judged covered (state from prior turns).
+- The set of topic codes ALREADY judged covered (state from prior turns).
 - The most recent slice of the conversation (oldest → newest).
 
 Output ONE JSON object — no prose before/after, no markdown fences:
 
 {
-  "newly_covered": ["Q2", ...]
+  "newly_covered": ["drained", ...]
 }
 
 # Rules
 
-- A question is "covered" only when the user has shared something real
-  and concrete about it. Passing mentions, deflections, or the
-  assistant's prompts on the topic do NOT count.
+- A topic is "covered" only when the user has shared something real and
+  concrete about it. Passing mentions, deflections, or the assistant's
+  prompts on the topic do NOT count.
+- "Nothing today" is a valid covered answer — if the user says
+  "nothing drained me", that counts as "drained" covered.
 - Be CONSERVATIVE. If you're not sure, omit. A false negative is
   gentler than a false positive.
-- Output ONLY ids that are NOT already in "already covered" — that's the
-  delta. Never repeat ids the system already knows about.
-- Use ONLY the Q-labels from the active questions list. Never invent
-  labels. Never quote prompts back.
+- Output ONLY codes that are NOT already in "already covered" — that's
+  the delta. Never repeat codes the system already knows about.
+- Use ONLY the four codes above. Never invent codes.
 - Empty list ([]) is a perfectly valid answer when nothing new landed.`
 
 // CoverageParams bundles inputs to Classify.
 //
-// PreviouslyCovered is the union persisted on chat_sessions —
-// resolved UUIDs, not Q-indices. Classify maps them into Q-labels
-// internally before sending to the model.
+// PreviouslyCovered is the union persisted on chat_sessions — already
+// stored as topic codes under the pivot.
 type CoverageParams struct {
 	Model             string // per-call override; empty falls back to client default
-	Questions         []QuestionView
 	Messages          []domain.ChatMessage
-	PreviouslyCovered []string // question UUIDs already covered
+	PreviouslyCovered []string // topic codes already covered
 }
 
 // Classify runs the post-turn classifier in delta mode and returns the
-// FULL covered set (previous union ∪ delta) as resolved question UUIDs.
-// Unknown labels emitted by the model are dropped silently.
+// FULL covered set (previous union ∪ delta) as topic codes. Unknown
+// labels emitted by the model are dropped silently.
 //
-// Returns (nil, nil) when there's nothing usable to classify (no active
-// questions, or no user turns yet — typical for the opener path).
+// Returns (nil, nil) when there's nothing usable to classify (no user
+// turns yet — typical for the opener path).
 func Classify(
 	ctx context.Context,
 	client *llm.OpenRouter,
 	params CoverageParams,
 ) ([]string, error) {
-	if len(params.Questions) == 0 {
-		return nil, nil
-	}
 	hasUser := false
 	for _, m := range params.Messages {
 		if m.Role == domain.ChatRoleUser && strings.TrimSpace(m.Content) != "" {
@@ -104,28 +121,22 @@ func Classify(
 		return nil, nil
 	}
 
-	// Build the index ↔ uuid mapping. Order matches the Questions slice
-	// so Q1 is questions[0], Q2 is questions[1], etc.
-	idToLabel := make(map[string]string, len(params.Questions))
-	labelToID := make(map[string]string, len(params.Questions))
-	for i, q := range params.Questions {
-		label := "Q" + strconv.Itoa(i+1)
-		idToLabel[q.ID] = label
-		labelToID[label] = q.ID
-	}
-
-	// Project previously-covered UUIDs into Q-labels (drop any that no
-	// longer match an active question — those belong to archived rows).
-	prevLabels := make([]string, 0, len(params.PreviouslyCovered))
+	// Filter previous to known codes (drops stale data from the
+	// per-question era, where the column stored UUIDs).
+	prev := make([]string, 0, len(params.PreviouslyCovered))
 	prevSet := make(map[string]struct{}, len(params.PreviouslyCovered))
-	for _, id := range params.PreviouslyCovered {
-		if label, ok := idToLabel[id]; ok {
-			prevLabels = append(prevLabels, label)
-			prevSet[id] = struct{}{}
+	for _, code := range params.PreviouslyCovered {
+		if !validCoverageCode(code) {
+			continue
 		}
+		if _, dup := prevSet[code]; dup {
+			continue
+		}
+		prevSet[code] = struct{}{}
+		prev = append(prev, code)
 	}
 
-	user := buildCoverageUserPrompt(params.Questions, params.Messages, prevLabels)
+	user := buildCoverageUserPrompt(params.Messages, prev)
 	resp, err := client.Complete(ctx, llm.CompletionRequest{
 		Model:     params.Model,
 		System:    chatCoverageSystemPrompt,
@@ -144,48 +155,31 @@ func Classify(
 		return nil, fmt.Errorf("parse coverage response: %w (content: %s)", err, truncate(resp.Content, 300))
 	}
 
-	// Resolve delta labels → UUIDs, union with previously-covered.
-	out := make([]string, 0, len(prevSet)+len(raw.NewlyCovered))
-	for _, id := range params.PreviouslyCovered {
-		if _, ok := idToLabel[id]; ok { // keep only ids still active
-			out = append(out, id)
-		}
-	}
-	seen := make(map[string]struct{}, len(out))
-	for _, id := range out {
-		seen[id] = struct{}{}
-	}
-	for _, label := range raw.NewlyCovered {
-		label = strings.TrimSpace(label)
-		id, ok := labelToID[label]
-		if !ok {
+	out := make([]string, 0, len(prev)+len(raw.NewlyCovered))
+	out = append(out, prev...)
+	for _, code := range raw.NewlyCovered {
+		code = strings.ToLower(strings.TrimSpace(code))
+		if !validCoverageCode(code) {
 			continue
 		}
-		if _, dup := seen[id]; dup {
+		if _, dup := prevSet[code]; dup {
 			continue
 		}
-		seen[id] = struct{}{}
-		out = append(out, id)
+		prevSet[code] = struct{}{}
+		out = append(out, code)
 	}
 	return out, nil
 }
 
 // buildCoverageUserPrompt assembles the user-message body sent to the
-// classifier. The format is intentionally compact for small models:
-// Q-labelled question list, the already-covered label set as state,
-// and a recent transcript window (last coverageRecentWindow user/
-// assistant rows).
+// classifier. Compact format for small models: the already-covered
+// code set as state, plus a recent transcript window.
 func buildCoverageUserPrompt(
-	questions []QuestionView,
 	messages []domain.ChatMessage,
 	previouslyCovered []string,
 ) string {
 	var b strings.Builder
-	b.WriteString("Active questions:\n")
-	for i, q := range questions {
-		fmt.Fprintf(&b, "- Q%d: %s\n", i+1, q.Prompt)
-	}
-	b.WriteString("\nAlready covered: ")
+	b.WriteString("Already covered: ")
 	if len(previouslyCovered) == 0 {
 		b.WriteString("(none)")
 	} else {

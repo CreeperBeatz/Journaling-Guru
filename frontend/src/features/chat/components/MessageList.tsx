@@ -1,5 +1,3 @@
-import { useEffect, useRef } from "react";
-
 import type { ChatMessage } from "../api";
 import { MessageBubble } from "./MessageBubble";
 import { StreamingMessage } from "./StreamingMessage";
@@ -7,30 +5,26 @@ import { StreamingMessage } from "./StreamingMessage";
 interface Props {
   messages: ChatMessage[];
   partial: string;
-  streaming: boolean;
 }
 
 // MessageList renders the persisted bubbles plus the in-flight streaming
-// bubble (when streaming=true and partial has content). Auto-scrolls
-// to bottom on new messages or growing partial text.
+// bubble. The streaming bubble shows whenever `partial` has content —
+// not gated on a streaming flag — so that the bubble stays mounted from
+// the first token through the moment the persisted turn lands in the
+// messages array. ChatPanel clears `partial` once it sees that arrival
+// (see useEffect on visibleMsgs.length), avoiding the disappear/
+// reappear flicker.
 //
-// We pin to bottom unconditionally — chat is a "read down" surface,
-// not a "manage scroll position" one. If a user scrolls up to read
-// earlier turns we'll fight them; that's an acceptable trade for v1.
-export function MessageList({ messages, partial, streaming }: Props) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, partial.length]);
-
+// Scroll-to-bottom is owned by the parent (ChatPanel) so the auto-follow
+// logic can react to both `messages.length` AND `partial.length` while
+// respecting the user's manual scroll position.
+export function MessageList({ messages, partial }: Props) {
   return (
     <div className="flex flex-col gap-4">
       {messages.map((m) => (
         <MessageBubble key={m.id} message={m} />
       ))}
-      {streaming && partial.length > 0 && <StreamingMessage text={partial} />}
-      <div ref={bottomRef} />
+      {partial.length > 0 && <StreamingMessage text={partial} />}
     </div>
   );
 }

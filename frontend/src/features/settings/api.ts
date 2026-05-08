@@ -7,6 +7,7 @@ export interface UpdateMePatch {
   reminder_time?: string;
   reminder_enabled?: boolean;
   day_start_minutes?: number;
+  reflection_weekday?: number; // 0=Sun..6=Sat
 }
 
 export function updateMe(patch: UpdateMePatch): Promise<User> {

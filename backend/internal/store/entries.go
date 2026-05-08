@@ -258,14 +258,14 @@ turns AS (
    GROUP BY s.local_date
 ),
 inputs AS (
-  SELECT local_date AS d, mood_score
+  SELECT local_date AS d, mood
     FROM daily_inputs
    WHERE user_id = $1 AND local_date BETWEEN $2 AND $3
 )
 SELECT to_char(d.d, 'YYYY-MM-DD'),
        COALESCE(e.answered, 0),
        COALESCE(t.chat_turns, 0),
-       i.mood_score
+       i.mood
   FROM dates d
   LEFT JOIN entries e ON e.d = d.d
   LEFT JOIN turns   t ON t.d = d.d

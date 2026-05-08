@@ -414,7 +414,8 @@ function cellLabel(iso: string, data?: HeatCellData): string {
  * Build a chronological array of <HeatCellData> from a raw heatmap
  * response. A day counts as filled (`level === 1`) if it has at least
  * one journal entry OR a chat session with substantive turns.
- * `moodUp` is mood_score >= 7 (top tertile of the 1-10 scale).
+ * `moodUp` is mood === 3 (the "happy" face on the 1..3 Energy Audit
+ * scale).
  */
 export function buildHeatCells(
   days: { local_date: string; answered: number; chat_turns: number; mood?: number | null }[],
@@ -422,6 +423,6 @@ export function buildHeatCells(
   return days.map((d) => ({
     date: d.local_date,
     level: d.answered > 0 || d.chat_turns >= 3 ? 1 : 0,
-    moodUp: (d.mood ?? 0) >= 7,
+    moodUp: (d.mood ?? 0) >= 3,
   }));
 }

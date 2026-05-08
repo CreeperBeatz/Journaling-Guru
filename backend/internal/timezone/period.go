@@ -160,12 +160,13 @@ func NextPeriod(p Period, iana string, dayStartMinutes int) (Period, error) {
 	return PeriodFromLocalStart(nextDate, iana, dayStartMinutes, p.Type)
 }
 
-// AllPeriods returns the four periods (day/week/month/year) containing
-// `at`. Used at first-entry-write time to lazy-seed summary_jobs rows.
+// AllPeriods returns the surviving periods containing `at`. Under the
+// Energy Audit pivot only the weekly summary fires; the daily / monthly
+// / yearly LLM summaries are retired.
 func AllPeriods(at time.Time, iana string, dayStartMinutes int) ([]Period, error) {
-	out := make([]Period, 0, 4)
+	out := make([]Period, 0, 1)
 	for _, pt := range []domain.SummaryPeriod{
-		domain.PeriodDay, domain.PeriodWeek, domain.PeriodMonth, domain.PeriodYear,
+		domain.PeriodWeek,
 	} {
 		p, err := PeriodContaining(at, iana, dayStartMinutes, pt)
 		if err != nil {

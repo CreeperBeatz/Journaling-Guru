@@ -537,6 +537,93 @@ func (h *ChatHandler) Reset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---------- /sessions/:id/wrap-up ----------
+
+// WrapUp handles POST /api/chat/sessions/:id/wrap-up. The user has
+// signaled they're ready to be done; the bot needs to do a fast
+// covering pass over any uncovered topics and propose wrap-up.
+//
+// Wire shape:
+//   1. Persist a system_event chat_message ("user_wrap_up") so the
+//      LLM transcript includes the signal verbatim and the audit log
+//      shows what triggered the closing turn.
+//   2. Advance session phase to wrapping_up. The persona prompt's
+//      wrapping_up branch instructs the model to ask one final
+//      optional question and call propose_wrap_up.
+//   3. Stream a single assistant turn via runStream. The FE consumes
+//      it with the same SSE handler as a normal message turn.
+//
+// Idempotent against re-clicks: a second wrap-up just appends another
+// system_event (cheap), re-runs runStream, and the persona prompt is
+// already in wrapping_up so the bot's response is consistent.
+func (h *ChatHandler) WrapUp(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	sessionID := chi.URLParam(r, "id")
+	if sessionID == "" {
+		writeJSONError(w, http.StatusBadRequest, "id required")
+		return
+	}
+	session, err := h.Sessions.GetByID(r.Context(), sess.UserID, sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrChatSessionNotFound) {
+			writeJSONError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		h.Logger.Error("get session", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "session lookup failed")
+		return
+	}
+	// Need at least one user turn to wrap up — wrap-up against an
+	// opener-only chat would be a no-op covering pass with nothing to
+	// reflect on. The FE gates the button on hasUserTurns too, so
+	// this is a defensive 409.
+	existing, err := h.Messages.ListBySession(r.Context(), sessionID)
+	if err != nil {
+		h.Logger.Error("list messages", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	hasUser := false
+	for _, m := range existing {
+		if m.Role == domain.ChatRoleUser {
+			hasUser = true
+			break
+		}
+	}
+	if !hasUser {
+		writeJSONError(w, http.StatusConflict, "no user turns yet")
+		return
+	}
+
+	if _, err := h.Messages.Append(r.Context(), store.AppendInput{
+		SessionID: session.ID,
+		Role:      domain.ChatRoleSystemEvent,
+		Content:   "user_wrap_up",
+	}); err != nil {
+		h.Logger.Error("append wrap-up event", "err", err, "session_id", session.ID)
+		writeJSONError(w, http.StatusInternalServerError, "wrap-up failed")
+		return
+	}
+
+	phaseFrame := ""
+	if session.Phase != domain.ChatPhaseWrappingUp {
+		updated, err := h.Sessions.AdvancePhase(r.Context(), session.ID, domain.ChatPhaseWrappingUp)
+		if err == nil {
+			session = updated
+			phaseFrame = domain.ChatPhaseWrappingUp
+		} else if !errors.Is(err, store.ErrChatSessionInvalidPhase) {
+			h.Logger.Warn("advance phase to wrapping_up", "err", err, "session_id", session.ID)
+		}
+	}
+
+	rc := http.NewResponseController(w)
+	h.runStream(w, r, rc, session, false, phaseFrame, nil)
+}
+
 // ---------- shared streaming ----------
 
 // runStream is the inner streaming loop shared by StreamMessage and
@@ -813,19 +900,12 @@ func (h *ChatHandler) runCoverageClassifier(
 		// The covered set is sticky; nothing to recompute.
 		return
 	}
-	questions, err := h.Questions.ListActive(ctx, session.UserID)
-	if err != nil {
-		h.Logger.Warn("coverage: load questions", "err", err, "session_id", session.ID)
-		return
-	}
-	views := chat.QuestionViewsFromDomain(questions)
 	classifyModel := h.ClassifyModel
 	if session.ExtractionModel != "" {
 		classifyModel = session.ExtractionModel
 	}
 	covered, err := chat.Classify(ctx, h.ClassifyLLM, chat.CoverageParams{
 		Model:             classifyModel,
-		Questions:         views,
 		Messages:          transcript,
 		PreviouslyCovered: session.CoveredQuestionIDs,
 	})
@@ -834,7 +914,7 @@ func (h *ChatHandler) runCoverageClassifier(
 		return
 	}
 	if covered == nil {
-		// Greeting-only or no questions configured — leave the persisted
+		// Greeting-only path — no user turns yet. Leave the persisted
 		// value alone and skip the SSE frame.
 		return
 	}
@@ -873,12 +953,12 @@ func (h *ChatHandler) buildSystemPrompt(
 	since := localToday.AddDate(0, 0, -7)
 	until := localToday.AddDate(0, 0, -1)
 	var moodAvg *float64
+	// Emotions are retired under the Energy Audit pivot — Phase 3 will
+	// swap RecentTopEmotions for a "recent drainers/chargers" view.
 	var topEmotions []string
 	if !until.Before(since) {
-		agg, err := h.DailyInputs.AggregateForRange(ctx, user.ID, since, until, 5)
-		if err == nil && agg != nil {
+		if agg, err := h.DailyInputs.AggregateForRange(ctx, user.ID, since, until); err == nil && agg != nil {
 			moodAvg = agg.MoodScore
-			topEmotions = agg.Emotions
 		}
 	}
 

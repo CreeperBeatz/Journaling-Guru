@@ -29,21 +29,3 @@ func (SummaryArgs) InsertOpts() river.InsertOpts {
 	}
 }
 
-// EmotionClassifyArgs is the River payload for the Plutchik classifier.
-// Same shape as SummaryArgs — just an emotion_classify_jobs row id; the
-// worker reads the rest from Postgres.
-type EmotionClassifyArgs struct {
-	JobID string `json:"job_id"`
-}
-
-func (EmotionClassifyArgs) Kind() string { return "emotion_classify" }
-
-// MaxAttempts is lower than SummaryArgs because the call is short
-// (one prompt, capped at 400 tokens) — if it fails three times something
-// systemic is wrong, no point hammering OpenRouter.
-func (EmotionClassifyArgs) InsertOpts() river.InsertOpts {
-	return river.InsertOpts{
-		Queue:       river.QueueDefault,
-		MaxAttempts: 3,
-	}
-}

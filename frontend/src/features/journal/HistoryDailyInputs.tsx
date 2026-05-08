@@ -16,6 +16,7 @@ export function HistoryDailyInputs({ localDate }: Props) {
     <DailyInputs
       title="Check-in"
       input={data?.input ?? null}
+      tags={data?.tags ?? []}
       onSave={(body) => update.mutate(body)}
       isSaving={update.isPending}
     />
