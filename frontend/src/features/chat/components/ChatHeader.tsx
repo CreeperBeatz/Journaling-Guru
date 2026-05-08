@@ -47,11 +47,11 @@ export function ChatHeader({
   onReset,
 }: Props) {
   return (
-    <div className="flex items-center justify-between gap-3 pb-2">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pb-2">
+      <p className="min-w-0 text-xs uppercase tracking-wide text-muted-foreground">
         {phaseLabel(phase)}
       </p>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button

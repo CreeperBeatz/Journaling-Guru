@@ -65,7 +65,7 @@ export function ComposerInput({ onSend, disabled, pending, placeholder }: Props)
         disabled={disabled}
         placeholder={placeholder ?? "Say something…"}
         className={cn(
-          "flex-1 resize-none bg-transparent py-2 text-base leading-relaxed",
+          "min-w-0 flex-1 resize-none bg-transparent py-2 text-base leading-relaxed",
           "placeholder:text-muted-foreground focus:outline-none",
           "min-h-[2.5rem] max-h-60",
         )}

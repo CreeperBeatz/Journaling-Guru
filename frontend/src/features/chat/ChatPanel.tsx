@@ -1,7 +1,6 @@
 import { useEffect, useMemo } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 import { useQuestions } from "@/features/journal/hooks";
 
 import {
@@ -24,13 +23,6 @@ import { CrisisCard } from "./components/CrisisCard";
 import { MessageList } from "./components/MessageList";
 import { WrapUpAffordance } from "./components/WrapUpAffordance";
 
-interface Props {
-  /** When the parent's sticky Today bar is in its condensed/stuck state,
-   * the coverage strip flips to dots-only and adds a glass background so
-   * it reads as a continuation of that bar. Plumbed from DailyEntry. */
-  coverageCompact?: boolean;
-}
-
 // ChatPanel is the chat-mode body of /today. Composes the session
 // query, streaming state machine, and finalize flow into one self-
 // contained surface.
@@ -48,7 +40,7 @@ interface Props {
 //   6. On extraction completed, caches invalidate; the user can keep
 //      chatting — new messages typed during the update simply weren't
 //      part of the snapshot that just landed.
-export function ChatPanel({ coverageCompact = false }: Props) {
+export function ChatPanel() {
   const sessionQuery = useTodayChatSession();
   const createOrResume = useCreateOrResumeSession();
   const finalize = useFinalizeChat();
@@ -139,7 +131,7 @@ export function ChatPanel({ coverageCompact = false }: Props) {
   const hasUserTurns = userTurnCount > 0;
 
   return (
-    <Card>
+    <Card className="overflow-x-clip">
       <CardContent className="flex flex-col gap-4 px-5 py-5">
         <ChatHeader
           phase={phase}
@@ -151,25 +143,16 @@ export function ChatPanel({ coverageCompact = false }: Props) {
           onReset={handleReset}
         />
 
-        {/* Sticky coverage strip — pins just below the DailyEntry sticky
-         * bar. In compact mode (parent stuck) we add a glass background
-         * so the two stickies read as one continuous strip.
-         *
+        {/* Sticky coverage strip — pins below the DailyEntry tab strip.
          * Top = AppShell mobile header (CSS var, 0 on desktop) +
-         *       Today bar's stuck height (~3rem). */}
+         *       tab strip height (h-9 + py-2 ≈ 2.75rem). */}
         <div
-          style={{ top: "calc(var(--app-mobile-header-h, 2.5rem) + 3rem)" }}
-          className={cn(
-            "sticky z-10 -mx-5 px-5 transition-[padding,background-color,border-color] duration-200",
-            coverageCompact
-              ? "border-b border-border/60 bg-background/85 py-1.5 backdrop-blur-md"
-              : "border-b border-transparent bg-transparent py-0",
-          )}
+          style={{ top: "calc(var(--app-mobile-header-h, 0px) + 2.75rem)" }}
+          className="sticky z-10 -mx-5 border-b border-border/60 bg-background/85 px-5 py-1.5 backdrop-blur-md"
         >
           <CoverageChips
             questions={questionsQuery.data ?? []}
             coveredIds={coveredIds}
-            compact={coverageCompact}
           />
         </div>
 

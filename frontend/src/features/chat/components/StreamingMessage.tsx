@@ -23,14 +23,14 @@ export function StreamingMessage({ text }: Props) {
   const reduced = useReducedMotion();
   return (
     <div className="flex w-full justify-start">
-      <div className="max-w-[85%] sm:max-w-[75%]">
+      <div className="min-w-0 max-w-[85%] sm:max-w-[75%]">
         <motion.div
           initial={reduced ? false : { opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.18, ease: easeStandard }}
           className="rounded-2xl border border-border/60 bg-card px-4 py-3 text-base leading-relaxed text-card-foreground"
         >
-          <p className="whitespace-pre-wrap">
+          <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
             {text}
             <span className="inline-block h-[1.1em] w-[2px] translate-y-[2px] bg-foreground/60 motion-safe:animate-pulse" />
           </p>

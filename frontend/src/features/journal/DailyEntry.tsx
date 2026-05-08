@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
-import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -78,66 +78,6 @@ function formatHumanDate(yyyymmdd: string): string {
   });
 }
 
-// Condensed variant used by the stuck Today bar. "Thu May 7" instead of
-// "Thursday, May 7, 2026" — keeps the strip to one line on narrow screens.
-function formatShortDate(yyyymmdd: string): string {
-  const [y, m, d] = yyyymmdd.split("-").map(Number);
-  if (!y || !m || !d) return yyyymmdd;
-  const date = new Date(Date.UTC(y, m - 1, d));
-  return date.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-// Watches a sentinel element's vertical position relative to the
-// viewport's sticky offset (AppShell mobile header = 56px on mobile,
-// 0 on desktop). Returns `true` once the sentinel has scrolled above
-// the threshold — i.e. the sticky bar that follows it is now pinned.
-//
-// Two design choices that prevent flicker at the boundary:
-//   1. **Sentinel, not the bar.** Measuring the bar itself races with
-//      its own collapse: when the bar shrinks, the page's scroll
-//      origin shifts, which in pathological cases can push the bar's
-//      rect.top back across the threshold and oscillate. The sentinel
-//      is a 1px-tall element above the bar; its size never changes,
-//      so its rect.top monotonically tracks scroll regardless of
-//      what the bar is doing.
-//   2. **Hysteresis (8px deadband).** Once stuck, we only un-stick
-//      when the sentinel returns more than 8px above the trigger
-//      line. Absorbs sub-pixel jitter and any residual layout shift
-//      while the bar finishes its transition.
-function useIsStuck(sentinelRef: React.RefObject<HTMLElement | null>): boolean {
-  const [stuck, setStuck] = useState(false);
-  useEffect(() => {
-    const measure = () => {
-      const el = sentinelRef.current;
-      if (!el) return;
-      // Read the same CSS var that drives the sticky bar's `top`, so
-      // detection and rendering can't drift out of sync. Falls back to
-      // 0 (desktop) when the var hasn't been published yet.
-      const headerHRaw = getComputedStyle(
-        document.documentElement,
-      ).getPropertyValue("--app-mobile-header-h");
-      const stickyTop = parseFloat(headerHRaw) || 0;
-      const rect = el.getBoundingClientRect();
-      setStuck((prev) =>
-        prev ? rect.top < stickyTop + 8 : rect.top < stickyTop,
-      );
-    };
-    measure();
-    window.addEventListener("scroll", measure, { passive: true });
-    window.addEventListener("resize", measure, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", measure);
-      window.removeEventListener("resize", measure);
-    };
-  }, [sentinelRef]);
-  return stuck;
-}
-
 // Calendar arithmetic in UTC space — the local_date is a wall-clock day so
 // "the day before" is a calendar subtraction, not a timezone shift.
 function dayBefore(yyyymmdd: string): string | null {
@@ -189,19 +129,6 @@ export function DailyEntry() {
     [searchParams, setSearchParams],
   );
 
-  // The sticky Today bar collapses from a multi-line display header to a
-  // thin one-line strip the moment the user scrolls past its natural
-  // position. The same `isStuck` value flows into ChatPanel so its
-  // CoverageChips compact at the same time, keeping both stickies
-  // visually unified. Stuck-state is observed via a 1px sentinel
-  // immediately before the bar (see useIsStuck for why).
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const isStuck = useIsStuck(sentinelRef);
-  const prefersReducedMotion = useReducedMotion();
-  const layoutAnim = prefersReducedMotion
-    ? ({ duration: 0 } as const)
-    : ({ type: "spring", stiffness: 380, damping: 34, mass: 0.7 } as const);
-
   // Background "Update check-in" status. Lives in DailyEntry (not
   // ChatPanel) so the sticky bar's "Updating…" pill is visible from
   // any mode and the polling effect (toast on completed/failed) only
@@ -237,7 +164,6 @@ export function DailyEntry() {
   const today = entries.data?.local_date;
   const yesterday = today ? dayBefore(today) : null;
   const dayLabel = today ? formatHumanDate(today) : "Today";
-  const dayShortLabel = today ? formatShortDate(today) : "Today";
 
   const entryByQuestion = new Map(
     (entries.data?.entries ?? []).map((e) => [e.question_id, e]),
@@ -262,139 +188,21 @@ export function DailyEntry() {
   // it because the message list scrolls and a horizontal-drag fight
   // would feel terrible.
   //
-  // The sticky bar wraps the date header + mode tabs into one element
-  // that pins to the top of the viewport (below AppShell's mobile
-  // header) and condenses to a single thin strip once the user scrolls
-  // past it. The bleed-out `-mx-4 md:-mx-8` matches AppShell's main
-  // padding so the glass strip extends to the content frame edges.
-  const body = (
-    <Tabs value={mode} onValueChange={handleModeChange}>
-      {/* 1px sentinel placed at the bar's natural top. Stuck-state
-       * detection observes this element instead of the bar itself,
-       * so the trigger doesn't depend on the bar's collapsing
-       * geometry and can't oscillate at the boundary. */}
-      <div ref={sentinelRef} aria-hidden className="h-px" />
-
-      <div
-        data-stuck={isStuck ? "true" : "false"}
-        // Top offset is the AppShell mobile header's actual rendered
-        // height (set as a CSS var by AppShell's ResizeObserver).
-        // Resolves to 0 on desktop where the mobile header is
-        // `md:hidden`, so the bar pins to viewport top there.
-        style={{ top: "var(--app-mobile-header-h, 2.5rem)" }}
-        className={cn(
-          "sticky z-20",
-          "-mx-4 md:-mx-8 px-4 md:px-8",
-          "bg-background/85 backdrop-blur-md",
-          "border-b transition-[border-color,padding] duration-200",
-          isStuck ? "border-border/60 py-2" : "border-transparent py-4 md:py-5",
-        )}
-      >
-        {/*
-         * Layout strategy:
-         *   Mobile + stuck → header is hidden, tabs become the bar.
-         *     Avoids cramming a date AND tabs into 375px while keeping
-         *     vertical real estate minimal.
-         *   Desktop + stuck → flex-row with date · time on the left and
-         *     tabs on the right (per the chosen mockup).
-         *   Anywhere unstuck → flex-col with the full display header
-         *     above the tabs.
-         */}
-        <LayoutGroup>
-        <div
-          className={cn(
-            "flex flex-col gap-3",
-            isStuck && "md:flex-row md:items-center md:gap-3",
-          )}
-        >
-          <header
-            className={cn(
-              "min-w-0 flex-1 transition-[max-height,opacity] duration-200 overflow-hidden",
-              !isStuck && "space-y-1",
-              // Mobile + stuck: collapse header out of layout so tabs
-              // sit flush at the top of the bar.
-              isStuck ? "max-md:max-h-0 max-md:opacity-0" : "max-h-32 opacity-100",
-              isStuck && "md:leading-tight",
-            )}
-          >
-            {!isStuck ? (
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h1 className="font-serif text-h1">{dayLabel}</h1>
-                {me.data ? (
-                  <p className="font-mono text-xs tabular-nums text-muted-foreground">
-                    <span>{currentTime}</span> · {me.data.timezone} · new day at{" "}
-                    {minutesToHHMM(me.data.day_start_minutes)}
-                  </p>
-                ) : null}
-              </div>
-            ) : (
-              <h1 className="truncate font-sans text-sm font-medium leading-tight transition-[font-size,line-height] duration-200">
-                {dayShortLabel}
-                {currentTime ? (
-                  <span className="ml-2 font-mono text-xs font-normal tabular-nums text-muted-foreground">
-                    · {currentTime}
-                  </span>
-                ) : null}
-              </h1>
-            )}
-          </header>
-
-          {extractionStatus === "pending" || extractionStatus === "running" ? (
-            <span
-              role="status"
-              aria-live="polite"
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-medium text-accent",
-                !isStuck && "self-end",
-              )}
-            >
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-              Updating check-in…
-            </span>
-          ) : extractionStatus === "failed" ? (
-            <button
-              type="button"
-              onClick={handleRetryFinalize}
-              disabled={finalizeRetry.isPending}
-              title={extractionError ?? "Extraction failed — tap to retry"}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-60",
-                !isStuck && "self-end",
-              )}
-            >
-              <AlertCircle className="h-3 w-3" aria-hidden />
-              {finalizeRetry.isPending ? "Retrying…" : "Retry update"}
-            </button>
-          ) : null}
-
-          <motion.div
-            layout
-            transition={layoutAnim}
-            className={cn(
-              "w-full",
-              isStuck && "md:w-auto md:shrink-0 md:ml-auto",
-            )}
-          >
-            <TabsList
-              className={cn(
-                "grid w-full grid-cols-3 transition-[height] duration-200",
-                isStuck && "h-8 md:inline-flex md:w-auto",
-              )}
-            >
-              <TabsTrigger value="manual">Manual</TabsTrigger>
-              <TabsTrigger value="chat">Chat</TabsTrigger>
-              <TabsTrigger value="talk" disabled className="gap-1.5">
-                Talk
-                <span className="rounded-full bg-muted-foreground/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  soon
-                </span>
-              </TabsTrigger>
-            </TabsList>
-          </motion.div>
-        </div>
-        </LayoutGroup>
-      </div>
-
+  // Layout pattern: Material 3 "Small top app bar" + persistent tab strip.
+  // The date heading sits in flow and scrolls away naturally. Only the
+  // tab strip pins, at constant height — no scroll-event JS, no
+  // competing animations, no flicker. The `-mx-4 md:-mx-8` bleed lets
+  // the glass strip extend to the AppShell content frame edges.
+  //
+  // PullToRefresh and SwipeNavigator both apply `transform` to their
+  // wrapper (motion.div with drag/y), and a transformed ancestor
+  // breaks `position: sticky` — descendants stop sticking relative to
+  // the viewport and instead anchor inside the transformed box. So
+  // the sticky tab strip MUST be a sibling of those wrappers, not a
+  // descendant. The wrappers stay scoped to the scrolling tab content
+  // below.
+  const tabContent = (
+    <>
       <TabsContent value="manual" className="mt-6">
         <ManualBody
           questions={questions.data ?? []}
@@ -407,7 +215,7 @@ export function DailyEntry() {
       </TabsContent>
 
       <TabsContent value="chat" className="mt-6">
-        <ChatPanel coverageCompact={isStuck} />
+        <ChatPanel />
       </TabsContent>
 
       <TabsContent value="talk" className="mt-6">
@@ -417,31 +225,87 @@ export function DailyEntry() {
           </CardContent>
         </Card>
       </TabsContent>
-    </Tabs>
+    </>
   );
 
   return (
-    <PullToRefresh onRefresh={onRefresh}>
-      {mode === "manual" ? (
-        <SwipeNavigator
-          onSwipeRight={() => {
-            if (yesterday) navigate(`/history/${yesterday}`);
-          }}
-          onDragStart={() => {
-            if (yesterday) {
-              qc.prefetchQuery({
-                queryKey: entriesKey(yesterday),
-                queryFn: () => listEntries(yesterday),
-              });
-            }
-          }}
-        >
-          {body}
-        </SwipeNavigator>
-      ) : (
-        body
-      )}
-    </PullToRefresh>
+    <Tabs value={mode} onValueChange={handleModeChange}>
+      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="font-serif text-h1">{dayLabel}</h1>
+          {me.data ? (
+            <p className="font-mono text-xs tabular-nums text-muted-foreground">
+              <span>{currentTime}</span> · {me.data.timezone} · new day at{" "}
+              {minutesToHHMM(me.data.day_start_minutes)}
+            </p>
+          ) : null}
+        </div>
+
+        {extractionStatus === "pending" || extractionStatus === "running" ? (
+          <span
+            role="status"
+            aria-live="polite"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-medium text-accent"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            Updating check-in…
+          </span>
+        ) : extractionStatus === "failed" ? (
+          <button
+            type="button"
+            onClick={handleRetryFinalize}
+            disabled={finalizeRetry.isPending}
+            title={extractionError ?? "Extraction failed — tap to retry"}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-60"
+          >
+            <AlertCircle className="h-3 w-3" aria-hidden />
+            {finalizeRetry.isPending ? "Retrying…" : "Retry update"}
+          </button>
+        ) : null}
+      </header>
+
+      <div
+        // Top offset is the AppShell mobile header's actual rendered
+        // height (set as a CSS var by AppShell's ResizeObserver).
+        // Resolves to 0 on desktop where the mobile header is
+        // `md:hidden`, so the bar pins to viewport top there.
+        style={{ top: "var(--app-mobile-header-h, 0px)" }}
+        className="sticky z-20 -mx-4 md:-mx-8 px-4 md:px-8 py-2 bg-background/85 backdrop-blur-md border-b border-border/60"
+      >
+        <TabsList className="grid h-9 w-full grid-cols-3 md:inline-flex md:w-auto">
+          <TabsTrigger value="manual">Manual</TabsTrigger>
+          <TabsTrigger value="chat">Chat</TabsTrigger>
+          <TabsTrigger value="talk" disabled className="gap-1.5">
+            Talk
+            <span className="rounded-full bg-muted-foreground/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+              soon
+            </span>
+          </TabsTrigger>
+        </TabsList>
+      </div>
+
+      <PullToRefresh onRefresh={onRefresh}>
+        {mode === "manual" ? (
+          <SwipeNavigator
+            onSwipeRight={() => {
+              if (yesterday) navigate(`/history/${yesterday}`);
+            }}
+            onDragStart={() => {
+              if (yesterday) {
+                qc.prefetchQuery({
+                  queryKey: entriesKey(yesterday),
+                  queryFn: () => listEntries(yesterday),
+                });
+              }
+            }}
+          >
+            {tabContent}
+          </SwipeNavigator>
+        ) : (
+          tabContent
+        )}
+      </PullToRefresh>
+    </Tabs>
   );
 }
 

@@ -43,8 +43,9 @@ export function PaperPage({
         className,
       )}
     >
-      <header className="mb-8 flex items-start justify-between gap-3 border-l-4 border-accent pl-4">
-        <div className="space-y-1">
+      <header className="mb-8 flex flex-col items-start gap-3 border-l-4 border-accent pl-4">
+        {headerSlot ? <div className="self-end">{headerSlot}</div> : null}
+        <div className="min-w-0 space-y-1">
           {eyebrow ? (
             <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
               {eyebrow}
@@ -57,7 +58,6 @@ export function PaperPage({
             </p>
           ) : null}
         </div>
-        {headerSlot ? <div className="shrink-0">{headerSlot}</div> : null}
       </header>
 
       <div className="space-y-8">{children}</div>
@@ -147,7 +147,7 @@ export function PaperPageBlock({
  */
 export function PaperPageProse({ children }: { children: ReactNode }) {
   return (
-    <div className="prose-paper space-y-5 font-serif text-body-prose leading-prose">
+    <div className="prose-paper space-y-5 font-serif text-body-prose leading-prose [overflow-wrap:anywhere]">
       {children}
     </div>
   );

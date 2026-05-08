@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   Navigate,
   NavLink,
@@ -96,14 +96,30 @@ export function AppShell() {
   });
 
   // Publish the mobile header's actual rendered height as a CSS var so
-  // sibling sticky bars (DailyEntry's Today bar, ChatPanel's coverage
+  // sibling sticky bars (DailyEntry's tab strip, ChatPanel's coverage
   // strip) can pin flush against it without guessing. On desktop the
   // header is `md:hidden` and offsetHeight is 0, so the var resolves to
   // 0px and the consumers naturally pin to viewport top there.
-  const headerRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const el = headerRef.current;
-    if (!el) return;
+  //
+  // Uses a callback ref instead of useRef + useEffect: AppShell renders
+  // <AppShellSkeleton /> while `me` is pending, so the real <header>
+  // mounts later. A `[]`-deps effect would fire once with a null ref
+  // and never re-run, leaving the var unset.
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const resizeListenerRef = useRef<(() => void) | null>(null);
+  const headerRef = useCallback((el: HTMLElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    if (resizeListenerRef.current) {
+      window.removeEventListener("resize", resizeListenerRef.current);
+      resizeListenerRef.current = null;
+    }
+    if (!el) {
+      document.documentElement.style.removeProperty("--app-mobile-header-h");
+      return;
+    }
     const update = () => {
       document.documentElement.style.setProperty(
         "--app-mobile-header-h",
@@ -113,10 +129,16 @@ export function AppShell() {
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
+    observerRef.current = ro;
     window.addEventListener("resize", update);
+    resizeListenerRef.current = update;
+  }, []);
+  useEffect(() => {
     return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", update);
+      observerRef.current?.disconnect();
+      if (resizeListenerRef.current) {
+        window.removeEventListener("resize", resizeListenerRef.current);
+      }
     };
   }, []);
 
@@ -149,7 +171,7 @@ export function AppShell() {
         onSignOut={() => signOut.mutate()}
         signingOut={signOut.isPending}
       />
-      <div className="flex min-h-svh flex-1 flex-col">
+      <div className="flex min-h-svh min-w-0 flex-1 flex-col">
         <header
           ref={headerRef}
           className="sticky top-0 z-30 flex items-center justify-between border-b border-border/60 bg-background/80 px-4 backdrop-blur-md md:hidden pt-[env(safe-area-inset-top)]"
