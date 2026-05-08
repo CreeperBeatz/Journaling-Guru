@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { PaperPage, PaperPageBlock } from "@/components/ui/paper-page";
 import {
@@ -59,6 +60,79 @@ export function HistoryView() {
 
 const RECENT_PAGE_STEP = 14;
 
+// Shift `iso` (YYYY-MM-DD) by ±1 unit of `view`. Year = ±12 months,
+// month = ±1 month, week = ±7 days. Anchor stays clamped to date 1-28
+// for month math so we don't bounce off short months (e.g. Jan 31 → Feb).
+function shiftAnchor(view: HeatView, iso: string, dir: -1 | 1): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (view === "week") {
+    date.setUTCDate(date.getUTCDate() + dir * 7);
+  } else if (view === "month") {
+    // Month arithmetic on the 1st avoids the Jan 31 → Mar 3 trap.
+    date.setUTCDate(1);
+    date.setUTCMonth(date.getUTCMonth() + dir);
+  } else {
+    date.setUTCDate(1);
+    date.setUTCMonth(date.getUTCMonth() + dir * 12);
+  }
+  const ny = date.getUTCFullYear();
+  const nm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const nd = String(date.getUTCDate()).padStart(2, "0");
+  return `${ny}-${nm}-${nd}`;
+}
+
+function anchorLabel(view: HeatView, iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (view === "year") {
+    return `${date.getUTCFullYear()}`;
+  }
+  if (view === "month") {
+    return date.toLocaleDateString(undefined, {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  }
+  // week — show start..end of week range. Sunday-aligned.
+  const dow = date.getUTCDay();
+  const start = new Date(date);
+  start.setUTCDate(start.getUTCDate() - dow);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 6);
+  const fmt = (x: Date) =>
+    x.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
+function HeatLegend() {
+  // Swatch ramp: less ← → more. Mirrors the actual --heat-l* values.
+  const swatches = [
+    "var(--heat-empty)",
+    "var(--heat-l1)",
+    "var(--heat-l2)",
+    "var(--heat-l3)",
+    "var(--heat-l4)",
+  ];
+  return (
+    <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+      <span aria-hidden>less</span>
+      <div className="flex items-center gap-[3px]">
+        {swatches.map((bg, i) => (
+          <span
+            key={i}
+            className="h-3 w-3 rounded-[2px]"
+            style={{ backgroundColor: bg }}
+            aria-hidden
+          />
+        ))}
+      </div>
+      <span aria-hidden>more</span>
+    </div>
+  );
+}
+
 function HistoryLanding() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -69,7 +143,7 @@ function HistoryLanding() {
   // View + anchor drive the drill-down. Year (no anchor = today) →
   // click a month tile → month with that anchor → click a week → week
   // with that anchor → click a day → /history/:date.
-  const [view, setView] = useState<HeatView>("year");
+  const [view, setView] = useState<HeatView>("month");
   const [anchor, setAnchor] = useState<string | null>(null);
 
   const days = heatmap.data?.days ?? [];
@@ -116,8 +190,54 @@ function HistoryLanding() {
 
         <section className="space-y-4">
           <div className="flex items-center justify-between gap-3">
+            <ViewToggle value={view} onChange={setViewReset} />
+            <HeatLegend />
+          </div>
+
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() =>
+                  setAnchor((a) => shiftAnchor(view, a ?? today, -1))
+                }
+                aria-label="Previous"
+                className={cn(
+                  "inline-flex h-8 w-8 items-center justify-center rounded-md",
+                  "text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                )}
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden />
+              </button>
+              <span className="min-w-[10rem] text-center font-mono text-xs uppercase tracking-[0.08em] text-muted-foreground">
+                {anchorLabel(view, anchor ?? today)}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setAnchor((a) => shiftAnchor(view, a ?? today, 1))
+                }
+                aria-label="Next"
+                className={cn(
+                  "inline-flex h-8 w-8 items-center justify-center rounded-md",
+                  "text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                )}
+              >
+                <ChevronRight className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
             <div className="flex items-center gap-2">
-              <ViewToggle value={view} onChange={setViewReset} />
+              {anchor && anchor !== today ? (
+                <button
+                  type="button"
+                  onClick={() => setAnchor(null)}
+                  className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground"
+                >
+                  Today
+                </button>
+              ) : null}
               {view !== "year" ? (
                 <button
                   type="button"
@@ -128,9 +248,6 @@ function HistoryLanding() {
                 </button>
               ) : null}
             </div>
-            <p className="font-mono text-[11px] text-muted-foreground" aria-hidden>
-              none · short · mid · deep
-            </p>
           </div>
 
           {heatmap.isPending ? (
