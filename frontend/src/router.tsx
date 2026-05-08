@@ -23,8 +23,8 @@ const HistoryView = lazy(() =>
 const Settings = lazy(() =>
   import("./features/settings/Settings").then((m) => ({ default: m.Settings })),
 );
-const SummariesPage = lazy(() =>
-  import("./features/summaries/SummariesPage").then((m) => ({ default: m.SummariesPage })),
+const SummaryPage = lazy(() =>
+  import("./features/summary/SummaryPage").then((m) => ({ default: m.SummaryPage })),
 );
 const SummaryDetail = lazy(() =>
   import("./features/summaries/SummaryDetail").then((m) => ({ default: m.SummaryDetail })),
@@ -95,11 +95,11 @@ export const router = createBrowserRouter([
       // redirect to /settings?tab=questions so nothing 404s.
       { path: "questions", element: <Navigate to="/settings?tab=questions" replace /> },
       { path: "settings", element: withSuspense(<Settings />, <SettingsSkeleton />) },
-      // IA rename: /summaries → /summary (single top-level surface).
-      // Step 5 of the rebuild will replace SummariesPage with the new
-      // Trends + ByQuestion tabbed surface; until then /summary keeps
-      // rendering the existing component so functionality isn't lost.
-      { path: "summary", element: withSuspense(<SummariesPage />, <SummariesPageSkeleton />) },
+      // IA rename: /summaries → /summary (Trends + ByQuestion tabs).
+      // Direct deep links to a specific summary id keep working via
+      // the legacy SummaryDetail component until the dashboard widgets
+      // (step 6) replace it.
+      { path: "summary", element: withSuspense(<SummaryPage />, <SummariesPageSkeleton />) },
       { path: "summary/:id", element: withSuspense(<SummaryDetail />, <SummaryDetailSkeleton />) },
       { path: "summaries", element: <Navigate to="/summary" replace /> },
       { path: "summaries/:id", element: <Navigate to="/summary" replace /> },

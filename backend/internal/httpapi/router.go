@@ -249,6 +249,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 				r.Get("/questions", questionsH.List)
 				r.Get("/entries", entriesH.ListByDate)
 				r.Get("/entries/dates", entriesH.ListDates)
+				r.Get("/questions/{id}/entries", entriesH.ListByQuestion)
 				r.Get("/history/heatmap", entriesH.Heatmap)
 
 				r.Get("/daily/inputs", dailyInputsH.Get)

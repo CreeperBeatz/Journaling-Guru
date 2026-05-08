@@ -122,6 +122,57 @@ func (s *EntryStore) ListByDate(ctx context.Context, userID string, localDate ti
 	return out, rows.Err()
 }
 
+// ListByQuestion returns every entry the user has logged against one
+// question, newest first. Used by the Summary → By Question timeline.
+// Returns ErrEntryQuestionMissing when the question id isn't the
+// caller's; this prevents enumeration via timing.
+func (s *EntryStore) ListByQuestion(
+	ctx context.Context,
+	userID, questionID string,
+	limit int,
+) ([]domain.JournalEntry, error) {
+	// Confirm the question is the caller's. Archived questions are
+	// allowed — historical entries against archived questions stay
+	// readable in the timeline.
+	var owned int
+	if err := s.DB.QueryRow(ctx,
+		`SELECT COUNT(*) FROM questions WHERE id = $1 AND user_id = $2`,
+		questionID, userID,
+	).Scan(&owned); err != nil {
+		return nil, err
+	}
+	if owned == 0 {
+		return nil, ErrEntryQuestionMissing
+	}
+
+	q := `SELECT ` + entryColumns + `
+	        FROM journal_entries
+	       WHERE user_id = $1 AND question_id = $2
+	    ORDER BY local_date DESC`
+	args := []any{userID, questionID}
+	if limit > 0 {
+		q += ` LIMIT $3`
+		args = append(args, limit)
+	}
+	rows, err := s.DB.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.JournalEntry, 0)
+	for rows.Next() {
+		var e domain.JournalEntry
+		if err := rows.Scan(
+			&e.ID, &e.UserID, &e.QuestionID, &e.LocalDate,
+			&e.Body, &e.Source, &e.ChatSessionID, &e.CreatedAt, &e.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // EntryDateSummary is what HistoryView lists: one row per calendar day the
 // user has any entries for, plus a count so the UI can show "3 of 5
 // answered" without a second query.

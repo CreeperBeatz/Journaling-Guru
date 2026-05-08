@@ -172,6 +172,42 @@ func (h *EntryHandler) Heatmap(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListByQuestion handles GET /api/questions/:id/entries. Used by the
+// Summary → By Question timeline; returns every answer the user has
+// logged against one question, newest first.
+func (h *EntryHandler) ListByQuestion(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "id required")
+		return
+	}
+	limit := 0
+	if s := r.URL.Query().Get("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 {
+			writeJSONError(w, http.StatusBadRequest, "invalid limit")
+			return
+		}
+		limit = n
+	}
+	rows, err := h.Entries.ListByQuestion(r.Context(), sess.UserID, id, limit)
+	if err != nil {
+		if errors.Is(err, store.ErrEntryQuestionMissing) {
+			writeJSONError(w, http.StatusNotFound, "question not found")
+			return
+		}
+		h.Logger.Error("list by question", "err", err, "user_id", sess.UserID)
+		writeJSONError(w, http.StatusInternalServerError, "list failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": rows})
+}
+
 type upsertEntryRequest struct {
 	QuestionID string `json:"question_id"`
 	Body       string `json:"body"`
