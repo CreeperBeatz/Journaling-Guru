@@ -33,9 +33,9 @@ import { BottomTabBar } from "./BottomTabBar";
 import { AppShellSkeleton } from "./AppShellSkeleton";
 
 function pageTitle(pathname: string): string {
-  if (pathname === "/") return "Today";
+  if (pathname === "/") return "Chats";
   if (pathname.startsWith("/history")) return "History";
-  if (pathname.startsWith("/summaries")) return "Reflections";
+  if (pathname.startsWith("/summary")) return "Summary";
   if (pathname.startsWith("/questions")) return "Questions";
   if (pathname.startsWith("/settings")) return "Settings";
   return "JournAI";
@@ -66,21 +66,21 @@ export function AppShell() {
       queryFn: async () => (await listEntryDates(180)).dates,
       staleTime: 60_000,
     });
-    // Stats panel powers /summaries; warm it so the page paints from
+    // Stats panel powers /summary; warm it so the page paints from
     // cache when the user navigates there. Cheap GET — one ~6KB JSON.
     qc.prefetchQuery({
       queryKey: STATS_KEY(90),
       queryFn: () => getStats(90),
       staleTime: 60_000,
     });
-    // Today's check-in lands above the questions on /today; prefetch
+    // Today's check-in lands above the questions on /; prefetch
     // alongside entries to keep the cold-start waterfall flat.
     qc.prefetchQuery({
       queryKey: dailyInputKey(),
       queryFn: () => getDailyInput(),
       staleTime: 30_000,
     });
-    // Phase 6a: chat is the default mode of /today. Prefetching the
+    // Phase 6a: chat is the default mode of /. Prefetching the
     // session envelope means the streamed greeting can start the moment
     // the route's chunk resolves, instead of after a round-trip.
     qc.prefetchQuery({

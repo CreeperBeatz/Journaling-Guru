@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
-import { LayoutGroup, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CardStack, type CardStackItem } from "@/components/ui/card-stack";
+import { PaperPage, PaperPageBlock } from "@/components/ui/paper-page";
 import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,8 +23,7 @@ import { minutesToHHMM } from "@/lib/dayStart";
 import { cn } from "@/lib/utils";
 
 import { type JournalEntry, type Question, listEntries } from "./api";
-import { useEntries, useQuestions, ENTRY_DATES_KEY, entriesKey } from "./hooks";
-import { QuestionAnswer } from "./QuestionAnswer";
+import { useEntries, useQuestions, useSaveEntry, ENTRY_DATES_KEY, entriesKey } from "./hooks";
 import { DailyInputs } from "@/features/daily/DailyInputs";
 import { useDailyInput, useSaveDailyInput } from "@/features/daily/hooks";
 
@@ -398,6 +399,7 @@ export function DailyEntry() {
           dailyInput={dailyInput.data?.input ?? null}
           onSaveDaily={(body) => saveDaily.mutate(body)}
           isSavingDaily={saveDaily.isPending}
+          dayLabel={dayLabel}
         />
       </TabsContent>
 
@@ -446,6 +448,14 @@ interface ManualBodyProps {
   dailyInput: Parameters<typeof DailyInputs>[0]["input"];
   onSaveDaily: Parameters<typeof DailyInputs>[0]["onSave"];
   isSavingDaily: boolean;
+  dayLabel: string;
+}
+
+// "answered" = an entry row exists. The save mutation deletes the row on
+// empty body, so a present entry implies non-empty content.
+function allAnswered(qs: Question[], byQ: Map<string, JournalEntry>): boolean {
+  if (qs.length === 0) return false;
+  return qs.every((q) => byQ.has(q.id));
 }
 
 function ManualBody({
@@ -454,7 +464,38 @@ function ManualBody({
   dailyInput,
   onSaveDaily,
   isSavingDaily,
+  dayLabel,
 }: ManualBodyProps) {
+  const save = useSaveEntry();
+  const reduceMotion = useReducedMotion();
+
+  // "complete" = either all questions answered OR the user reached the
+  // end of the stack (CardStack onComplete). The latter handles empty
+  // last submits which leave a question still un-rowed but the user
+  // wants to see the paper page.
+  const initialComplete = allAnswered(questions, entryByQuestion);
+  const [reachedEnd, setReachedEnd] = useState(initialComplete);
+  const phase: "filling" | "complete" =
+    initialComplete || reachedEnd ? "complete" : "filling";
+
+  const items: CardStackItem[] = questions.map((q) => ({
+    id: q.id,
+    prompt: q.prompt,
+    initialBody: entryByQuestion.get(q.id)?.body ?? "",
+  }));
+
+  const handleSubmit = (item: CardStackItem, body: string) => {
+    // Cards advance on submit — fire the save and don't await it. The
+    // optimistic mutation has already updated the cache by the time
+    // CardStack swaps cards. Empty bodies just delete the row.
+    save.mutate({ questionId: item.id, body });
+  };
+
+  // PaperPage edits: parent owns the mutation, blocks own dirty state.
+  const handleBlockSave = (questionId: string, body: string) => {
+    save.mutate({ questionId, body });
+  };
+
   return (
     <div className="space-y-6">
       <DailyInputs input={dailyInput} onSave={onSaveDaily} isSaving={isSavingDaily} />
@@ -473,15 +514,71 @@ function ManualBody({
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-5">
-          {questions.map((q) => (
-            <QuestionAnswer
-              key={q.id}
-              question={q}
-              entry={entryByQuestion.get(q.id)}
-            />
-          ))}
-        </div>
+        // Q7 morph: AnimatePresence keyed on `phase`. CardStack exits
+        // opacity+y; PaperPage enters opacity+y; serif date settles
+        // letter-spacing as a small celebratory micro-moment. Reduced-
+        // motion path is opacity-only.
+        <AnimatePresence mode="wait" initial={false}>
+          {phase === "filling" ? (
+            <motion.div
+              key="filling"
+              initial={false}
+              exit={
+                reduceMotion
+                  ? { opacity: 0, transition: { duration: 0.16 } }
+                  : { opacity: 0, y: -12, transition: { duration: 0.2, ease: [0.4, 0, 1, 1] } }
+              }
+            >
+              <CardStack
+                items={items}
+                onSubmit={handleSubmit}
+                onComplete={() => setReachedEnd(true)}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="complete"
+              initial={
+                reduceMotion
+                  ? { opacity: 0 }
+                  : { opacity: 0, y: 8 }
+              }
+              animate={
+                reduceMotion
+                  ? { opacity: 1, transition: { duration: 0.18 } }
+                  : { opacity: 1, y: 0, transition: { duration: 0.36, ease: [0.2, 0, 0, 1] } }
+              }
+            >
+              <PaperPage
+                eyebrow="Today"
+                title={
+                  <motion.span
+                    initial={
+                      reduceMotion ? false : { letterSpacing: "-0.01em" }
+                    }
+                    animate={
+                      reduceMotion ? false : { letterSpacing: "-0.03em" }
+                    }
+                    transition={{ duration: 0.36, ease: [0.2, 0, 0, 1] }}
+                    style={{ display: "inline-block" }}
+                  >
+                    {dayLabel}
+                  </motion.span>
+                }
+              >
+                {questions.map((q) => (
+                  <PaperPageBlock
+                    key={q.id}
+                    prompt={q.prompt}
+                    initialBody={entryByQuestion.get(q.id)?.body ?? ""}
+                    onSave={(body) => handleBlockSave(q.id, body)}
+                    saving={save.isPending}
+                  />
+                ))}
+              </PaperPage>
+            </motion.div>
+          )}
+        </AnimatePresence>
       )}
     </div>
   );

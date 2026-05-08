@@ -88,14 +88,21 @@ export const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: withSuspense(<DailyEntry />, <DailyEntrySkeleton />) },
+      { path: "today", element: <Navigate to="/" replace /> },
       { path: "history", element: withSuspense(<HistoryView />, <HistoryViewSkeleton />) },
       { path: "history/:date", element: withSuspense(<HistoryView />, <HistoryViewSkeleton />) },
       // Phase 4.1: Questions moved into Settings as a tab. Old bookmarks
       // redirect to /settings?tab=questions so nothing 404s.
       { path: "questions", element: <Navigate to="/settings?tab=questions" replace /> },
       { path: "settings", element: withSuspense(<Settings />, <SettingsSkeleton />) },
-      { path: "summaries", element: withSuspense(<SummariesPage />, <SummariesPageSkeleton />) },
-      { path: "summaries/:id", element: withSuspense(<SummaryDetail />, <SummaryDetailSkeleton />) },
+      // IA rename: /summaries → /summary (single top-level surface).
+      // Step 5 of the rebuild will replace SummariesPage with the new
+      // Trends + ByQuestion tabbed surface; until then /summary keeps
+      // rendering the existing component so functionality isn't lost.
+      { path: "summary", element: withSuspense(<SummariesPage />, <SummariesPageSkeleton />) },
+      { path: "summary/:id", element: withSuspense(<SummaryDetail />, <SummaryDetailSkeleton />) },
+      { path: "summaries", element: <Navigate to="/summary" replace /> },
+      { path: "summaries/:id", element: <Navigate to="/summary" replace /> },
     ],
   },
 ]);

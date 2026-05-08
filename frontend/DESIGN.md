@@ -42,6 +42,7 @@ Shadows derive their tint from a per-palette `--shadow-tint` var, so a single sh
 | `--accent-foreground` | `39 38% 98%` | |
 | `--destructive` | `0 65% 48%` | |
 | `--card` | `39 44% 98%` | Fresh sheet on the desk — brighter than page. |
+| `--paper-sheet` | `39 50% 99%` | Single-sheet surface (PaperPage) — one notch brighter than `--card`. |
 | `--popover` | `39 44% 98%` | |
 | `--success` | `152 50% 38%` | Moss. |
 | `--warning` | `36 84% 44%` | Amber. |
@@ -67,6 +68,7 @@ Hue 30° (warm) for neutrals — *not* the previous 240° cool slate. Foreground
 | `--accent-foreground` | `30 10% 8%` | |
 | `--destructive` | `0 70% 60%` | |
 | `--card` | `30 7% 9%` | |
+| `--paper-sheet` | `30 8% 11%` | Single-sheet surface (PaperPage), one notch brighter than `--card`. |
 | `--popover` | `30 7% 9%` | |
 | `--success` | `152 55% 56%` | |
 | `--warning` | `36 84% 62%` | |
@@ -101,6 +103,21 @@ CSS-var scale: `--radius-sm: 0.375rem`, `--radius-md: 0.5rem`, `--radius-lg: 0.7
 
 - **Light** = real drop shadows (paper has weight). `--shadow-sm`, `--shadow-md`, `--shadow-lg` use foreground hue at low alpha.
 - **Dark** = inset top-edge highlight + low ambient — sells elevation on OLED without a visible drop. Same `--shadow-*` token names per theme so `shadow-md` resolves correctly via Tailwind extend.
+
+### Heat (history grid)
+
+The history heatmap derives its ramp from `--primary` rather than declaring per-palette explicit steps — so the grid re-skins automatically on palette switch.
+
+| Token | Value | Intent |
+|---|---|---|
+| `--heat-empty` | `hsl(var(--muted))` | No entry on that day. |
+| `--heat-l1` | `hsl(var(--primary) / 0.18)` | Short streak (1–2 questions answered). |
+| `--heat-l2` | `hsl(var(--primary) / 0.40)` | Mid streak (3–5 answered or chat session ≥3 turns). |
+| `--heat-l3` | `hsl(var(--primary) / 0.65)` | Deep streak (full answers + chat). |
+| `--heat-l4` | `hsl(var(--primary) / 0.90)` | Deep streak (consecutive deep days). |
+| `--heat-mood` | `hsl(var(--accent))` | Inset 1px ring on cells where `daily_inputs.mood >= 4`. |
+
+Cells use `--heat-l*` for fill and `--heat-mood` for the optional mood-up ring. Don't hardcode level colors per palette.
 
 ## Typography
 
@@ -149,6 +166,8 @@ springTactile   = { type: 'spring', stiffness: 380, damping: 30 }
 - **Save-pill (StatusPill)** — `motion.span` with `layout` enabled; FLIPs width between states. Color cross-fades 200ms. Dot pulses on `dirty→saving`.
 - **Hover elevation** — `whileHover={{ y: -1, boxShadow: shadow-md }}`, 150ms. Gated behind `@media (hover: hover) and (pointer: fine)`.
 - **Reorder (questions list)** — `motion.li layoutId={q.id}` slides on cache reorder.
+- **CardStack advance** — `motion.div` with `layoutId="manual-card"`. Next-card enter from `x: 24, opacity: 0`; current exits `x: -24, opacity: 0`. `springTactile`. Swipe-back inverts direction. Reduced-motion: opacity-only crossfade, no x-translate.
+- **Q7 morph (filling → complete)** — `<AnimatePresence mode="wait">` keyed on `phase: 'filling' | 'complete'`. CardStack exits `opacity 1→0, y 0→-12` 200ms `easeExit`; PaperPage enters `opacity 0→1, y 8→0` 360ms `easeEmphasized`. The serif date headline animates `letter-spacing` from `-0.01em → -0.03em` over the same window — that's the visual "settle." Small celebratory micro-moment, **never** confetti or particles. Reduced-motion: opacity-only, no y, no letter-spacing animation.
 
 ### Reduced motion
 
@@ -160,8 +179,19 @@ Every variant goes through `useReducedMotion()` from `motion/react`. Falls back 
 
 ## App shell
 
-- **Desktop (md+)** — persistent left sidebar (12-16rem). Wordmark (Instrument Serif italic) at top; NavLinks with lucide icons (`PenLine`/`History`/`MessageSquare`/`Settings`); footer = email + theme toggle + sign-out. Scales for Phase 4-7 surfaces (one row per top-level route).
-- **Mobile (<md)** — bottom tab bar, fixed, `pb-[env(safe-area-inset-bottom)]`. 4 NavLinks (icon + tiny label). Active state via `motion.div` with `layoutId="bottom-nav-pill"`. Slim sticky top header (page title + theme toggle) collapses on scroll-down.
+The IA is **four top-level surfaces**: `chats · history · summary · settings`. There is no "Today" — the primary surface is a conversation, and today's chat is the default landing of `chats`. Past sessions are not surfaced as a list; they appear inline on `/history/:date` via `<HistoryChatTranscript>`.
+
+| Route | Label | Icon (lucide) |
+|---|---|---|
+| `/` | chats | `MessageSquare` |
+| `/history` | history | `CalendarDays` |
+| `/summary` | summary | `Sparkles` |
+| `/settings` | settings | `Settings` |
+
+Legacy redirects: `/today → /`, `/summaries → /summary`, `/summaries/:id → /summary`. Bookmarks must not 404.
+
+- **Desktop (md+)** — persistent left sidebar (12-16rem). Wordmark (Instrument Serif italic) at top; NavLinks with the four icons above; footer = email + theme toggle + sign-out. One row per top-level route.
+- **Mobile (<md)** — bottom tab bar, fixed, `pb-[env(safe-area-inset-bottom)]`. 4 NavLinks (icon + tiny label, in the order above). Active state via `motion.div` with `layoutId="bottom-nav-pill"`. Slim sticky top header (page title + theme toggle) collapses on scroll-down.
 - **Auth layout** — separate minimal layout `AuthLayout` for `/auth/login`, `/auth/verify`, `/health`. Centered `min-h-svh grid place-items-center`. Brand + theme toggle only.
 
 ## Interaction patterns
@@ -173,6 +203,104 @@ Every variant goes through `useReducedMotion()` from `motion/react`. Falls back 
   - **Swipe between days** — Today swipe-right → yesterday; History swipe-left/right → next/prev. iOS dead-zone: ignore drags starting in leftmost 20px.
   - **Pull-to-refresh** — Today + History list. Only attaches when `window.scrollY === 0`.
   - **Prefetch on drag-start** — fire `queryClient.prefetchQuery` for both adjacent dates so whichever direction commits is warm.
+
+## Manual flow (Phase 4 — cards → paper)
+
+The Manual mode of the chats surface is **not** a stack of textareas. It has two states with a single morph between them.
+
+### Filling state — `<CardStack>`
+
+One question per card, full focus. Lives in `src/components/ui/card-stack.tsx` (lifted out of `features/journal` because PaperPage reuses the question shape).
+
+- **Layout** — single card visible, `min-h-[60svh]`, content vertically centered. The card itself is a `<Card>` on `bg-card`, with the question prompt as `h2` serif, optional eyebrow `caption`, and a single input control sized to the question's `kind`:
+  - `short answer` → `<Input>`.
+  - `sentence` → `<Textarea rows={3}>`.
+  - `sentence + chips` → `<Textarea rows={3}>` with a chip row below.
+  - `word` → `<Input>` with `text-2xl serif`.
+  - `name + why` → two-row group (`<Input>` + `<Textarea>`).
+- **Advance on submit** — `↵` for short answers; `cmd/ctrl+↵` for textareas. The card commits its answer to the cache + POSTs *on advance*, not on blur. (PaperPage owns blur saves.)
+- **Back** — swipe-right (touch only, with the iOS leftmost-20px dead-zone) and a soft `<ChevronLeft>` button revisit the previous card. Already-answered cards prefill from cache.
+- **Progress** — a single thin progress bar `bg-accent` at the top of the card, width `= (index + 1) / total`. No "Question 3 of 7" copy — the bar carries it.
+- **Skip** — there is no skip. Empty submit advances with an empty answer; empty answers don't count toward the streak level (see History).
+
+### Completion state — `<PaperPage>`
+
+When the last card submits, the surface morphs to a single scrollable sheet with all answers visible and inline-editable. Same primitive is reused on `/history/:date` and the weekly letter under `/summary`.
+
+- **Surface** — `bg-paper-sheet` (one notch brighter than `--card`), generous left/right padding, max-width `prose` so reading length is comfortable. Single `shadow-md` lift in light mode; flat in dark.
+- **Header** — serif `h1` date, `text-accent` left margin-bar (4px), small `caption`-eyebrow ("Today" / "Tuesday, 2 weeks ago" / "A letter from your guru").
+- **Blocks** — for an entry-day variant, an array of `{ eyebrow: prompt, body: answer }`. Each block renders prompt as `caption` uppercase eyebrow + `body-prose` answer. Click-to-edit converts the body into the same input control the CardStack used. **Save-on-blur** here; same debounced-flag pattern as old `<DailyEntry>`.
+- **Variants**:
+  - `variant="entry"` — used by Today completion + History detail. Blocks are question/answer pairs, editable.
+  - `variant="letter"` — used by WeeklyLetter. Single prose body in `body-prose`, read-only, with jump-to-day chips at the foot.
+- **Save semantics** — entries: save-on-blur, optimistic, status pill in the page header. Letters: read-only.
+
+### Q7 transition
+
+See Motion → Q7 morph above. The transition fires when the user submits the last card and `useEntries(today).every(answered)` becomes true. If the user navigates back to Manual after the transition, they land on PaperPage directly (filling state is only entered when at least one question is unanswered).
+
+### Anti-patterns
+
+Don't:
+- Keep the old textarea-stack manual surface alongside CardStack/PaperPage. There's exactly one Manual flow.
+- Trigger the Q7 morph mid-stack (e.g., when only some questions are answered). It fires once, on the final card's submit.
+- Save on blur inside CardStack. Cards commit on advance — blur in the middle of typing should not POST.
+- Hardcode confetti, particle effects, or anything celebratory beyond the spec'd morph. The serif settling-in IS the moment.
+
+## History (Phase 4 — heatmap-first)
+
+`/history` opens to a **calendar heatmap**, not a date rail. The mental model is "where am I in the streak?" before "what did I write on day X?"
+
+### Page composition
+
+```
+<header>            → StreakBadge ("14 day streak") + view toggle (year · month · week)
+<HeatGrid>          → primary view, fills width
+<RecentEntries>     → list below the grid (date · mood words · "5/7 answered")
+```
+
+`/history/:date` renders `<PaperPage variant="entry">` for that day, plus `<HistoryDailyInputs>` (mood/emotions/notes) and `<HistoryChatTranscript>` below. Swipe-between-days from old `HistoryView` carries over: swipe-left/right → next/prev `local_date`, with prefetch on drag-start.
+
+### `<HeatGrid>`
+
+Lives in `src/components/ui/heat-grid.tsx`.
+
+- **Props** — `cells: { date: string; level: 0 | 1 | 2 | 3 | 4; moodUp: boolean }[]`, `view: 'year' | 'month' | 'week'`, `onSelect(date)`.
+- **Cell** — rounded-sm square, `bg-[hsl(var(--heat-l<level>))]` (or `--heat-empty` for level 0). When `moodUp`, add an inset 1px ring `ring-inset ring-1 ring-[hsl(var(--heat-mood))]`.
+- **Sizing** — year view: 53 cols × 7 rows, ~10px cells, gap 2px. Month view: ~5–6 rows × 7 cols, ~28px cells, gap 4px. Week view: 1 row × 7 cols, ~48px cells.
+- **Hover/focus** — `whileHover={{ scale: 1.06 }}` (gated behind `(hover: hover)`); focus ring on keyboard.
+- **Click** — `onSelect(date)` → `navigate('/history/' + date)`.
+- **A11y** — each cell `role="button"`, `aria-label="2026-04-12, 5 of 7 answered"`. The grid is a `role="grid"` with date columns/rows wired up.
+
+### Streak level rule
+
+Computed client-side from a single endpoint (`GET /api/history/heatmap?from&to`):
+
+| Level | Condition |
+|---|---|
+| 0 | No entries that day. |
+| 1 | 1–2 questions answered, no chat session. |
+| 2 | 3–5 answered **or** chat session with ≥3 turns. |
+| 3 | 6+ answered AND chat session with ≥3 turns. |
+| 4 | Level-3 day inside a run of ≥3 consecutive level-3 days. |
+| `moodUp` | `daily_inputs.mood >= 4`. Independent of level — applies as the inset ring. |
+
+Streak counter (`<StreakBadge>`) = consecutive days back from today with `level >= 1`. Renders in the page header, `font-mono tabular-nums`, accent number on `bg-accent/10` rounded-full pill.
+
+### Recent entries list
+
+A simple `<ul>` below the grid, latest 14 days that have `level >= 1`. Each row: `caption` date on the left, mood-word(s) from `daily_inputs.emotions` in `text-accent`, "5/7 answered" in `text-muted-foreground` on the right. Tapping → `/history/:date`. Stagger-in via the standard list pattern.
+
+### Removed
+
+The old "By question" view is **gone from History**. It moves to `/summary` → ByQuestion tab. Don't render `HistoryByQuestion` anywhere on `/history`.
+
+### Anti-patterns
+
+Don't:
+- Color cells with hardcoded hex or per-palette steps. The `--heat-l*` tokens derive from `--primary` so palette switches re-skin automatically.
+- Show absolute counts inside cells. The cell IS the count.
+- Render a date rail above the grid in year view — the grid carries the time axis.
 
 ## Performance
 
@@ -206,7 +334,7 @@ Don't:
 
 ## Chat (Phase 6a)
 
-The Today page (`/`) is a Tabs dispatcher with three modes — **Manual**, **Chat**, **Talk**. Chat is the default; Talk is a `disabled` tab with a `<Badge>soon</Badge>` reserved for Phase 6b voice.
+The chats surface (`/`) is a Tabs dispatcher with three modes — **Manual**, **Chat**, **Talk**. Chat is the default; Talk is a `disabled` tab with a `<Badge>soon</Badge>` reserved for Phase 6b voice. (The route was previously called "Today"; see App shell for the IA rename.) The Manual mode is specced separately in the **Manual flow** section above — it is not a stack of textareas.
 
 ### Mode resolution + persistence
 
@@ -258,7 +386,7 @@ Two affordances: **Get support** (primary, opens the resources page in a new tab
 
 The `/resources` page itself is static, public (no auth gate), hand-curated. Linked from CrisisCard and Settings.
 
-### Sticky Today bar (`DailyEntry`)
+### Sticky chats header (`DailyEntry` — file name preserved; surface is now `chats`)
 
 The date header + mode tabs + (in chat mode) coverage chips are wrapped in a sticky group at the top of `/today`. As soon as the user scrolls past its natural position the bar collapses from a multi-line display block (`Today` eyebrow, serif `<h1>`, `currentTime · timezone · day-start` line) to a thin one-line strip with the short date + tabs + status pill. Coverage chips stack as a second sticky strip directly below, switching to dots-only in the stuck state.
 
@@ -291,6 +419,107 @@ Don't:
 - Style the assistant bubble with the accent color — bubbles compete with the coverage chips and bias the eye toward "AI is doing the work." Card-warm + soft border keeps the assistant present but quiet.
 - Add `vaul` for the chat — see "Open / deferred" below.
 
+## Summary (Phase 4)
+
+A new top-level surface at `/summary`. Two sub-tabs, Radix `<Tabs>`:
+
+- **Trends** (default) — `WeeklyLetter` is the hero, dashboard tiles fold below.
+- **By Question** — vertical timeline per question, lifted from the deleted `HistoryByQuestion`.
+
+The decision was *both* letter and dashboard, with the letter as the hero — see Open / deferred.
+
+### Trends tab
+
+```
+<WeeklyLetter />                          ← PaperPage variant="letter", reads as a letter
+<Card collapsible defaultOpen={false}>    ← "Stats this week"
+  <MoodLine />
+  <WordCloud />
+  <StatTiles />                           ← streak · % answered · avg start time
+  <GuruNote />                            ← optional, when extraction surfaced something
+</Card>
+```
+
+#### `<WeeklyLetter>`
+
+Wraps `<PaperPage variant="letter">`. Cadence: **a new letter arrives each Sunday morning** in the user's timezone. The backend already runs weekly `summary_jobs`; the prompt yields a `letter_md` field rendered verbatim into the paper page.
+
+- **Framing** — opens with "Dear you," and signs off "— guru". Don't paraphrase or wrap with chrome.
+- **Jump-to-day chips** — at the foot of the letter, a horizontally-scrolling row of 7 day-pills (Mon–Sun of the period). Each pill links to `/history/:date`, `bg-muted hover:bg-accent/15`.
+- **Read aloud** — disabled `<Button>` with `<Badge>soon</Badge>` next to the title. Reuses the Phase 6b voice path when it lands.
+- **Empty state** — when no letter has been generated yet (new user, mid-week), show `<PaperPage>` with copy "Your first letter arrives Sunday morning." in `body-prose`. No spinner; this isn't loading, it's pending.
+
+#### Dashboard widgets
+
+- `<MoodLine>` — small SVG chart, mood (1–5) over the last N days. Single `stroke-[hsl(var(--primary))]` line, dotted baseline at the user's median. No axes labels — the shape carries it. Reuse `MoodSparkline.tsx` if it fits.
+- `<WordCloud>` — top N words from answers, sized by frequency. **One** word per cloud is `text-accent` — the LLM's "noticed" pick (carried in the summary payload). Other words use `text-foreground` at varying opacity by frequency. Lightweight client-only; no external lib.
+- `<StatTiles>` — three tiles: current streak, % of active questions answered (last 7 days), avg start time. `font-mono tabular-nums` for numbers; `caption` eyebrow above each.
+- `<GuruNote>` — see primitive below. Renders only when the summary payload includes a `noticed` narrative.
+
+### By Question tab
+
+Two-column layout (md+); single-column collapsible (sm).
+
+- **Left rail** — list of active questions. Each row: kind chip + truncated prompt. Selected row gets `bg-accent/10 text-accent` and a 4px left margin-bar.
+- **Right** — `<ByQuestionTimeline>` for the selected question. Vertical list, each item: `caption` date + answer body in `body-prose`, separated by a hairline `border-border/60`. Read-only. Tapping a date jumps to `/history/:date`.
+- **Empty state** — "No answers yet for this question."
+
+### `<GuruNote>` primitive
+
+Accent-bordered narrative callout, reused on Summary dashboard and on `/history/:date` when an entry has a guru note.
+
+```css
+border-l-4 border-accent pl-4 py-2 italic text-foreground/90 font-serif
+```
+
+`<blockquote>` semantics. No icon; the margin-bar and italic serif carry the affect. Don't put `<GuruNote>` inside another `<Card>` with a border — the borders fight.
+
+### Anti-patterns
+
+Don't:
+- Make the dashboard the default. The letter is the hero; dashboard is supporting.
+- Add per-day pills above the WordCloud — temporal navigation lives in History.
+- Show a spinner for the empty-state letter. Pending ≠ loading.
+- Overlay a second Card border on `<GuruNote>`. The margin-bar IS the boundary.
+
+## Settings
+
+Tabbed surface at `/settings`. Four tabs, in order: **General · Questions · Notifications · Account**. Tab state is in the URL (`?tab=questions`) so deep links and reload preserve position; `motion.li layoutId` slides indicators on switch.
+
+### General
+
+- **Appearance** — palette picker (paper / ember / forest / ocean / slate) + light/dark mode toggle. Wireframes don't show this but it stays. Swatches are the only place where palette colors are hardcoded in JS (in `src/lib/palette.ts`).
+- **Voice & Tone** — segmented chip `strict | warm | quiet`, default `warm`. Persisted to `users.guru_tone`. **Affects both chat AND summary letters** so the guru's voice is coherent across surfaces. The chosen tone is prepended as a `SystemCacheable` preamble on `CHAT_MODEL` and `SUMMARY_MODEL` so prompt-cache stays warm per-tone. Don't split this between General and Notifications — it's an identity setting, not a delivery setting.
+- **Day start** — existing `day_start_minutes` slider (default 360 = 6am). Helper copy explaining late-night cutoff.
+- **Timezone** — Radix Select with type-to-filter.
+
+### Questions
+
+The active question set drives both Manual flow (CardStack order) and By Question summary (rail order). Backed by `questions(user_id, position)` with a `DEFERRABLE INITIALLY DEFERRED` unique index so reorder transactions are atomic.
+
+- **Row layout** — drag handle (`<GripVertical>`) · prompt (`h3`) · kind chip · enabled `<Switch>`. Drag handle uses `motion.li layoutId={q.id}` for slide-on-reorder.
+- **Kind chip** — small `<Badge variant="secondary">`, one of: `short answer | sentence | sentence + chips | word | name + why`. Read-only on the row; tap-to-edit opens an inline `<Select>`.
+- **Paused state** — when `active = false`, row goes `opacity-60` with a dashed `border-l-2 border-dashed border-muted-foreground/40`. Paused questions don't appear in CardStack and don't count toward streak level.
+- **Add affordance** — bare `<Button variant="ghost">+ add question</Button>` at the bottom of the list. Opens an inline form (prompt + kind picker), not a Dialog.
+- **Helper copy** — beneath the list, in `text-muted-foreground caption`: *"fewer is better — most people stick at 5–7."* Show a soft warning at >9 questions.
+- **Reorder** — drag-and-drop on desktop; long-press-then-drag on touch. Optimistic; the deferred unique index lets the server accept the full reorder as one transaction.
+
+### Notifications
+
+- **Reminder time + days-of-week chips** — single row. The existing `<TimePicker>` on the left; a chip group `mon tue wed thu fri sat sun` on the right. Each chip toggles independently, `bg-accent/15 text-accent` when on, `bg-muted text-muted-foreground` when off. Backed by a new `users.reminder_dow` (text array or 7-bit integer; pick one in the migration). Default = all 7 days.
+- **Per-device push card** — see Push reminders section. Subscribe button is per-device by design; iOS gating intercepts the entire card pre-A2HS.
+
+### Account
+
+Email (read-only), sign-out, delete-account `<AlertDialog>`.
+
+### Anti-patterns
+
+Don't:
+- Put Voice & Tone under Notifications. It changes copy across chat and summary; placement under General communicates that scope.
+- Use a browser `confirm()` for delete-account. All destructive confirms go through `<AlertDialog>`.
+- Add a save button to Questions. Edits are optimistic; cache update is the feedback. Sticky save bar is reserved for tabs that batch changes (none currently).
+
 ## Push reminders (Phase 5)
 
 - The reminders surface lives in **Settings → Notifications** alongside the existing reminder-time picker. There is no separate "Notifications" page; subscription is configuration, not navigation.
@@ -301,7 +530,20 @@ Don't:
 
 ## Open / deferred
 
-- `vaul` Sheet — deferred. HistoryView's date rail works inline.
-- `cmdk` command palette — deferred until power-user flows demand it.
-- Decorative paper-grain SVG — skipped; cream + serif carry it.
-- React Compiler — deferred until React 19 upgrade (compiler targets 19+).
+### Decisions made (2026-05)
+
+- **Trends composition** — *both* WeeklyLetter and dashboard, with the letter as the hero. Dashboard folds below in a collapsible Card.
+- **Editing past entries** — full inline edit on `<PaperPage>`. **No** amendments log. Manual-wins merge in the chat extraction worker is the safety net.
+- **Q7 transition** — small celebratory micro-moment per Motion → Q7 morph. Never confetti.
+- **Chats top-level** — renamed Today; **single chat session per `local_date`** (matches the `chat_sessions (user_id, local_date)` UNIQUE constraint). Past sessions surface only via `<HistoryChatTranscript>` on `/history/:date`. No inbox / sidebar of past chats.
+- **Voice & Tone scope** — affects both chat system prompt and summary letters. Lives in General, not Notifications.
+
+### Still deferred
+
+- **Multi-session-per-day chats** — would require a schema change (drop the `local_date` UNIQUE, add an inbox surface). Revisit only if users request it.
+- **Amendments log** for past entries — out of scope for v1; manual-wins merge handles the only realistic clobber path.
+- **Read-aloud on the weekly letter** — disabled `<Badge>soon</Badge>` button. Will reuse the Phase 6b voice path (OpenAI Realtime ephemeral) when Talk lands.
+- **`vaul` Sheet** — deferred; sticky surfaces work inline.
+- **`cmdk` command palette** — deferred until power-user flows demand it.
+- **Decorative paper-grain SVG** — skipped; cream + serif carry it.
+- **React Compiler** — deferred until React 19 upgrade (compiler targets 19+).

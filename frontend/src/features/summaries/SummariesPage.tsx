@@ -85,7 +85,7 @@ function SummaryCard({ summary: s }: { summary: Summary }) {
   const meta = s.metadata ?? {};
   return (
     <Link
-      to={`/summaries/${s.id}`}
+      to={`/summary/${s.id}`}
       className={cn(
         "group block rounded-xl border border-border bg-card p-4 transition-colors",
         "hover:border-accent/40 hover:bg-secondary/30",

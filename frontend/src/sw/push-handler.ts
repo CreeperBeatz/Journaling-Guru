@@ -6,7 +6,7 @@
 // Scope:
 //   - precache + autoUpdate + runtime cache for safe-to-stale GETs
 //   - 'push'                   → showNotification with the reminder body
-//   - 'notificationclick'      → focus an existing tab or open '/today'
+//   - 'notificationclick'      → focus an existing tab or open '/'
 //   - 'pushsubscriptionchange' → re-subscribe + POST to /api/push/subscribe
 //
 // Keep this file minimal — every line ships to every client.
@@ -79,7 +79,7 @@ self.addEventListener("push", (event) => {
       // dev (we ship pwa-192.png from /public).
       icon: "/pwa-192.png",
       badge: "/pwa-192.png",
-      data: { url: payload.url ?? "/today" },
+      data: { url: payload.url ?? "/" },
     }),
   );
 });
@@ -87,7 +87,7 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl =
-    (event.notification.data as { url?: string } | undefined)?.url ?? "/today";
+    (event.notification.data as { url?: string } | undefined)?.url ?? "/";
 
   event.waitUntil(
     (async () => {

@@ -2,14 +2,20 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PaperPage, PaperPageBlock } from "@/components/ui/paper-page";
 import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { cn } from "@/lib/utils";
 
-import { listEntries } from "./api";
-import { HistoryEntryEditor } from "./HistoryEntryEditor";
-import { useEntries, useEntryDates, useQuestions, ENTRY_DATES_KEY, entriesKey } from "./hooks";
+import { listEntries, type JournalEntry } from "./api";
+import {
+  useEntries,
+  useEntryDates,
+  useQuestions,
+  useUpdateEntry,
+  ENTRY_DATES_KEY,
+  entriesKey,
+} from "./hooks";
 import { HistoryDailyInputs } from "./HistoryDailyInputs";
 import { HistoryChatTranscript } from "@/features/chat/HistoryChatTranscript";
 
@@ -131,34 +137,18 @@ export function HistoryView() {
                 <div className="space-y-6">
                   <HistoryDailyInputs localDate={detail.data!.local_date} />
                   <HistoryChatTranscript localDate={detail.data!.local_date} />
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="font-serif">
-                        {formatHumanDate(detail.data!.local_date)}
-                      </CardTitle>
-                      <CardDescription>
-                        {detail.data!.entries.length} answer
-                        {detail.data!.entries.length === 1 ? "" : "s"} · changes save
-                        on blur. Empty to delete.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-6">
-                      {detail.data!.entries.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">
-                          No entries on this date.
-                        </p>
-                      ) : (
-                        detail.data!.entries.map((e) => (
-                          <HistoryEntryEditor
-                            key={e.id}
-                            entry={e}
-                            prompt={promptByQuestion.get(e.question_id) ?? "Question"}
-                            localDate={detail.data!.local_date}
-                          />
-                        ))
-                      )}
-                    </CardContent>
-                  </Card>
+                  {detail.data!.entries.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No entries on this date.
+                    </p>
+                  ) : (
+                    <HistoryPaperPage
+                      localDate={detail.data!.local_date}
+                      entries={detail.data!.entries}
+                      promptByQuestion={promptByQuestion}
+                      dateLabel={formatHumanDate(detail.data!.local_date)}
+                    />
+                  )}
                 </div>
               )}
             </div>
@@ -166,5 +156,35 @@ export function HistoryView() {
         </div>
       </SwipeNavigator>
     </PullToRefresh>
+  );
+}
+
+interface HistoryPaperPageProps {
+  localDate: string;
+  entries: JournalEntry[];
+  promptByQuestion: Map<string, string>;
+  dateLabel: string;
+}
+
+function HistoryPaperPage({
+  localDate,
+  entries,
+  promptByQuestion,
+  dateLabel,
+}: HistoryPaperPageProps) {
+  const update = useUpdateEntry(localDate);
+  return (
+    <PaperPage eyebrow="Entry" title={dateLabel}>
+      {entries.map((e) => (
+        <PaperPageBlock
+          key={e.id}
+          prompt={promptByQuestion.get(e.question_id) ?? "Question"}
+          initialBody={e.body}
+          onSave={(body) => update.mutate({ id: e.id, body })}
+          saving={update.isPending}
+          placeholder="Empty to delete this entry."
+        />
+      ))}
+    </PaperPage>
   );
 }

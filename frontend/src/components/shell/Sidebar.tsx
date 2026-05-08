@@ -1,6 +1,11 @@
 import { NavLink } from "react-router-dom";
-import { History, PenLine, Settings as SettingsIcon, Sparkles } from "lucide-react";
-import { LogOut } from "lucide-react";
+import {
+  CalendarDays,
+  LogOut,
+  MessageSquare,
+  Settings as SettingsIcon,
+  Sparkles,
+} from "lucide-react";
 import { motion } from "motion/react";
 
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -8,12 +13,10 @@ import { cn } from "@/lib/utils";
 
 import type { User } from "@/features/auth/api";
 
-// Questions moved into Settings as a tab in Phase 4.1 — they're rarely
-// changed, so they don't need a top-level surface.
 const navItems = [
-  { to: "/", end: true, label: "Today", icon: PenLine },
-  { to: "/history", end: false, label: "History", icon: History },
-  { to: "/summaries", end: false, label: "Summaries", icon: Sparkles },
+  { to: "/", end: true, label: "Chats", icon: MessageSquare },
+  { to: "/history", end: false, label: "History", icon: CalendarDays },
+  { to: "/summary", end: false, label: "Summary", icon: Sparkles },
   { to: "/settings", end: false, label: "Settings", icon: SettingsIcon },
 ];
 
