@@ -58,7 +58,7 @@ export function RemindersCard() {
         <CardHeader>
           <CardTitle className="font-serif">Add to Home Screen first</CardTitle>
           <CardDescription>
-            On iOS, push notifications only work after you install JournAI as
+            On iOS, push notifications only work after you install Journaling Guru as
             an app. Tap the Share icon in Safari, then "Add to Home Screen,"
             and re-open from the Home Screen icon — the subscribe button will
             light up here.
@@ -68,7 +68,7 @@ export function RemindersCard() {
           <div className="flex items-start gap-2 rounded-md border border-border/70 bg-muted/40 p-3 text-sm">
             <Smartphone className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <p className="text-muted-foreground">
-              This is an Apple platform requirement, not a JournAI choice — the
+              This is an Apple platform requirement, not a Journaling Guru choice — the
               same gate applies to every PWA.
             </p>
           </div>
@@ -152,7 +152,7 @@ export function RemindersCard() {
           <p className="flex items-start gap-2 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-3.5 shrink-0" />
             iOS will ask once for permission. If you tap "Don't Allow," you'll
-            need to revoke it from Settings → Notifications → JournAI before
+            need to revoke it from Settings → Notifications → Journaling Guru before
             this works again.
           </p>
         ) : null}

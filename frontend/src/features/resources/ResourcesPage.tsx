@@ -16,7 +16,7 @@ export function ResourcesPage() {
         </p>
         <h1 className="font-serif text-h1">If you need someone to talk to</h1>
         <p className="text-sm text-muted-foreground">
-          JournAI isn&apos;t a substitute for a real person. If you&apos;re in crisis or
+          Journaling Guru isn&apos;t a substitute for a real person. If you&apos;re in crisis or
           need support, please reach out to one of the lines below — they exist
           for exactly this.
         </p>

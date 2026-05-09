@@ -37,7 +37,7 @@ type Config struct {
 	SMTPPort int    `env:"SMTP_PORT" envDefault:"1025"`
 	SMTPUser string `env:"SMTP_USER"`
 	SMTPPass string `env:"SMTP_PASS"`
-	SMTPFrom string `env:"SMTP_FROM" envDefault:"JournAI <hello@journai.local>"`
+	SMTPFrom string `env:"SMTP_FROM" envDefault:"Journaling Guru <hello@journai.local>"`
 
 	OpenRouterKey string `env:"OPENROUTER_API_KEY"`
 	// Three model tiers, all routed through OpenRouter. Chat is

@@ -223,7 +223,7 @@ func (h *PushHandler) Test(w http.ResponseWriter, r *http.Request) {
 
 	// Same payload shape the worker uses; SW handler renders both.
 	payload, err := json.Marshal(map[string]string{
-		"title": "JournAI test notification",
+		"title": "Journaling Guru test notification",
 		"body":  "If you're seeing this, push is working.",
 		"url":   strings.TrimRight(h.AppOrigin, "/") + "/today",
 		"tag":   "test-" + sess.UserID,

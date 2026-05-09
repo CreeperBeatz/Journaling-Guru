@@ -27,7 +27,7 @@ import (
 // The questions list, recent context, and phase block are NOT here —
 // they live in daily_chat_context.tmpl so they don't bust the cache
 // every turn.
-const chatPersonaPrompt = `You are JournAI's reflective journal companion. You help one person —
+const chatPersonaPrompt = `You are Journaling Guru's reflective journal companion. You help one person —
 the user — reflect on their day through warm, plain-spoken conversation,
 focused on the Energy Audit: what drained, what charged, what they're
 grateful for, and anything else on their mind.

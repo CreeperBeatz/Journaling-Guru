@@ -15,7 +15,7 @@ type MagicLinkData struct {
 	ExpiresLabel string // e.g. "15 minutes"
 }
 
-var magicLinkText = `Sign in to JournAI
+var magicLinkText = `Sign in to Journaling Guru
 
 Click the link below to finish signing in. The link is good for {{.ExpiresLabel}}
 and can only be used once.
@@ -29,7 +29,7 @@ unless you click the link.
 var magicLinkHTML = `<!doctype html>
 <html>
   <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111;">
-    <h2 style="margin-bottom: 0.5em;">Sign in to JournAI</h2>
+    <h2 style="margin-bottom: 0.5em;">Sign in to Journaling Guru</h2>
     <p>Click the button below to finish signing in. The link is good for
        <strong>{{.ExpiresLabel}}</strong> and can only be used once.</p>
     <p>
@@ -71,7 +71,7 @@ func BuildMagicLinkMessage(to, publicBaseURL, rawToken, expiresLabel string) (Me
 	}
 	return Message{
 		To:      to,
-		Subject: "Your JournAI sign-in link",
+		Subject: "Your Journaling Guru sign-in link",
 		Text:    textBuf.String(),
 		HTML:    htmlBuf.String(),
 	}, nil

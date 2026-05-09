@@ -10,7 +10,7 @@ export function AuthLayout() {
     <div className="flex min-h-svh flex-col bg-background text-foreground">
       <header className="flex items-center justify-between px-6 pt-[max(env(safe-area-inset-top),1rem)] pb-2">
         <Link to="/" className="font-serif italic text-xl tracking-tight">
-          JournAI
+          Journaling Guru
         </Link>
         <ThemeToggle />
       </header>

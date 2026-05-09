@@ -87,7 +87,7 @@ func main() {
 	fmt.Printf("transcript: %d rows (incl. tool/system)\n", len(transcript))
 	fmt.Println()
 
-	client := llm.NewOpenRouter(apiKey, model, "https://journai.local", "JournAI smoke-classify")
+	client := llm.NewOpenRouter(apiKey, model, "https://journai.local", "Journaling Guru smoke-classify")
 	fmt.Printf("classify model: %s\n\n", model)
 
 	t0 := time.Now()

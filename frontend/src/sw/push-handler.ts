@@ -67,7 +67,7 @@ function parsePush(event: PushEvent): PushPayload {
 
 self.addEventListener("push", (event) => {
   const payload = parsePush(event);
-  const title = payload.title ?? "JournAI";
+  const title = payload.title ?? "Journaling Guru";
   const body = payload.body ?? "Time to reflect.";
   const tag = payload.tag ?? "reminder";
 

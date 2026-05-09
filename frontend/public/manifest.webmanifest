@@ -1,6 +1,6 @@
 {
-  "name": "JournAI",
-  "short_name": "JournAI",
+  "name": "Journaling Guru",
+  "short_name": "Journaling Guru",
   "description": "Your daily journal — written or spoken — with AI reflections.",
   "start_url": "/",
   "scope": "/",

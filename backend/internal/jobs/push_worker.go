@@ -104,7 +104,7 @@ func (w *PushWorker) Work(ctx context.Context, rj *river.Job[ReminderArgs]) erro
 
 	payload, err := json.Marshal(PushPayload{
 		Title: "Time to reflect",
-		Body:  "Open JournAI to write today's entry.",
+		Body:  "Open Journaling Guru to write today's entry.",
 		URL:   strings.TrimRight(w.AppOrigin, "/") + "/today",
 		Tag:   "reminder-" + job.ID,
 	})

@@ -70,7 +70,7 @@ export function MagicLinkRequest() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Sign in to JournAI</CardTitle>
+        <CardTitle>Sign in to Journaling Guru</CardTitle>
         <CardDescription>
           Enter your email and we'll send you a one-time link.
           No passwords.
