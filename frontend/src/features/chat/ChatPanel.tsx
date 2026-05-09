@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -224,9 +224,19 @@ export function ChatPanel() {
     openerFiredForRef.current = null;
     resetChat.mutate(session.id);
   };
+  // wrapUpClicked drives the WrapUpButton's spinner so it only spins
+  // when the user actually pressed it — not on every assistant reply.
+  // Cleared once the wrap-up turn finishes streaming.
+  const [wrapUpClicked, setWrapUpClicked] = useState(false);
   const handleWrapUp = () => {
+    setWrapUpClicked(true);
     void stream.triggerWrapUp();
   };
+  useEffect(() => {
+    if (wrapUpClicked && stream.state.status !== "streaming") {
+      setWrapUpClicked(false);
+    }
+  }, [wrapUpClicked, stream.state.status]);
 
   const userTurnCount = visibleMsgs.filter((m) => m.role === "user").length;
   const hasUserTurns = userTurnCount > 0;
@@ -310,7 +320,7 @@ export function ChatPanel() {
                   bottomRight={
                     showWrapUp ? (
                       <WrapUpButton
-                        pending={composerDisabled}
+                        pending={wrapUpClicked}
                         disabled={composerDisabled}
                         onWrapUp={handleWrapUp}
                       />
