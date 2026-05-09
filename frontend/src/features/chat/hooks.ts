@@ -423,8 +423,14 @@ export function lastAssistantMessage(messages: ChatMessage[]): ChatMessage | und
 
 export function visibleMessages(messages: ChatMessage[]): ChatMessage[] {
   // Hide tool + system_event rows from the bubble list — they're
-  // surfaced as chips / banners elsewhere.
-  return messages.filter((m) => m.role === "user" || m.role === "assistant");
+  // surfaced as chips / banners elsewhere. Also drop assistant rows
+  // with empty content (a pure tool-call turn — propose_wrap_up
+  // without text). Those would render as blank bubbles otherwise.
+  return messages.filter((m) => {
+    if (m.role !== "user" && m.role !== "assistant") return false;
+    if (m.role === "assistant" && m.content.trim() === "") return false;
+    return true;
+  });
 }
 
 // Re-exports for ergonomic imports from components.
