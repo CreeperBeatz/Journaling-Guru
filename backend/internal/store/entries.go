@@ -174,22 +174,54 @@ func (s *EntryStore) ListByQuestion(
 }
 
 // EntryDateSummary is what HistoryView lists: one row per calendar day the
-// user has any entries for, plus a count so the UI can show "3 of 5
-// answered" without a second query.
+// user has any signal for (journal entry, daily input, or chat session),
+// plus a few counts so the UI can render a useful one-liner without a
+// second query.
 type EntryDateSummary struct {
 	LocalDate  string `json:"local_date"`
 	EntryCount int    `json:"entry_count"`
+	ChatTurns  int    `json:"chat_turns"`
+	HasInputs  bool   `json:"has_inputs"`
 }
 
-// ListDates returns all distinct local_dates with at least one entry,
-// newest first. Bounded by `limit`; pass 0 for "no cap".
+// ListDates returns all distinct local_dates with any signal — a journal
+// entry, a daily_inputs row (mood/notes), or a chat session — newest
+// first. Matches the heatmap's "had any activity" semantics so the
+// Recent entries list doesn't go empty for chat- or mood-only days.
+// Bounded by `limit`; pass 0 for "no cap".
 func (s *EntryStore) ListDates(ctx context.Context, userID string, limit int) ([]EntryDateSummary, error) {
-	q := `SELECT to_char(local_date, 'YYYY-MM-DD') AS local_date,
-	             COUNT(*)::int
-	        FROM journal_entries
-	       WHERE user_id = $1
-	    GROUP BY local_date
-	    ORDER BY local_date DESC`
+	q := `
+WITH dates AS (
+  SELECT DISTINCT local_date AS d FROM journal_entries WHERE user_id = $1
+  UNION
+  SELECT DISTINCT local_date AS d FROM daily_inputs    WHERE user_id = $1
+  UNION
+  SELECT DISTINCT local_date AS d FROM chat_sessions   WHERE user_id = $1
+),
+entries AS (
+  SELECT local_date AS d, COUNT(*)::int AS n
+    FROM journal_entries WHERE user_id = $1 GROUP BY local_date
+),
+turns AS (
+  SELECT s.local_date AS d,
+         COUNT(m.id) FILTER (WHERE m.role IN ('user','assistant'))::int AS n
+    FROM chat_sessions s
+    LEFT JOIN chat_messages m ON m.session_id = s.id
+   WHERE s.user_id = $1
+   GROUP BY s.local_date
+),
+inputs AS (
+  SELECT DISTINCT local_date AS d FROM daily_inputs WHERE user_id = $1
+)
+SELECT to_char(d.d, 'YYYY-MM-DD'),
+       COALESCE(e.n, 0),
+       COALESCE(t.n, 0),
+       (i.d IS NOT NULL)
+  FROM dates d
+  LEFT JOIN entries e ON e.d = d.d
+  LEFT JOIN turns   t ON t.d = d.d
+  LEFT JOIN inputs  i ON i.d = d.d
+ ORDER BY d.d DESC`
 	args := []any{userID}
 	if limit > 0 {
 		q += ` LIMIT $2`
@@ -203,7 +235,7 @@ func (s *EntryStore) ListDates(ctx context.Context, userID string, limit int) ([
 	out := make([]EntryDateSummary, 0)
 	for rows.Next() {
 		var d EntryDateSummary
-		if err := rows.Scan(&d.LocalDate, &d.EntryCount); err != nil {
+		if err := rows.Scan(&d.LocalDate, &d.EntryCount, &d.ChatTurns, &d.HasInputs); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

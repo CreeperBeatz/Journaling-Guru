@@ -14,22 +14,19 @@ export interface HeatCellData {
   moodUp: boolean;
 }
 
-export type HeatView = "year" | "month" | "week";
+export type HeatView = "year" | "month";
 
 export interface HeatGridProps {
   cells: HeatCellData[];
   view?: HeatView;
   /** Anchor date (default: today). Year view shows the 12 months
    *  ending at the anchor's month; month view shows the anchor's
-   *  month; week view shows the week containing the anchor. */
+   *  month. */
   anchor?: string;
-  /** Click on a day cell — only fires in week view. Year/month views
-   *  drill down via `onMonthClick` / `onWeekClick` instead. */
+  /** Click on a day cell in month view → open that day. */
   onSelect?: (date: string) => void;
   /** Click on a month tile in year view → drill into month view. */
   onMonthClick?: (anchorISO: string) => void;
-  /** Click on a week row in month view → drill into week view. */
-  onWeekClick?: (anchorISO: string) => void;
   className?: string;
 }
 
@@ -58,13 +55,6 @@ function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
-function startOfWeek(d: Date): Date {
-  const dow = d.getUTCDay();
-  const x = new Date(d);
-  x.setUTCDate(x.getUTCDate() - dow);
-  return x;
-}
-
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
 export function HeatGrid({
@@ -73,7 +63,6 @@ export function HeatGrid({
   anchor,
   onSelect,
   onMonthClick,
-  onWeekClick,
   className,
 }: HeatGridProps) {
   const anchorDate = useMemo(
@@ -88,28 +77,15 @@ export function HeatGrid({
     return m;
   }, [cells]);
 
-  if (view === "week") {
-    const start = startOfWeek(anchorDate);
-    return (
-      <WeekRow
-        start={start}
-        byDate={byDate}
-        todayISO={todayISO}
-        onSelect={onSelect}
-        className={className}
-      />
-    );
-  }
-
   if (view === "month") {
     return (
-      <div className={cn("flex justify-center", className)}>
+      <div className={cn("mx-auto w-full max-w-2xl px-2 sm:px-8 md:px-12", className)}>
         <MonthGrid
           year={anchorDate.getUTCFullYear()}
           month={anchorDate.getUTCMonth()}
           byDate={byDate}
           todayISO={todayISO}
-          onWeekClick={onWeekClick}
+          onSelect={onSelect}
           size="lg"
           showWeekdays
         />
@@ -157,8 +133,8 @@ interface MonthGridProps {
   todayISO: string;
   /** Year-view variant: clicking the tile drills into month view. */
   onMonthClick?: (anchorISO: string) => void;
-  /** Month-view variant: clicking a week row drills into week view. */
-  onWeekClick?: (anchorISO: string) => void;
+  /** Month-view variant: clicking a day cell opens that day. */
+  onSelect?: (iso: string) => void;
   size: "sm" | "lg";
   showWeekdays?: boolean;
 }
@@ -169,7 +145,7 @@ function MonthGrid({
   byDate,
   todayISO,
   onMonthClick,
-  onWeekClick,
+  onSelect,
   size,
   showWeekdays,
 }: MonthGridProps) {
@@ -182,8 +158,13 @@ function MonthGrid({
 
   const totalDays = daysInMonth(year, month);
   const firstDow = startOfMonth(year, month).getUTCDay(); // 0=Sun
+  // Month view (lg) goes fluid: cells fill their grid column and stay
+  // square via aspect-ratio so the calendar grows with the container.
+  // Year-tile (sm) keeps its compact fixed-pixel grid.
   const cellSize =
-    size === "lg" ? "h-10 w-10 rounded-md" : "h-5 w-5 rounded-[3px]";
+    size === "lg"
+      ? "aspect-square w-full rounded-md"
+      : "h-5 w-5 rounded-[3px]";
   const gapClass = size === "lg" ? "gap-1.5" : "gap-[3px]";
   const labelClass =
     size === "lg" ? "text-sm font-medium" : "text-xs font-medium";
@@ -215,7 +196,7 @@ function MonthGrid({
   const cells = (
     <>
       {showWeekdays ? (
-        <div className={cn("mb-1 grid grid-cols-7", gapClass)}>
+        <div className={cn("mb-1 grid w-full grid-cols-7", gapClass)}>
           {WEEKDAYS.map((w, i) => (
             <span
               key={`${w}-${i}`}
@@ -231,68 +212,65 @@ function MonthGrid({
           ))}
         </div>
       ) : null}
-      <div className="flex flex-col" style={{ gap: size === "lg" ? "0.375rem" : "3px" }}>
-        {weeks.map((week) => {
-          const weekAnchor = week.cells.find((c) => c.iso)?.iso ?? null;
-          const interactiveRow = !!onWeekClick && !!weekAnchor;
-          const RowTag: keyof JSX.IntrinsicElements = interactiveRow ? "button" : "div";
-          return (
-            <RowTag
-              key={week.id}
-              type={interactiveRow ? "button" : undefined}
-              onClick={
-                interactiveRow ? () => onWeekClick?.(weekAnchor!) : undefined
+      <div className="flex w-full flex-col" style={{ gap: size === "lg" ? "0.375rem" : "3px" }}>
+        {weeks.map((week) => (
+          <div key={week.id} className={cn("grid w-full grid-cols-7", gapClass)}>
+            {week.cells.map((c, idx) => {
+              if (!c.iso) {
+                return <span key={`e-${week.id}-${idx}`} className={cellSize} aria-hidden />;
               }
-              className={cn(
-                "grid grid-cols-7",
-                gapClass,
-                interactiveRow &&
-                  "rounded-md transition-colors hover:bg-secondary/40 -mx-1 px-1 py-0.5 outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              )}
-              role={interactiveRow ? "button" : undefined}
-              aria-label={interactiveRow ? `Week of ${weekAnchor}` : undefined}
-            >
-              {week.cells.map((c, idx) => {
-                if (!c.iso) {
-                  return <span key={`e-${week.id}-${idx}`} className={cellSize} aria-hidden />;
-                }
-                const data = byDate.get(c.iso);
-                const level: HeatLevel = data?.level ?? 0;
-                const moodUp = data?.moodUp ?? false;
-                const isToday = c.iso === todayISO;
-                const isFuture = c.iso > todayISO;
+              const data = byDate.get(c.iso);
+              const level: HeatLevel = data?.level ?? 0;
+              const moodUp = data?.moodUp ?? false;
+              const isToday = c.iso === todayISO;
+              const isFuture = c.iso > todayISO;
+              const interactive = !!onSelect && !isFuture;
+              const cellClass = cn(
+                cellSize,
+                "relative flex items-center justify-center font-mono tabular-nums",
+                size === "lg" ? "text-sm" : "text-[10px]",
+                "transition-colors",
+                isFuture && "opacity-30",
+                isToday && "ring-1 ring-foreground/40",
+                interactive && "hover:ring-2 hover:ring-ring outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                level >= 1
+                  ? "text-foreground/80"
+                  : "text-muted-foreground/60",
+              );
+              const styleProps = {
+                backgroundColor: LEVEL_VAR[level],
+                boxShadow: moodUp ? "inset 0 0 0 1px var(--heat-mood)" : undefined,
+              } as const;
+              if (interactive) {
                 return (
-                  <span
+                  <button
                     key={c.iso}
-                    role="gridcell"
+                    type="button"
+                    onClick={() => onSelect?.(c.iso!)}
+                    className={cellClass}
+                    style={styleProps}
                     title={cellLabel(c.iso, data)}
                     aria-label={cellLabel(c.iso, data)}
-                    className={cn(
-                      cellSize,
-                      "relative flex items-center justify-center font-mono text-[10px] tabular-nums",
-                      "transition-colors",
-                      isFuture && "opacity-30",
-                      isToday && "ring-1 ring-foreground/40",
-                      level >= 3
-                        ? "text-primary-foreground/90"
-                        : level >= 1
-                          ? "text-foreground/80"
-                          : "text-muted-foreground/60",
-                    )}
-                    style={{
-                      backgroundColor: LEVEL_VAR[level],
-                      boxShadow: moodUp
-                        ? "inset 0 0 0 1px var(--heat-mood)"
-                        : undefined,
-                    }}
                   >
                     {size === "lg" ? c.day : null}
-                  </span>
+                  </button>
                 );
-              })}
-            </RowTag>
-          );
-        })}
+              }
+              return (
+                <span
+                  key={c.iso}
+                  role="gridcell"
+                  title={cellLabel(c.iso, data)}
+                  aria-label={cellLabel(c.iso, data)}
+                  className={cellClass}
+                  style={styleProps}
+                >
+                  {size === "lg" ? c.day : null}
+                </span>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </>
   );
@@ -320,85 +298,14 @@ function MonthGrid({
     );
   }
 
+  // lg variant is the standalone month view — its label already lives in
+  // the prev/next nav above, so we don't repeat it here.
   return (
-    <div className="flex flex-col items-center">
-      <p className={cn("mb-2 self-start", labelClass)}>{monthLabel}</p>
+    <div className="flex w-full flex-col items-stretch">
+      {size === "lg" ? null : (
+        <p className={cn("mb-2 self-start", labelClass)}>{monthLabel}</p>
+      )}
       {cells}
-    </div>
-  );
-}
-
-function WeekRow({
-  start,
-  byDate,
-  todayISO,
-  onSelect,
-  className,
-}: {
-  start: Date;
-  byDate: Map<string, HeatCellData>;
-  todayISO: string;
-  onSelect?: (date: string) => void;
-  className?: string;
-}) {
-  const reduceMotion = useReducedMotion();
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(start);
-    d.setUTCDate(d.getUTCDate() + i);
-    return d;
-  });
-  return (
-    <div className={cn("flex w-full justify-between gap-2", className)} role="grid">
-      {days.map((d) => {
-        const iso = formatISO(d);
-        const data = byDate.get(iso);
-        const level: HeatLevel = data?.level ?? 0;
-        const moodUp = data?.moodUp ?? false;
-        const isToday = iso === todayISO;
-        const isFuture = iso > todayISO;
-        const interactive = !isFuture && !!onSelect;
-        const dow = WEEKDAYS[d.getUTCDay()];
-        const day = d.getUTCDate();
-        return (
-          <div key={iso} className="flex flex-1 flex-col items-center gap-1.5">
-            <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-              {dow}
-            </span>
-            <motion.button
-              type="button"
-              role="gridcell"
-              disabled={!interactive}
-              onClick={() => interactive && onSelect?.(iso)}
-              whileHover={
-                interactive && !reduceMotion ? { scale: 1.05 } : undefined
-              }
-              transition={{ type: "spring", stiffness: 400, damping: 22 }}
-              className={cn(
-                "h-12 w-full max-w-14 rounded-lg",
-                "relative flex items-center justify-center font-mono text-base tabular-nums",
-                "outline-none transition-colors",
-                "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ring-offset-background",
-                !interactive && "cursor-default",
-                isFuture && "opacity-30",
-                isToday && "ring-1 ring-foreground/40",
-                level === 1
-                  ? "text-primary-foreground/90"
-                  : "text-muted-foreground/60",
-              )}
-              style={{
-                backgroundColor: LEVEL_VAR[level],
-                boxShadow: moodUp
-                  ? "inset 0 0 0 1px var(--heat-mood)"
-                  : undefined,
-              }}
-              aria-label={cellLabel(iso, data)}
-              title={cellLabel(iso, data)}
-            >
-              {day}
-            </motion.button>
-          </div>
-        );
-      })}
     </div>
   );
 }

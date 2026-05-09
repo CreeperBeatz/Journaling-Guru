@@ -14,7 +14,9 @@ import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { cn } from "@/lib/utils";
 
-import { listEntries, type JournalEntry } from "./api";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+import { listEntries, type DateSummary, type JournalEntry } from "./api";
 import {
   useEntries,
   useEntryDates,
@@ -43,6 +45,23 @@ function formatHumanDate(yyyymmdd: string): string {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// One-liner shown next to each Recent entries row. Falls back to chat /
+// daily-input signal when there are no journal entries — otherwise days
+// with only a mood log or chat would render an awkward "0 answers".
+function summarizeDay(d: DateSummary): string {
+  const parts: string[] = [];
+  if (d.entry_count > 0) {
+    parts.push(`${d.entry_count} answer${d.entry_count === 1 ? "" : "s"}`);
+  }
+  if (d.chat_turns > 0) {
+    parts.push(`${d.chat_turns} chat`);
+  }
+  if (d.has_inputs && parts.length === 0) {
+    parts.push("notes");
+  }
+  return parts.length ? parts.join(" · ") : "—";
+}
+
 export function HistoryView() {
   const { date: rawDate } = useParams();
   const navigate = useNavigate();
@@ -61,19 +80,15 @@ export function HistoryView() {
 const RECENT_PAGE_STEP = 14;
 
 // Shift `iso` (YYYY-MM-DD) by ±1 unit of `view`. Year = ±12 months,
-// month = ±1 month, week = ±7 days. Anchor stays clamped to date 1-28
-// for month math so we don't bounce off short months (e.g. Jan 31 → Feb).
+// month = ±1 month. Month arithmetic happens on the 1st so we don't
+// bounce off short months (e.g. Jan 31 → Feb).
 function shiftAnchor(view: HeatView, iso: string, dir: -1 | 1): string {
   const [y, m, d] = iso.split("-").map(Number);
   const date = new Date(Date.UTC(y, m - 1, d));
-  if (view === "week") {
-    date.setUTCDate(date.getUTCDate() + dir * 7);
-  } else if (view === "month") {
-    // Month arithmetic on the 1st avoids the Jan 31 → Mar 3 trap.
-    date.setUTCDate(1);
+  date.setUTCDate(1);
+  if (view === "month") {
     date.setUTCMonth(date.getUTCMonth() + dir);
   } else {
-    date.setUTCDate(1);
     date.setUTCMonth(date.getUTCMonth() + dir * 12);
   }
   const ny = date.getUTCFullYear();
@@ -88,22 +103,11 @@ function anchorLabel(view: HeatView, iso: string): string {
   if (view === "year") {
     return `${date.getUTCFullYear()}`;
   }
-  if (view === "month") {
-    return date.toLocaleDateString(undefined, {
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    });
-  }
-  // week — show start..end of week range. Sunday-aligned.
-  const dow = date.getUTCDay();
-  const start = new Date(date);
-  start.setUTCDate(start.getUTCDate() - dow);
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 6);
-  const fmt = (x: Date) =>
-    x.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
-  return `${fmt(start)} – ${fmt(end)}`;
+  return date.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 
@@ -154,55 +158,49 @@ function HistoryLanding() {
         </header>
 
         <section className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <ViewToggle value={view} onChange={setViewReset} />
-          </div>
+          <ViewToggle value={view} onChange={setViewReset} />
 
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-1">
+          <div className="relative flex items-center justify-center gap-1">
+            <button
+              type="button"
+              onClick={() =>
+                setAnchor((a) => shiftAnchor(view, a ?? today, -1))
+              }
+              aria-label="Previous"
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md",
+                "text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              )}
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </button>
+            <span className="min-w-[10rem] text-center font-mono text-xs uppercase tracking-[0.08em] text-muted-foreground">
+              {anchorLabel(view, anchor ?? today)}
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setAnchor((a) => shiftAnchor(view, a ?? today, 1))
+              }
+              aria-label="Next"
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-md",
+                "text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              )}
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </button>
+            {anchor && anchor !== today ? (
               <button
                 type="button"
-                onClick={() =>
-                  setAnchor((a) => shiftAnchor(view, a ?? today, -1))
-                }
-                aria-label="Previous"
-                className={cn(
-                  "inline-flex h-8 w-8 items-center justify-center rounded-md",
-                  "text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                )}
+                onClick={() => setAnchor(null)}
+                className="absolute right-0 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground"
               >
-                <ChevronLeft className="h-4 w-4" aria-hidden />
+                Today
               </button>
-              <span className="min-w-[10rem] text-center font-mono text-xs uppercase tracking-[0.08em] text-muted-foreground">
-                {anchorLabel(view, anchor ?? today)}
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  setAnchor((a) => shiftAnchor(view, a ?? today, 1))
-                }
-                aria-label="Next"
-                className={cn(
-                  "inline-flex h-8 w-8 items-center justify-center rounded-md",
-                  "text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                )}
-              >
-                <ChevronRight className="h-4 w-4" aria-hidden />
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              {anchor && anchor !== today ? (
-                <button
-                  type="button"
-                  onClick={() => setAnchor(null)}
-                  className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground"
-                >
-                  Today
-                </button>
-              ) : null}
-            </div>
+            ) : null}
           </div>
 
           {heatmap.isPending ? (
@@ -217,10 +215,6 @@ function HistoryLanding() {
               onMonthClick={(iso) => {
                 setAnchor(iso);
                 setView("month");
-              }}
-              onWeekClick={(iso) => {
-                setAnchor(iso);
-                setView("week");
               }}
               onSelect={(iso) => {
                 qc.prefetchQuery({
@@ -254,7 +248,7 @@ function HistoryLanding() {
                     >
                       <span className="font-medium">{formatHumanDate(d.local_date)}</span>
                       <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                        {d.entry_count} answer{d.entry_count === 1 ? "" : "s"}
+                        {summarizeDay(d)}
                       </span>
                     </Link>
                   </li>
@@ -293,30 +287,13 @@ function ViewToggle({
   value: HeatView;
   onChange: (v: HeatView) => void;
 }) {
-  const opts: { v: HeatView; label: string }[] = [
-    { v: "year", label: "Year" },
-    { v: "month", label: "Month" },
-    { v: "week", label: "Week" },
-  ];
   return (
-    <div className="inline-flex rounded-md border border-border bg-card p-0.5 text-xs">
-      {opts.map((o) => (
-        <button
-          key={o.v}
-          type="button"
-          onClick={() => onChange(o.v)}
-          className={cn(
-            "rounded px-3 py-1 transition-colors",
-            value === o.v
-              ? "bg-secondary text-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-          aria-pressed={value === o.v}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
+    <Tabs value={value} onValueChange={(v) => onChange(v as HeatView)}>
+      <TabsList className="grid w-full grid-cols-2">
+        <TabsTrigger value="year">Year</TabsTrigger>
+        <TabsTrigger value="month">Month</TabsTrigger>
+      </TabsList>
+    </Tabs>
   );
 }
 

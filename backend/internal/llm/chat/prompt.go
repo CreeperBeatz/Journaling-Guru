@@ -129,8 +129,16 @@ schema is exactly:
   to-back meetings", "poor sleep", "social media"). ≤ 5 items. Empty
   array if drained_text is empty or the drainer is too one-off to be
   a recurring tag (e.g. "the dentist on Tuesday" — not a tag).
-- charged_tag_proposals: same shape, for chargers (e.g. "morning walk",
-  "deep work", "exercise"). ≤ 5 items.
+  CRITICAL: tags name the underlying pattern, not the specific fact
+  of the day. Strip numbers, named people, dates, and one-off
+  details; keep the recurring shape that could apply on another day.
+  E.g. "12 hour work day" → "long work day"; "fight with Sarah" →
+  "interpersonal conflict"; "3 hours of doomscrolling" →
+  "doomscrolling"; "missed the 7am train" → "running late". If the
+  drainer has no reusable shape underneath the specifics, omit it.
+- charged_tag_proposals: same shape and same underlying-pattern rule,
+  for chargers (e.g. "morning walk", "deep work", "exercise").
+  ≤ 5 items.
 - answers: only include keys for questions the user substantively
   answered. NEVER invent or guess. The user's voice — third-person
   paragraphs are fine, but no meta-commentary, no questions.

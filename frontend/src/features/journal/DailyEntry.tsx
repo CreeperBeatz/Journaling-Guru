@@ -245,8 +245,9 @@ export function DailyEntry() {
         style={{ top: "var(--app-mobile-header-h, 0px)" }}
         className="sticky z-20 -mx-4 -mt-6 md:-mx-8 md:-mt-10 px-4 md:px-8 py-2 bg-background/85 backdrop-blur-md border-b border-border/60"
       >
-        <div className="flex items-center gap-3">
-          <TabsList className="grid w-full grid-cols-3 md:inline-flex md:w-auto">
+        <div className="flex flex-col gap-2">
+          {statusPill ? <div className="self-end">{statusPill}</div> : null}
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="manual">Manual</TabsTrigger>
             <TabsTrigger value="chat">Chat</TabsTrigger>
             <TabsTrigger value="talk" disabled className="gap-1.5">
@@ -256,7 +257,6 @@ export function DailyEntry() {
               </span>
             </TabsTrigger>
           </TabsList>
-          {statusPill ? <div className="ml-auto">{statusPill}</div> : null}
         </div>
       </div>
 

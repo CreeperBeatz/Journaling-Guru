@@ -27,6 +27,8 @@ export interface DayEntries {
 export interface DateSummary {
   local_date: string;
   entry_count: number;
+  chat_turns: number;
+  has_inputs: boolean;
 }
 
 export interface HeatmapDay {

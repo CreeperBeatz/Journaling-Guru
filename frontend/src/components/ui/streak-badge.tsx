@@ -54,11 +54,14 @@ export function computeStreak(
 ): number {
   const byDate = new Map(cells.map((c) => [c.date, c.level]));
   let streak = 0;
-  // Walk back from today.
+  // Walk back from today. If today hasn't been logged yet, don't break
+  // the streak — only a missed full day (yesterday or earlier) does.
   const start = parseISO(today);
+  const todayLevel = byDate.get(today) ?? 0;
+  const offset = todayLevel >= 1 ? 0 : 1;
   for (let i = 0; i < 366; i++) {
     const d = new Date(start);
-    d.setUTCDate(d.getUTCDate() - i);
+    d.setUTCDate(d.getUTCDate() - (i + offset));
     const iso = formatISO(d);
     const level = byDate.get(iso) ?? 0;
     if (level >= 1) streak += 1;
