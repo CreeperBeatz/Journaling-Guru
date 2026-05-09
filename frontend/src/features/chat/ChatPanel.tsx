@@ -32,6 +32,15 @@ const ALL_TOPIC_CODES = ["drained", "charged", "grateful", "else"] as const;
 // even when slightly scrolled up).
 const AT_BOTTOM_PX = 80;
 
+// If the only assistant turn (the opener) is older than this, refresh
+// it. The opener's persona prompt embeds the current time of day
+// ("good morning" / "good evening" / etc.), so a stale opener greets
+// the user with the wrong tone if they open the app many hours after
+// the session was first created. Only triggered when the user has
+// not yet replied — once they've sent a message, the conversation is
+// theirs and we don't rewind it.
+const STALE_OPENER_MS = 4 * 60 * 60 * 1000;
+
 // ChatPanel is the chat-mode body of /today. Claude.ai-style: full-bleed
 // fixed overlay between the AppShell's sidebar / mobile header. The
 // message stream owns its own scroll container; its right edge
@@ -68,14 +77,49 @@ export function ChatPanel() {
   // server). The guard is `status === "streaming"` rather than
   // `!== "idle"` so a leftover "done" status from the previous turn
   // doesn't block the post-reset opener.
+  //
+  // openerFiredForRef tracks the session id we've already kicked an
+  // opener for, so we don't double-fire in the gap between the
+  // streaming generator emitting `done` (status → "done") and the
+  // session-envelope refetch landing the persisted assistant message
+  // in the cache. Cleared on session.id change and on user-triggered
+  // reset (handleReset below) so post-reset re-opening still works.
+  const openerFiredForRef = useRef<string | null>(null);
+  useEffect(() => {
+    openerFiredForRef.current = null;
+  }, [session?.id]);
   useEffect(() => {
     if (!session) return;
     if (session.phase !== "greeting") return;
     if (messages.some((m) => m.role === "assistant")) return;
     if (stream.state.status === "streaming") return;
+    if (openerFiredForRef.current === session.id) return;
+    openerFiredForRef.current = session.id;
     void stream.startOpener();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, session?.phase, messages.length, stream.state.status]);
+
+  // Stale-opener refresh: if the persisted opener is >4h old AND the
+  // user hasn't replied yet, reset the session so the auto-opener
+  // effect above streams a fresh greeting. Once-per-session via ref;
+  // resetting clears `openerFiredForRef` so the next opener fires.
+  const staleOpenerCheckedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!session) return;
+    if (session.phase !== "greeting") return;
+    if (staleOpenerCheckedRef.current === session.id) return;
+    if (resetChat.isPending) return;
+    if (stream.state.status === "streaming") return;
+    if (messages.some((m) => m.role === "user")) return;
+    const assistantMsgs = messages.filter((m) => m.role === "assistant");
+    if (assistantMsgs.length === 0) return;
+    const opener = assistantMsgs[assistantMsgs.length - 1];
+    const age = Date.now() - new Date(opener.created_at).getTime();
+    if (age < STALE_OPENER_MS) return;
+    staleOpenerCheckedRef.current = session.id;
+    openerFiredForRef.current = null;
+    resetChat.mutate(session.id);
+  }, [session?.id, session?.phase, messages, stream.state.status, resetChat]);
 
   const visibleMsgs = useMemo(() => visibleMessages(messages), [messages]);
 
@@ -177,6 +221,7 @@ export function ChatPanel() {
   };
   const handleReset = () => {
     if (!session) return;
+    openerFiredForRef.current = null;
     resetChat.mutate(session.id);
   };
   const handleWrapUp = () => {
@@ -262,6 +307,7 @@ export function ChatPanel() {
                       onRestart={handleReset}
                     />
                   }
+                  bottomCenter={<JournalDateLabel iso={session.local_date} />}
                   bottomRight={
                     showWrapUp ? (
                       <WrapUpButton
@@ -283,6 +329,28 @@ export function ChatPanel() {
         </div>
       </div>
     </div>
+  );
+}
+
+// JournalDateLabel surfaces which calendar day the current session
+// files into. Critical when a user journals after midnight but before
+// their day-start cutoff — without this, "today" feels ambiguous.
+// Parses YYYY-MM-DD as UTC so timezone normalization can't shift it.
+function JournalDateLabel({ iso }: { iso: string }) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
+  const label = dt.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  return (
+    <span
+      className="truncate font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground"
+      title={`Filling in journal for ${iso}`}
+    >
+      Filling in for {label}
+    </span>
   );
 }
 

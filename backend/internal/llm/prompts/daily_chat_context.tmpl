@@ -11,8 +11,12 @@
 
    Variables:
      .DisplayName       — user-facing name (may be empty; falls back to "you")
-     .LocalDate         — YYYY-MM-DD in user-tz
-     .Weekday           — full English weekday ("Tuesday")
+     .JournalDate       — YYYY-MM-DD the session files into (after day-start cutoff)
+     .JournalWeekday    — full English weekday for JournalDate
+     .WallClockDate     — YYYY-MM-DD of the actual current moment in user-tz
+     .WallClockWeekday  — full English weekday for WallClockDate
+     .WallClockTime     — HH:MM (24h) wall-clock time in user-tz
+     .DayStartLabel     — user's day-start cutoff rendered HH:MM (e.g. "06:00")
      .LocalTimeOfDay    — "morning" | "afternoon" | "evening" | "late night"
      .Questions         — []QuestionView{ID, Prompt} (currently unused — see above)
      .Recent7DayMoodAvg — *float64 averaged over 1..3 scale; rendered as "—" when nil
@@ -23,7 +27,9 @@
 
 # Today's session
 
-It is **{{.LocalTimeOfDay}}** on {{.Weekday}}, {{.LocalDate}}.
+Right now it is **{{.LocalTimeOfDay}}** for the user — {{.WallClockWeekday}} {{.WallClockDate}} at {{.WallClockTime}}.
+
+This session files into the journal entry for **{{.JournalWeekday}}, {{.JournalDate}}**. The user's day-start cutoff is {{.DayStartLabel}}: any clock time before that still belongs to the previous calendar day. So if it is currently between 00:00 and {{.DayStartLabel}}, the user is wrapping up yesterday late at night — greet them as a quiet late-night reflection on the day that just ended, not as a fresh "today." Otherwise they're journaling about the day in progress; greet accordingly.
 
 # The four topics to weave in
 

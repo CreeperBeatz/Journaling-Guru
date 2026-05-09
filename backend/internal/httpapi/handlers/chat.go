@@ -967,10 +967,27 @@ func (h *ChatHandler) buildSystemPrompt(
 		displayName = *user.DisplayName
 	}
 
+	// Journal-date weekday must come from session.LocalDate, NOT
+	// nowLocal — after midnight before the day-start cutoff they
+	// disagree (session.LocalDate = yesterday, nowLocal = today).
+	journalWeekday := ""
+	if jd, err := time.ParseInLocation("2006-01-02", session.LocalDate, loc); err == nil {
+		journalWeekday = jd.Weekday().String()
+	}
+	dsm := user.DayStartMinutes
+	if dsm < 0 {
+		dsm = 0
+	}
+	dayStartLabel := fmt.Sprintf("%02d:%02d", dsm/60, dsm%60)
+
 	return chat.BuildSystemPrompt(chat.BuildSystemPromptParams{
 		DisplayName:       displayName,
-		LocalDate:         session.LocalDate,
-		Weekday:           nowLocal.Weekday().String(),
+		JournalDate:       session.LocalDate,
+		JournalWeekday:    journalWeekday,
+		WallClockDate:     nowLocal.Format("2006-01-02"),
+		WallClockWeekday:  nowLocal.Weekday().String(),
+		WallClockTime:     nowLocal.Format("15:04"),
+		DayStartLabel:     dayStartLabel,
 		LocalTimeOfDay:    chat.TimeOfDay(nowLocal),
 		Questions:         views,
 		Recent7DayMoodAvg: moodAvg,

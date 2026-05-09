@@ -170,9 +170,23 @@ func QuestionViewsFromDomain(qs []domain.Question) []QuestionView {
 // Recent7DayMoodAvg and RecentTopEmotions can be nil/empty — the
 // template renders sensibly either way.
 type BuildSystemPromptParams struct {
-	DisplayName       string
-	LocalDate         string
-	Weekday           string
+	DisplayName string
+	// JournalDate is the calendar day this session files into (YYYY-
+	// MM-DD in user-tz). Driven by chat_sessions.local_date, which
+	// already accounts for day_start_minutes — so a 01:30 session
+	// before a 06:00 cutoff carries yesterday's date here.
+	JournalDate    string
+	JournalWeekday string
+	// WallClock* describe the actual current moment in the user's
+	// timezone, separate from JournalDate so the model can reason
+	// about "it's past midnight; this is a late-night wrap-up of
+	// yesterday" vs. "it's evening; journaling about today."
+	WallClockDate    string
+	WallClockWeekday string
+	WallClockTime    string // HH:MM 24h
+	// DayStartLabel renders user.DayStartMinutes as HH:MM so the
+	// template can quote the cutoff back to the model.
+	DayStartLabel     string
 	LocalTimeOfDay    string
 	Questions         []QuestionView
 	Recent7DayMoodAvg *float64
