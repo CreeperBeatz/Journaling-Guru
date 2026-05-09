@@ -838,28 +838,11 @@ func (h *ChatHandler) runStream(
 	}
 	writeSSEFrame(w, rc, "done", donePayload)
 
-	// Post-turn coverage classifier. JSON-mode LLM pass over the active
-	// questions + recent transcript window; persists the authoritative
-	// covered set and emits a coverage_update SSE event. Replaces the
-	// inline mark_topic_covered tool — the dedicated pass can review the
-	// full turn in context instead of marking optimistically mid-reply.
-	//
-	// Skip on the opener path (no user turns to classify). Errors here
-	// are logged and swallowed — coverage is advisory; we'd rather hold
-	// the previous value than fail the assistant turn over it.
-	//
-	// Detached context: the classifier's LLM call + DB persist must
-	// survive a client abort (the FE may have already fired the next
-	// `sendMessage` and aborted this stream). The handler still waits
-	// for the classifier to finish so `coverage_update` can land on
-	// this same SSE connection — if the client already disconnected,
-	// the SSE write fails silently and the persisted set is picked up
-	// on the next session refetch.
-	if !opener {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		h.runCoverageClassifier(bgCtx, w, rc, session)
-	}
+	// Post-turn coverage classifier intentionally disabled: the model
+	// itself decides on the wrap-up turn what topics are still missing
+	// (see the wrapping_up branch in daily_chat_context.tmpl). Saves an
+	// LLM call per turn and removes a moving piece. runCoverageClassifier
+	// is left in place dormant in case we re-enable later.
 }
 
 // runCoverageClassifier loads the latest transcript + active questions
@@ -980,21 +963,6 @@ func (h *ChatHandler) buildSystemPrompt(
 	}
 	dayStartLabel := fmt.Sprintf("%02d:%02d", dsm/60, dsm%60)
 
-	// Uncovered topics in canonical priority order. CoverageCodes is
-	// already drained → charged → grateful → else; we filter out
-	// already-covered codes and pass the rest so the wrapping_up
-	// branch of the prompt can name them explicitly.
-	covered := make(map[string]struct{}, len(session.CoveredQuestionIDs))
-	for _, c := range session.CoveredQuestionIDs {
-		covered[c] = struct{}{}
-	}
-	uncovered := make([]string, 0, len(chat.CoverageCodes))
-	for _, code := range chat.CoverageCodes {
-		if _, ok := covered[code]; !ok {
-			uncovered = append(uncovered, code)
-		}
-	}
-
 	return chat.BuildSystemPrompt(chat.BuildSystemPromptParams{
 		DisplayName:       displayName,
 		JournalDate:       session.LocalDate,
@@ -1009,6 +977,5 @@ func (h *ChatHandler) buildSystemPrompt(
 		RecentTopEmotions: topEmotions,
 		Phase:             session.Phase,
 		HardCapMinutes:    h.HardCapMinutes,
-		UncoveredTopics:   uncovered,
 	})
 }

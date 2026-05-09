@@ -21,11 +21,6 @@ import { ComposerInput } from "./components/ComposerInput";
 import { CrisisCard } from "./components/CrisisCard";
 import { MessageList } from "./components/MessageList";
 
-// All four Energy Audit topic codes. Mirrors backend
-// internal/llm/chat/coverage.go::CoverageCodes. Used to gate the
-// Wrap-up CTA: once every topic is covered, we stop nudging.
-const ALL_TOPIC_CODES = ["drained", "charged", "grateful", "else"] as const;
-
 // "At bottom" tolerance for auto-follow: if the user is within this many
 // pixels of the bottom, consider them "reading the latest" and re-anchor
 // on every content change. Larger threshold = more lenient (auto-follows
@@ -122,10 +117,6 @@ export function ChatPanel() {
   }, [session?.id, session?.phase, messages, stream.state.status, resetChat]);
 
   const visibleMsgs = useMemo(() => visibleMessages(messages), [messages]);
-
-  const coveredCodes = useMemo(() => {
-    return new Set<string>(session?.covered_question_ids ?? []);
-  }, [session?.covered_question_ids]);
 
   // isAtBottomRef controls auto-follow — we re-anchor to the bottom on
   // every content change as long as the user hasn't scrolled away.
@@ -241,12 +232,11 @@ export function ChatPanel() {
   const userTurnCount = visibleMsgs.filter((m) => m.role === "user").length;
   const hasUserTurns = userTurnCount > 0;
 
-  const remainingTopics = ALL_TOPIC_CODES.some((code) => !coveredCodes.has(code));
-  // Keep the button mounted in wrapping_up so the user has a visible
-  // "Wrapping up" pill instead of the affordance disappearing on them.
-  // Hidden only when there are no user turns yet, or when every topic
-  // is already covered AND we're not wrapping up.
-  const showWrapUp = hasUserTurns && (remainingTopics || phase === "wrapping_up");
+  // Coverage classifier is disabled — the model itself decides what's
+  // missing on the wrap-up turn. So the button is shown whenever the
+  // user has spoken at all, and the wrappedUp state just toggles its
+  // disabled "Wrapping up" presentation.
+  const showWrapUp = hasUserTurns;
   const wrappedUp = phase === "wrapping_up";
 
   return (
