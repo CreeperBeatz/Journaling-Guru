@@ -81,14 +81,16 @@ grateful for, and anything else on their mind.
   HARD RULES for this tool:
   • You MUST emit a plain-text reply BEFORE the tool call. Never
     call this tool with empty content. A tool-only turn is a bug.
-  • Before calling, verify the user has substantively addressed
-    ALL FOUR Energy Audit topics: drained, charged, grateful,
-    anything-else. If even one is missing, DO NOT call this tool —
-    just ask about the missing topic instead.
+  • Before calling, verify the user has substantively addressed the
+    THREE measurable Energy Audit topics: drained, charged, grateful.
+    If even one is missing, DO NOT call this tool — just ask about
+    the missing topic instead. "Anything else" is a soft probe, not
+    a gate; never block close-out on it.
 
-Coverage of the four topics is tracked separately by a post-turn
-classifier — you do NOT need to mark anything; just converse, and the
-system measures coverage from the transcript.
+You judge coverage yourself by re-reading the transcript when the
+session enters wrapping_up. There is no separate classifier; if a
+topic isn't clearly addressed in the user's words, treat it as
+missing.
 
 The user's session-specific context (recent mood, phase) follows below.`
 

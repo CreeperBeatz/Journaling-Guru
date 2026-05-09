@@ -15,6 +15,7 @@ import {
   type ExtractionStatus,
   type ExtractionStatusResponse,
   type FinalizeResponse,
+  cancelWrapUp,
   createOrResumeSession,
   finalizeSession,
   getExtractionStatus,
@@ -315,10 +316,18 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
 
 // ---------- finalize + extraction polling ----------
 
+export interface FinalizeArgs {
+  sessionId: string;
+  // overwrite=true flips the worker to session-wins for daily_inputs.
+  // Default false preserves manual-wins (the original Phase 6a behavior).
+  overwrite?: boolean;
+}
+
 export function useFinalizeChat() {
   const qc = useQueryClient();
-  return useMutation<FinalizeResponse, ApiError, string>({
-    mutationFn: (sessionId) => finalizeSession(sessionId),
+  return useMutation<FinalizeResponse, ApiError, FinalizeArgs>({
+    mutationFn: ({ sessionId, overwrite }) =>
+      finalizeSession(sessionId, { overwrite }),
     onSuccess: (resp) => {
       // Optimistically reflect the new phase + extraction_status so the
       // sticky-bar "Updating…" pill appears immediately, before the
@@ -384,6 +393,30 @@ export function useExtractionStatus(sessionId: string | null, enabled: boolean) 
   }, [query.data?.status, query.data?.error, sessionId, qc]);
 
   return query;
+}
+
+// useCancelWrapUp flips a wrapping_up session back to exploring. Used
+// from the kebab in ComposerActions when the user changes their mind
+// after clicking "Wrap up". Optimistically patches the cached session
+// phase so the WrapUpButton + affordance update without waiting for a
+// session refetch.
+export function useCancelWrapUp() {
+  const qc = useQueryClient();
+  return useMutation<{ phase: ChatPhase }, ApiError, string>({
+    mutationFn: (sessionId) => cancelWrapUp(sessionId),
+    onSuccess: (resp) => {
+      qc.setQueryData<ChatSessionEnvelope>(chatSessionKey(), (old) => {
+        if (!old?.session) return old;
+        return {
+          ...old,
+          session: { ...old.session, phase: resp.phase },
+        };
+      });
+    },
+    onError: (err) => {
+      toast.error("Couldn't cancel wrap-up", { description: err.message });
+    },
+  });
 }
 
 // useResetChat performs the destructive reset. The FE shows a

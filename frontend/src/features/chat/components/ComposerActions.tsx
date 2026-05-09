@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, MoreVertical, Sparkles, RefreshCw, CheckCircle2 } from "lucide-react";
+import { Loader2, MoreVertical, Sparkles, RefreshCw, CheckCircle2, Undo2 } from "lucide-react";
 
 import {
   AlertDialog,
@@ -63,11 +63,18 @@ interface KebabProps {
   restartPending: boolean;
   onFinish: () => void;
   onRestart: () => void;
+  // wrappedUp toggles the "Cancel wrap-up" menu item. When the session
+  // is in wrapping_up, surface a one-click escape hatch that flips back
+  // to exploring without sending a message. Hidden otherwise.
+  wrappedUp: boolean;
+  cancelWrapUpPending: boolean;
+  onCancelWrapUp: () => void;
 }
 
-// ChatKebab — the (⋮) menu with "Finish check-in" and "Restart
-// conversation". Both go through AlertDialog because they're either
-// state-changing (extraction) or destructive (restart).
+// ChatKebab — the (⋮) menu with "Cancel wrap-up" (conditional),
+// "Finish check-in", and "Restart conversation". Finish/Restart go
+// through AlertDialog (state-changing / destructive); cancel-wrap-up
+// is single-click since it's trivially reversible.
 export function ChatKebab({
   finishDisabled,
   restartDisabled,
@@ -75,6 +82,9 @@ export function ChatKebab({
   restartPending,
   onFinish,
   onRestart,
+  wrappedUp,
+  cancelWrapUpPending,
+  onCancelWrapUp,
 }: KebabProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmFinish, setConfirmFinish] = useState(false);
@@ -123,6 +133,23 @@ export function ChatKebab({
               "absolute bottom-full left-0 z-30 mb-2 min-w-[200px] rounded-md border bg-popover p-1 shadow-md",
             )}
           >
+            {wrappedUp ? (
+              <MenuItem
+                icon={
+                  cancelWrapUpPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Undo2 className="h-3.5 w-3.5" />
+                  )
+                }
+                label={cancelWrapUpPending ? "Cancelling…" : "Cancel wrap-up"}
+                disabled={cancelWrapUpPending}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onCancelWrapUp();
+                }}
+              />
+            ) : null}
             <MenuItem
               icon={
                 finishPending ? (

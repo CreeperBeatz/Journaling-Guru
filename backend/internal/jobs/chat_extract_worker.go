@@ -159,20 +159,26 @@ func (w *ChatExtractionWorker) process(
 		return fmt.Errorf("parse local_date: %w", err)
 	}
 
-	// Manual-wins merge: existing user values survive, extracted values
-	// fill gaps. Per the Energy Audit pivot the chat extraction never
-	// clobbers a manual edit made during the extraction window.
-	if _, err := w.DailyInputs.MergeFromExtraction(
-		ctx, user.ID, localDate,
-		store.DailyInputUpsert{
-			Mood:           result.Mood,
-			DrainedText:    result.DrainedText,
-			ChargedText:    result.ChargedText,
-			GratitudeText:  result.GratitudeText,
-			ReflectionText: result.ReflectionText,
-		},
-	); err != nil {
-		return fmt.Errorf("merge daily_inputs: %w", err)
+	// Daily-inputs writeback. Default is manual-wins
+	// (MergeFromExtraction); when the user picked the explicit
+	// "Finish & replace from this session" affordance, job.Overwrite is
+	// true and we use the session-wins variant instead. Either path is
+	// empty-safe: an extracted "" will not blank an existing field.
+	dailyPayload := store.DailyInputUpsert{
+		Mood:           result.Mood,
+		DrainedText:    result.DrainedText,
+		ChargedText:    result.ChargedText,
+		GratitudeText:  result.GratitudeText,
+		ReflectionText: result.ReflectionText,
+	}
+	if job.Overwrite {
+		if _, err := w.DailyInputs.OverwriteFromExtraction(ctx, user.ID, localDate, dailyPayload); err != nil {
+			return fmt.Errorf("overwrite daily_inputs: %w", err)
+		}
+	} else {
+		if _, err := w.DailyInputs.MergeFromExtraction(ctx, user.ID, localDate, dailyPayload); err != nil {
+			return fmt.Errorf("merge daily_inputs: %w", err)
+		}
 	}
 
 	// Tag reconciliation. UpsertByLabel is idempotent on

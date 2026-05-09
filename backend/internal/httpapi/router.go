@@ -16,6 +16,7 @@ import (
 	mw "github.com/cosmosthrace/journai/backend/internal/httpapi/middleware"
 	"github.com/cosmosthrace/journai/backend/internal/jobs"
 	"github.com/cosmosthrace/journai/backend/internal/llm"
+	"github.com/cosmosthrace/journai/backend/internal/llm/realtime"
 	"github.com/cosmosthrace/journai/backend/internal/mail"
 	"github.com/cosmosthrace/journai/backend/internal/push"
 	"github.com/cosmosthrace/journai/backend/internal/store"
@@ -167,6 +168,11 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		cfg.OpenRouterKey, cfg.ClassifyModel,
 		cfg.PublicBaseURL, "Journaling Guru",
 	)
+	// Realtime client for Phase 6b (Talk). Constructed even when
+	// OPENAI_API_KEY is empty — MintEphemeralSecret returns
+	// realtime.ErrNoAPIKey at call time, mapped to 503 in the handler,
+	// so dev environments without the key still serve text chat.
+	realtimeClient := realtime.New(cfg.OpenAIKey, cfg.OpenAIRealtimeModel)
 	chatH := &handlers.ChatHandler{
 		Sessions:       chatSessions,
 		Messages:       chatMessages,
@@ -176,9 +182,11 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		DailyInputs:    dailyInputs,
 		ChatLLM:        chatLLM,
 		ClassifyLLM:    classifyLLM,
+		Realtime:       realtimeClient,
 		Logger:         logger,
 		ChatModel:      cfg.ChatModel,
 		ClassifyModel:  cfg.ClassifyModel,
+		RealtimeModel:  cfg.OpenAIRealtimeModel,
 		MaxTurns:       cfg.ChatMaxTurns,
 		HardCapMinutes: cfg.ChatHardCapMinutes,
 		KeepLastN:      cfg.ChatTranscriptKeepLast,
@@ -358,8 +366,15 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 				r.Post("/sessions", chatH.CreateOrResume)
 				r.Post("/sessions/{id}/messages", chatH.StreamMessage)
 				r.Post("/sessions/{id}/wrap-up", chatH.WrapUp)
+				r.Post("/sessions/{id}/wrap-up/cancel", chatH.CancelWrapUp)
 				r.Post("/sessions/{id}/finalize", chatH.Finalize)
 				r.Post("/sessions/{id}/reset", chatH.Reset)
+				// Phase 6b — Talk. /voice/start mints an OpenAI Realtime
+				// ephemeral client_secret; /voice/transcript persists
+				// finalized transcript turns the browser receives off the
+				// data channel. Audio never traverses this server.
+				r.Post("/sessions/{id}/voice/start", chatH.StartVoice)
+				r.Post("/sessions/{id}/voice/transcript", chatH.AppendVoiceTranscript)
 			})
 		})
 	})

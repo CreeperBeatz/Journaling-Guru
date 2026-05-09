@@ -3,12 +3,12 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Card, CardContent } from "@/components/ui/card";
 import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMe } from "@/features/auth/useAuth";
 import { ChatPanel } from "@/features/chat/ChatPanel";
+import { VoicePanel } from "@/features/chat/VoicePanel";
 import {
   isExtractionInFlight,
   useExtractionStatus,
@@ -93,7 +93,7 @@ export function DailyEntry() {
   // Persist + reflect to URL when the user changes mode.
   const handleModeChange = useCallback(
     (next: string) => {
-      if (!isMode(next) || next === "talk") return; // talk is disabled in 6a
+      if (!isMode(next)) return;
       setMode(next);
       if (typeof window !== "undefined") {
         window.localStorage.setItem(MODE_STORAGE_KEY, next);
@@ -124,7 +124,8 @@ export function DailyEntry() {
     extractionPolling.data?.error ?? chatSession?.extraction_error ?? null;
   const handleRetryFinalize = () => {
     if (!chatSession) return;
-    finalizeRetry.mutate(chatSession.id);
+    // Retry path stays manual-wins — same intent as the original click.
+    finalizeRetry.mutate({ sessionId: chatSession.id });
   };
 
   if (entries.isPending) {
@@ -203,11 +204,7 @@ export function DailyEntry() {
       </TabsContent>
 
       <TabsContent value="talk" className="mt-6">
-        <Card>
-          <CardContent className="px-6 py-10 text-sm text-muted-foreground">
-            Voice mode is coming in the next phase. For now, use Chat or Manual.
-          </CardContent>
-        </Card>
+        <VoicePanel />
       </TabsContent>
     </>
   );
@@ -250,12 +247,7 @@ export function DailyEntry() {
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="manual">Manual</TabsTrigger>
             <TabsTrigger value="chat">Chat</TabsTrigger>
-            <TabsTrigger value="talk" disabled className="gap-1.5">
-              Talk
-              <span className="rounded-full bg-muted-foreground/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                soon
-              </span>
-            </TabsTrigger>
+            <TabsTrigger value="talk">Talk</TabsTrigger>
           </TabsList>
         </div>
       </div>

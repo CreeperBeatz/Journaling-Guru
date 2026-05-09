@@ -110,6 +110,11 @@ type ChatExtractionJob struct {
 	Status     string     `json:"status"`
 	Attempts   int        `json:"attempts"`
 	LastError  *string    `json:"last_error,omitempty"`
+	// Overwrite is set when the user picked the "Finish & replace from this
+	// session" affordance. The worker branches to session-wins semantics
+	// for daily_inputs (clobbers mood + text) instead of manual-wins.
+	// journal_entries already overwrite via UpsertFromChat.
+	Overwrite  bool       `json:"-"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
 }

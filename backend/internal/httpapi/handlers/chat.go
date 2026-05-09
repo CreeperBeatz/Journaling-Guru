@@ -16,6 +16,7 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/httpapi/middleware"
 	"github.com/cosmosthrace/journai/backend/internal/llm"
 	"github.com/cosmosthrace/journai/backend/internal/llm/chat"
+	"github.com/cosmosthrace/journai/backend/internal/llm/realtime"
 	"github.com/cosmosthrace/journai/backend/internal/store"
 	"github.com/cosmosthrace/journai/backend/internal/timezone"
 )
@@ -37,9 +38,15 @@ type ChatHandler struct {
 	DailyInputs    *store.DailyInputStore
 	ChatLLM        *llm.OpenRouter
 	ClassifyLLM    *llm.OpenRouter
+	// Realtime is the OpenAI Realtime API client used by /voice/start.
+	// Nil-tolerant: when OPENAI_API_KEY is unset the field is non-nil
+	// but its APIKey is empty, so MintEphemeralSecret returns
+	// realtime.ErrNoAPIKey and the handler responds 503.
+	Realtime       *realtime.Client
 	Logger         *slog.Logger
 	ChatModel      string
 	ClassifyModel  string
+	RealtimeModel  string
 	MaxTurns       int
 	HardCapMinutes int
 	KeepLastN      int
@@ -350,13 +357,14 @@ func (h *ChatHandler) StreamMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Reset phase to exploring on:
 	//   - greeting → exploring (first user reply)
-	//   - wrapping_up → exploring (user keeps typing after the model
-	//     proposed wrap-up)
 	//   - finalized → exploring (user resumes after a previous extraction)
-	// The phase frame syncs the FE so its "wrap up?" affordance hides
-	// and the composer state matches.
+	// wrapping_up is intentionally NOT reset on user reply: once the
+	// user has signaled wrap-up (via the affordance) the model needs
+	// to keep "land it" framing across the follow-up answer(s) until
+	// it calls propose_wrap_up or the user explicitly cancels via
+	// the kebab (POST /wrap-up/cancel).
 	phaseFrameNeeded := ""
-	if session.Phase != domain.ChatPhaseExploring {
+	if session.Phase != domain.ChatPhaseExploring && session.Phase != domain.ChatPhaseWrappingUp {
 		if updated, err := h.Sessions.AdvancePhase(r.Context(), sessionID, domain.ChatPhaseExploring); err == nil {
 			session = updated
 			phaseFrameNeeded = domain.ChatPhaseExploring
@@ -417,6 +425,13 @@ func (h *ChatHandler) Opener(w http.ResponseWriter, r *http.Request) {
 
 // ---------- /sessions/:id/finalize ----------
 
+// finalizeRequest is the body shape for POST /finalize. `overwrite=true`
+// flips the worker to session-wins semantics for daily_inputs (mood +
+// text). Default false preserves manual-wins.
+type finalizeRequest struct {
+	Overwrite bool `json:"overwrite"`
+}
+
 // Finalize handles POST /api/chat/sessions/:id/finalize. Schedules the
 // extraction job and returns 202 with the job state. Idempotent —
 // double-clicks within the same minute return the same job.
@@ -430,6 +445,12 @@ func (h *ChatHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 	if sessionID == "" {
 		writeJSONError(w, http.StatusBadRequest, "id required")
 		return
+	}
+	// Body is optional — empty body decodes to zero-value (overwrite=false),
+	// preserving the existing manual-wins default.
+	var req finalizeRequest
+	if r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
 	session, err := h.Sessions.GetByID(r.Context(), sess.UserID, sessionID)
 	if err != nil {
@@ -452,7 +473,7 @@ func (h *ChatHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 	if err := h.Sessions.SetExtractionStatus(r.Context(), sessionID, domain.ChatExtractionPending, nil); err != nil {
 		h.Logger.Warn("set extraction status pending", "err", err, "session_id", sessionID)
 	}
-	if _, err := h.Jobs.Schedule(r.Context(), session.ID, session.UserID); err != nil {
+	if _, err := h.Jobs.Schedule(r.Context(), session.ID, session.UserID, req.Overwrite); err != nil {
 		h.Logger.Error("schedule extraction", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "schedule failed")
 		return
@@ -622,6 +643,286 @@ func (h *ChatHandler) WrapUp(w http.ResponseWriter, r *http.Request) {
 
 	rc := http.NewResponseController(w)
 	h.runStream(w, r, rc, session, false, phaseFrame, nil)
+}
+
+// ---------- /sessions/:id/wrap-up/cancel ----------
+
+// CancelWrapUp handles POST /api/chat/sessions/:id/wrap-up/cancel. The
+// user opened the kebab and chose "Cancel wrap-up": flip the session
+// back to `exploring` so the next assistant turn drops the "land it"
+// framing. Records a `user_cancel_wrap_up` system_event so the LLM
+// transcript reflects the change of heart on the next turn.
+//
+// 409 if the session is not currently in `wrapping_up`. No SSE — single
+// JSON response, the FE patches its phase cache locally.
+func (h *ChatHandler) CancelWrapUp(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	sessionID := chi.URLParam(r, "id")
+	if sessionID == "" {
+		writeJSONError(w, http.StatusBadRequest, "id required")
+		return
+	}
+	session, err := h.Sessions.GetByID(r.Context(), sess.UserID, sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrChatSessionNotFound) {
+			writeJSONError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		h.Logger.Error("get session", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "session lookup failed")
+		return
+	}
+	if session.Phase != domain.ChatPhaseWrappingUp {
+		writeJSONError(w, http.StatusConflict, "session is not wrapping up")
+		return
+	}
+
+	if _, err := h.Messages.Append(r.Context(), store.AppendInput{
+		SessionID: session.ID,
+		Role:      domain.ChatRoleSystemEvent,
+		Content:   "user_cancel_wrap_up",
+	}); err != nil {
+		h.Logger.Error("append cancel-wrap-up event", "err", err, "session_id", session.ID)
+		writeJSONError(w, http.StatusInternalServerError, "cancel failed")
+		return
+	}
+
+	if _, err := h.Sessions.AdvancePhase(r.Context(), session.ID, domain.ChatPhaseExploring); err != nil {
+		if !errors.Is(err, store.ErrChatSessionInvalidPhase) {
+			h.Logger.Warn("advance phase to exploring", "err", err, "session_id", session.ID)
+			writeJSONError(w, http.StatusInternalServerError, "phase update failed")
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{"phase": domain.ChatPhaseExploring})
+}
+
+// ---------- /sessions/:id/voice/start ----------
+
+type startVoiceResponse struct {
+	ClientSecret string `json:"client_secret"`
+	ExpiresAt    int64  `json:"expires_at"`
+	Model        string `json:"model"`
+	SessionID    string `json:"session_id"`
+	OpenAISessionID string `json:"openai_session_id"`
+}
+
+// StartVoice handles POST /api/chat/sessions/:id/voice/start. Mints an
+// OpenAI Realtime ephemeral client_secret using the same composed
+// system prompt the text chat uses, persists mode='voice' +
+// openai_session_id on the session, and returns the secret to the
+// browser. The browser opens the WebRTC peer directly to OpenAI; audio
+// never traverses this server.
+//
+// 503 when OPENAI_API_KEY is unset (dev environments without the key
+// still serve text chat). 409 if the session is finalized — voice
+// requires an open session.
+func (h *ChatHandler) StartVoice(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	sessionID := chi.URLParam(r, "id")
+	if sessionID == "" {
+		writeJSONError(w, http.StatusBadRequest, "id required")
+		return
+	}
+	if h.Realtime == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "voice not configured")
+		return
+	}
+	session, err := h.Sessions.GetByID(r.Context(), sess.UserID, sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrChatSessionNotFound) {
+			writeJSONError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		h.Logger.Error("get session", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "session lookup failed")
+		return
+	}
+	if session.Phase == domain.ChatPhaseAbandoned {
+		writeJSONError(w, http.StatusConflict, "session no longer active")
+		return
+	}
+
+	user, err := h.Users.GetByID(r.Context(), session.UserID)
+	if err != nil || user == nil {
+		h.Logger.Error("get user for voice", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
+		return
+	}
+	systemPrompt, err := h.buildSystemPrompt(r.Context(), user, session)
+	if err != nil {
+		h.Logger.Error("build system prompt for voice", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "prompt build failed")
+		return
+	}
+	// Voice tone tweak: append a short instruction so the model speaks
+	// conversationally instead of emitting markdown bullet structure.
+	// Cheap append; doesn't disturb the cache-friendly persona prefix
+	// because the realtime API's prompt cache is independent of the
+	// chat-tier OpenRouter cache anyway.
+	systemPrompt += "\n\nYou are speaking out loud now — voice mode. Skip headers, " +
+		"bullet lists, and any formatting that doesn't read aloud. Keep replies " +
+		"short and conversational; let pauses do work."
+
+	out, err := h.Realtime.MintEphemeralSecret(r.Context(), realtime.MintRequest{
+		Model:        h.RealtimeModel,
+		Instructions: systemPrompt,
+	})
+	if err != nil {
+		if errors.Is(err, realtime.ErrNoAPIKey) {
+			writeJSONError(w, http.StatusServiceUnavailable, "voice not configured")
+			return
+		}
+		h.Logger.Error("mint realtime secret", "err", err, "session_id", session.ID)
+		writeJSONError(w, http.StatusBadGateway, "voice provider unavailable")
+		return
+	}
+
+	if err := h.Sessions.MarkVoice(r.Context(), sess.UserID, session.ID, out.Model, out.SessionID); err != nil {
+		h.Logger.Error("mark session voice", "err", err, "session_id", session.ID)
+		writeJSONError(w, http.StatusInternalServerError, "session update failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, startVoiceResponse{
+		ClientSecret:    out.Value,
+		ExpiresAt:       out.ExpiresAt,
+		Model:           out.Model,
+		SessionID:       session.ID,
+		OpenAISessionID: out.SessionID,
+	})
+}
+
+// ---------- /sessions/:id/voice/transcript ----------
+
+type voiceTranscriptRequest struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	// ClientSeq is the browser's monotonic counter; informational only.
+	// Server seq is allocated under FOR UPDATE in ChatMessageStore.Append.
+	ClientSeq int `json:"client_seq"`
+}
+
+type voiceTranscriptResponse struct {
+	MessageID string `json:"message_id"`
+	Seq       int    `json:"seq"`
+}
+
+// AppendVoiceTranscript handles POST /api/chat/sessions/:id/voice/transcript.
+// The browser listens to the OpenAI Realtime data channel for finalized
+// transcript events (user `*.input_audio_transcription.completed` and
+// assistant `*.audio_transcript.done`) and POSTs each turn here so it
+// lands in chat_messages. The session shows the same bubbles whether the
+// user is in the Talk tab or has switched back to Chat.
+//
+// 409 when the session is not in voice mode — text chat persists user
+// turns through StreamMessage and assistant turns through the SSE
+// stream, so a stray POST here would race those writers.
+func (h *ChatHandler) AppendVoiceTranscript(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	sessionID := chi.URLParam(r, "id")
+	if sessionID == "" {
+		writeJSONError(w, http.StatusBadRequest, "id required")
+		return
+	}
+	var req voiceTranscriptRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	role := strings.TrimSpace(req.Role)
+	if role != domain.ChatRoleUser && role != domain.ChatRoleAssistant {
+		writeJSONError(w, http.StatusBadRequest, "role must be user|assistant")
+		return
+	}
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		writeJSONError(w, http.StatusBadRequest, "content required")
+		return
+	}
+	if len(content) > maxChatContentLen {
+		writeJSONError(w, http.StatusBadRequest, "content too long")
+		return
+	}
+
+	session, err := h.Sessions.GetByID(r.Context(), sess.UserID, sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrChatSessionNotFound) {
+			writeJSONError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		h.Logger.Error("get session", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "session lookup failed")
+		return
+	}
+	if session.Mode != domain.ChatModeVoice {
+		writeJSONError(w, http.StatusConflict, "session is not in voice mode")
+		return
+	}
+
+	// Crisis regex applies to user voice too — same safety net the text
+	// path runs. On hit we persist the user turn + a system_event so the
+	// FE crisis handling re-uses chat_messages history; the FE is also
+	// expected to stop the WebRTC call when it sees the system_event
+	// land. We don't return crisis details over this channel — the FE
+	// already heard the user say it.
+	if role == domain.ChatRoleUser && chat.IsCrisis(content) {
+		_, _ = h.Messages.Append(r.Context(), store.AppendInput{
+			SessionID: session.ID,
+			Role:      domain.ChatRoleUser,
+			Content:   content,
+		})
+		_, _ = h.Messages.Append(r.Context(), store.AppendInput{
+			SessionID: session.ID,
+			Role:      domain.ChatRoleSystemEvent,
+			Content:   "crisis_detected",
+		})
+		_ = h.Sessions.TouchActivity(r.Context(), session.ID)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"crisis":        true,
+			"resources_url": h.ResourcesURL,
+		})
+		return
+	}
+
+	row, err := h.Messages.Append(r.Context(), store.AppendInput{
+		SessionID: session.ID,
+		Role:      role,
+		Content:   content,
+	})
+	if err != nil {
+		h.Logger.Error("append voice transcript", "err", err, "session_id", session.ID)
+		writeJSONError(w, http.StatusInternalServerError, "persist failed")
+		return
+	}
+	_ = h.Sessions.TouchActivity(r.Context(), session.ID)
+
+	// First user turn flips greeting → exploring (parity with text chat).
+	if role == domain.ChatRoleUser &&
+		session.Phase != domain.ChatPhaseExploring &&
+		session.Phase != domain.ChatPhaseWrappingUp {
+		_, _ = h.Sessions.AdvancePhase(r.Context(), session.ID, domain.ChatPhaseExploring)
+	}
+
+	writeJSON(w, http.StatusCreated, voiceTranscriptResponse{
+		MessageID: row.ID,
+		Seq:       row.Seq,
+	})
 }
 
 // ---------- shared streaming ----------

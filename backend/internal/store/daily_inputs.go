@@ -196,6 +196,60 @@ func (s *DailyInputStore) MergeFromExtraction(
 	return out, nil
 }
 
+// OverwriteFromExtraction is the session-wins counterpart to
+// MergeFromExtraction. Used when the user explicitly chooses "Finish &
+// replace from this session" — mood + each text field is replaced with
+// what the session produced.
+//
+// Empty/NULL safety: an empty extracted string does NOT blank an
+// existing field. The motivation is "session-wins where the session
+// said something" — nothing said means leave it alone, so the user
+// can manually edit a field the chat didn't cover and still keep it.
+// Mood: COALESCE(extracted, existing) — if the LLM emitted null mood
+// (ambiguous tone) we keep what the user had.
+func (s *DailyInputStore) OverwriteFromExtraction(
+	ctx context.Context,
+	userID string,
+	localDate time.Time,
+	in DailyInputUpsert,
+) (*domain.DailyInput, error) {
+	in.DrainedText = strings.TrimSpace(in.DrainedText)
+	in.ChargedText = strings.TrimSpace(in.ChargedText)
+	in.GratitudeText = strings.TrimSpace(in.GratitudeText)
+	in.ReflectionText = strings.TrimSpace(in.ReflectionText)
+	if in.allEmpty() {
+		return s.GetByDate(ctx, userID, localDate)
+	}
+	const q = `
+		INSERT INTO daily_inputs
+		    (user_id, local_date, mood, drained_text, charged_text,
+		     gratitude_text, reflection_text, backfilled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, false)
+		ON CONFLICT (user_id, local_date) DO UPDATE
+		   SET mood            = COALESCE(EXCLUDED.mood, daily_inputs.mood),
+		       drained_text    = CASE WHEN EXCLUDED.drained_text = ''
+		                              THEN daily_inputs.drained_text
+		                              ELSE EXCLUDED.drained_text END,
+		       charged_text    = CASE WHEN EXCLUDED.charged_text = ''
+		                              THEN daily_inputs.charged_text
+		                              ELSE EXCLUDED.charged_text END,
+		       gratitude_text  = CASE WHEN EXCLUDED.gratitude_text = ''
+		                              THEN daily_inputs.gratitude_text
+		                              ELSE EXCLUDED.gratitude_text END,
+		       reflection_text = CASE WHEN EXCLUDED.reflection_text = ''
+		                              THEN daily_inputs.reflection_text
+		                              ELSE EXCLUDED.reflection_text END,
+		       updated_at      = now()
+		RETURNING ` + dailyInputColumns
+	row := s.DB.QueryRow(ctx, q, userID, localDate,
+		in.Mood, in.DrainedText, in.ChargedText, in.GratitudeText, in.ReflectionText)
+	out, err := scanDailyInput(row)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DailyMoodPoint is one (date, mood) pair on the 30-day sparkline.
 type DailyMoodPoint struct {
 	LocalDate string  `json:"local_date"`

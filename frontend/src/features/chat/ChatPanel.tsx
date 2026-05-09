@@ -9,6 +9,7 @@ import {
   type ChatSession,
 } from "./api";
 import {
+  useCancelWrapUp,
   useCreateOrResumeSession,
   useFinalizeChat,
   useResetChat,
@@ -21,6 +22,7 @@ import { ComposerInput } from "./components/ComposerInput";
 import { CrisisCard } from "./components/CrisisCard";
 import { MessageList } from "./components/MessageList";
 import { WrapUpAffordance } from "./components/WrapUpAffordance";
+import { useVoiceLive } from "./useVoice";
 
 // "At bottom" tolerance for auto-follow: if the user is within this many
 // pixels of the bottom, consider them "reading the latest" and re-anchor
@@ -54,6 +56,7 @@ export function ChatPanel() {
   const createOrResume = useCreateOrResumeSession();
   const finalize = useFinalizeChat();
   const resetChat = useResetChat();
+  const cancelWrap = useCancelWrapUp();
 
   const session: ChatSession | null = sessionQuery.data?.session ?? null;
   const messages: ChatMessage[] = sessionQuery.data?.messages ?? [];
@@ -206,15 +209,23 @@ export function ChatPanel() {
   }
 
   const phase: ChatPhase = session.phase;
-  const composerDisabled = stream.state.status === "streaming";
-  const handleFinalize = () => {
+  // When a Talk call is live, the same chat_sessions row is being
+  // written to from the voice path. Disable the text composer so user
+  // turns don't interleave with realtime audio turns.
+  const voiceLive = useVoiceLive();
+  const composerDisabled = stream.state.status === "streaming" || voiceLive;
+  const handleFinalize = (overwrite = false) => {
     if (!session) return;
-    finalize.mutate(session.id);
+    finalize.mutate({ sessionId: session.id, overwrite });
   };
   const handleReset = () => {
     if (!session) return;
     openerFiredForRef.current = null;
     resetChat.mutate(session.id);
+  };
+  const handleCancelWrapUp = () => {
+    if (!session) return;
+    cancelWrap.mutate(session.id);
   };
   // wrapUpClicked drives the WrapUpButton's spinner so it only spins
   // when the user actually pressed it — not on every assistant reply.
@@ -239,6 +250,35 @@ export function ChatPanel() {
   // disabled "Wrapping up" presentation.
   const showWrapUp = hasUserTurns;
   const wrappedUp = phase === "wrapping_up";
+
+  // The "Update check-in" affordance is gated on the model itself
+  // calling propose_wrap_up — NOT just the phase. Phase=wrapping_up
+  // means "model is in land-it mode" (a state set by the user clicking
+  // Wrap up), but the model decides when topics are actually covered
+  // and surfaces the close-out CTA via the tool. We derive that signal
+  // from the persisted transcript: the latest propose_wrap_up tool
+  // call wins, but a later user_cancel_wrap_up system_event clears it.
+  // Live tool frames during the current stream are also included so
+  // the affordance can appear before the session refetch lands.
+  const modelProposedWrapUp = useMemo(() => {
+    let proposed = false;
+    for (const m of messages) {
+      if (m.role === "assistant" && m.tool_name === "propose_wrap_up") {
+        proposed = true;
+      } else if (m.role === "system_event" && m.content === "user_cancel_wrap_up") {
+        proposed = false;
+      }
+    }
+    if (!proposed) {
+      for (const t of stream.state.toolEvents) {
+        if (t.name === "propose_wrap_up") {
+          proposed = true;
+          break;
+        }
+      }
+    }
+    return proposed;
+  }, [messages, stream.state.toolEvents]);
 
   return (
     <div
@@ -282,10 +322,15 @@ export function ChatPanel() {
                 />
               </div>
             ) : null}
-            {wrappedUp && !stream.state.crisis ? (
+            {modelProposedWrapUp && !stream.state.crisis ? (
               <div className="mt-4">
+                {/* The wrap-up affordance is the prominent CTA after the
+                 *  model proposes wrap-up, and its copy promises that
+                 *  manual fields will be overwritten — so it goes through
+                 *  the session-wins path. The less-prominent kebab
+                 *  "Finish" stays manual-wins. */}
                 <WrapUpAffordance
-                  onFinalize={handleFinalize}
+                  onFinalize={() => handleFinalize(true)}
                   pending={finalize.isPending}
                 />
               </div>
@@ -309,7 +354,11 @@ export function ChatPanel() {
                   onSend={stream.sendMessage}
                   disabled={composerDisabled || stream.state.crisis !== null}
                   pending={stream.state.status === "streaming"}
-                  placeholder={placeholderForPhase(phase)}
+                  placeholder={
+                    voiceLive
+                      ? "Voice session in progress — switch to Talk to continue."
+                      : placeholderForPhase(phase)
+                  }
                   bare
                   bottomLeft={
                     <ChatKebab
@@ -319,6 +368,9 @@ export function ChatPanel() {
                       restartPending={resetChat.isPending}
                       onFinish={handleFinalize}
                       onRestart={handleReset}
+                      wrappedUp={wrappedUp}
+                      cancelWrapUpPending={cancelWrap.isPending}
+                      onCancelWrapUp={handleCancelWrapUp}
                     />
                   }
                   bottomRight={

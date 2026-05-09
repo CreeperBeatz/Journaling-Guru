@@ -27,13 +27,14 @@ func NewChatExtractionJobStore(db *pgxpool.Pool) *ChatExtractionJobStore {
 var ErrChatExtractionJobNotFound = errors.New("chat extraction job not found")
 
 const chatExtractionJobColumns = `id, session_id, user_id,
-    fire_at, fired_at, status, attempts, last_error, created_at, updated_at`
+    fire_at, fired_at, status, attempts, last_error, overwrite,
+    created_at, updated_at`
 
 func scanChatExtractionJob(row pgx.Row) (*domain.ChatExtractionJob, error) {
 	var j domain.ChatExtractionJob
 	if err := row.Scan(
 		&j.ID, &j.SessionID, &j.UserID,
-		&j.FireAt, &j.FiredAt, &j.Status, &j.Attempts, &j.LastError,
+		&j.FireAt, &j.FiredAt, &j.Status, &j.Attempts, &j.LastError, &j.Overwrite,
 		&j.CreatedAt, &j.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -50,22 +51,23 @@ func scanChatExtractionJob(row pgx.Row) (*domain.ChatExtractionJob, error) {
 // Returns whether the operation produced an effective trigger (true)
 // or was a no-op (false).
 func (s *ChatExtractionJobStore) Schedule(
-	ctx context.Context, sessionID, userID string,
+	ctx context.Context, sessionID, userID string, overwrite bool,
 ) (bool, error) {
 	const q = `
-		INSERT INTO chat_extraction_jobs (session_id, user_id)
-		VALUES ($1, $2)
+		INSERT INTO chat_extraction_jobs (session_id, user_id, overwrite)
+		VALUES ($1, $2, $3)
 		ON CONFLICT (session_id) DO UPDATE
 		   SET status     = 'pending',
 		       fire_at    = now(),
 		       fired_at   = NULL,
 		       attempts   = 0,
 		       last_error = NULL,
+		       overwrite  = EXCLUDED.overwrite,
 		       updated_at = now()
 		 WHERE chat_extraction_jobs.status NOT IN ('pending','claimed')
 		RETURNING id`
 	var id string
-	err := s.DB.QueryRow(ctx, q, sessionID, userID).Scan(&id)
+	err := s.DB.QueryRow(ctx, q, sessionID, userID, overwrite).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

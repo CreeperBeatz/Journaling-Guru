@@ -87,15 +87,66 @@ export function createOrResumeSession(): Promise<ChatSessionEnvelope> {
   return api("/api/chat/sessions", { method: "POST", body: {} });
 }
 
-export function finalizeSession(id: string): Promise<FinalizeResponse> {
+// finalizeSession schedules the extraction job. `overwrite=true` flips
+// the worker to session-wins for daily_inputs (mood + text); default
+// false preserves manual edits per the original Phase 6a contract.
+export function finalizeSession(
+  id: string,
+  opts: { overwrite?: boolean } = {},
+): Promise<FinalizeResponse> {
   return api(`/api/chat/sessions/${encodeURIComponent(id)}/finalize`, {
+    method: "POST",
+    body: { overwrite: !!opts.overwrite },
+  });
+}
+
+// ---------- voice (Phase 6b) ----------
+
+export interface StartVoiceResponse {
+  client_secret: string;
+  expires_at: number;
+  model: string;
+  session_id: string;
+  openai_session_id: string;
+}
+
+export function startVoiceSession(id: string): Promise<StartVoiceResponse> {
+  return api(`/api/chat/sessions/${encodeURIComponent(id)}/voice/start`, {
     method: "POST",
     body: {},
   });
 }
 
+export interface AppendVoiceTranscriptResponse {
+  message_id?: string;
+  seq?: number;
+  crisis?: boolean;
+  resources_url?: string;
+}
+
+export function appendVoiceTranscript(
+  id: string,
+  payload: { role: "user" | "assistant"; content: string; client_seq: number },
+): Promise<AppendVoiceTranscriptResponse> {
+  return api(`/api/chat/sessions/${encodeURIComponent(id)}/voice/transcript`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
 export function getExtractionStatus(id: string): Promise<ExtractionStatusResponse> {
   return api(`/api/chat/sessions/${encodeURIComponent(id)}/extraction/status`);
+}
+
+// cancelWrapUp flips a wrapping_up session back to exploring. The
+// server appends a `user_cancel_wrap_up` system_event so the LLM
+// transcript reflects the change of heart on the next turn. Only
+// valid while phase is wrapping_up; surface 409s as a no-op.
+export function cancelWrapUp(id: string): Promise<{ phase: ChatPhase }> {
+  return api(`/api/chat/sessions/${encodeURIComponent(id)}/wrap-up/cancel`, {
+    method: "POST",
+    body: {},
+  });
 }
 
 // Reset wipes the session's transcript, rolls phase to greeting, and

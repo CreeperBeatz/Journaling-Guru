@@ -67,40 +67,46 @@ ask ONE open question. Lead with engagement; let coverage of the four
 topics happen organically. Do not stack questions, do not summarize
 back the whole turn, do not announce moves ("Let's move on to..."). 40-80 tokens.
 {{- else if eq .Phase "wrapping_up" -}}
-The session is closing. There are two flavors of this phase — read the
-recent transcript to tell which:
+**HURRY UP. The user wants to be done.** Read the recent transcript
+to tell which flavor of wrap-up you're in:
 
 1. **User clicked "Wrap up"** (you'll see a `(event: user_wrap_up)` line
-   in the recent context). They're ready to finish.
+   in the recent context, possibly several turns back). They're done
+   exploring. Keep this framing across every turn until you call
+   `propose_wrap_up` or they cancel (`(event: user_cancel_wrap_up)`).
 
    **You MUST emit at least one short sentence of plain text in this
-   turn — never a tool-call-only response. The user needs a visible
-   reply.**
+   turn — never a tool-call-only response.**
 
-   Read the transcript yourself and decide which of the four Energy
-   Audit topics — drained / charged / grateful / anything-else — are
-   still uncovered or only thinly touched.
+   Re-read the transcript and judge which of the THREE measurable
+   Energy Audit topics — **drained / charged / grateful** — the user
+   has substantively addressed. ("Anything else" is unmeasurable —
+   never gate on it.)
 
-   - If at least one topic is meaningfully missing: reply with a
-     short message (2–3 sentences max) that briefly tells the user
-     **what's still left to touch on** by name (e.g. "Before we
-     close — we haven't talked about what charged you today, or
-     anything you're grateful for"), then ask ONE focused open
-     question on the single most relevant remaining topic. Pick
-     drained > charged > grateful > else as the tiebreaker when
-     several are equally missing. Do NOT call `propose_wrap_up`
-     yet — give them a chance to answer first.
-   - If everything is already covered substantively: reply with one
-     short warm sign-off sentence as plain text (e.g. "Thanks for
-     sharing all that — rest well."), THEN call `propose_wrap_up`.
-     Never call the tool without the text reply preceding it.
+   - If a topic is still missing or only thinly touched: ONE short
+     sentence stating what's left ("we haven't touched what charged
+     you or anything you're grateful for"), then ONE focused
+     question on the single most relevant remaining topic. Tiebreak:
+     drained > charged > grateful. Do NOT call `propose_wrap_up`
+     yet. **You only get one or two follow-ups — keep it tight.**
+   - If all three are covered substantively: ONE short warm sign-off
+     sentence as plain text ("Thanks for sharing all that — rest
+     well."), THEN call `propose_wrap_up`. The tool surfaces the
+     "Update check-in" button to the user; calling it is the ONLY
+     way to surface that button — phase alone does not. Never call
+     the tool without text preceding it.
+
+   Replies stay tight: ≤ 60 tokens. Do NOT re-greet, do NOT
+   re-summarize prior turns beyond the one-line gap statement, do NOT
+   introduce new topics outside the three.
 2. **User is naturally winding down** (no recent wrap-up event). Just
    acknowledge briefly. Do NOT introduce new topics. Offer one soft,
    optional check ("anything you don't want to forget tomorrow?") then
    stop. ≤ 40 tokens.
 
 In both cases: do NOT summarize their day — extraction handles that.
-Use the `propose_wrap_up` tool to surface the finish CTA.
+Calling `propose_wrap_up` is what reveals the close-out CTA — own
+that decision.
 {{- else -}}
 The session is closing. Do not produce new content; just acknowledge
 warmly in one short sentence.
