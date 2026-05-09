@@ -1,7 +1,17 @@
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,21 +27,32 @@ import { cn } from "@/lib/utils";
 import type { Goal } from "./api";
 import {
   useAbandonGoal,
+  useActiveGoals,
   useAllGoals,
   useCompleteGoal,
   useCreateGoal,
 } from "./hooks";
+import { SmartShaperModal } from "./SmartShaperModal";
 
-// GoalsPage — list (active + historical) + create form. The SMART
-// shaper modal (Phase 5) will replace the manual form once wired.
+// GoalsPage — list (active + historical) + chat-first SMART shaper.
+// Manual fallback is one click away from inside the shaper modal.
+//
+// We call useActiveGoals alongside useAllGoals so we have a tz-correct
+// "today" string to drive the wrap-up gating in ActiveGoalCard. The
+// active query returns `local_date` from the server (resolved against
+// the user's timezone + day_start_minutes); deriving today from
+// browser-local Date would drift on the day_start boundary.
 export function GoalsPage() {
   const goals = useAllGoals();
+  const active = useActiveGoals();
+  const today = active.data?.local_date ?? null;
   const [creating, setCreating] = useState(false);
+  const [shaperOpen, setShaperOpen] = useState(false);
 
   if (goals.isPending) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (goals.isError) return <p className="text-sm text-destructive">Couldn't load goals.</p>;
   const all = goals.data?.goals ?? [];
-  const active = all.filter((g) => g.status === "active");
+  const activeGoals = all.filter((g) => g.status === "active");
   const historical = all.filter((g) => g.status !== "active");
 
   return (
@@ -43,11 +64,21 @@ export function GoalsPage() {
           </p>
           <h1 className="font-serif text-h1">What you're trying</h1>
         </div>
-        <Button onClick={() => setCreating(true)} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          New goal
+        {/* Single primary CTA. The manual create form stays reachable
+         *  via the SmartShaperModal's "Skip the shaper" fallback link,
+         *  intentionally adding friction for manual entry — the spec
+         *  prefers the SMART-shape conversation as the default path. */}
+        <Button onClick={() => setShaperOpen(true)} className="gap-1.5">
+          <Sparkles className="h-4 w-4" />
+          Shape a goal
         </Button>
       </header>
+
+      <SmartShaperModal
+        open={shaperOpen}
+        onOpenChange={setShaperOpen}
+        onFallback={() => setCreating(true)}
+      />
 
       {creating ? (
         <CreateGoalCard onClose={() => setCreating(false)} />
@@ -55,15 +86,15 @@ export function GoalsPage() {
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">Active</h2>
-        {active.length === 0 ? (
+        {activeGoals.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No active goals. Spot a pattern in your week, then commit to one
             small change.
           </p>
         ) : (
           <div className="space-y-3">
-            {active.map((g) => (
-              <ActiveGoalCard key={g.id} goal={g} />
+            {activeGoals.map((g) => (
+              <ActiveGoalCard key={g.id} goal={g} today={today} />
             ))}
           </div>
         )}
@@ -85,15 +116,31 @@ export function GoalsPage() {
 
 // ---------------- Active row ----------------
 
-function ActiveGoalCard({ goal }: { goal: Goal }) {
+function ActiveGoalCard({
+  goal,
+  today,
+}: {
+  goal: Goal;
+  // tz-correct YYYY-MM-DD from useActiveGoals; null while loading.
+  today: string | null;
+}) {
   const complete = useCompleteGoal();
   const abandon = useAbandonGoal();
-  const [wrapping, setWrapping] = useState(false);
   const [outcome, setOutcome] = useState<"kept" | "dropped" | "inconclusive">("kept");
   const [conclusionText, setConclusionText] = useState("");
+  const [abandonOpen, setAbandonOpen] = useState(false);
+  const [abandonReason, setAbandonReason] = useState("");
+
+  // Spec: "On the end date, the system asks the user to wrap up the
+  // goal." Wrap-up is event-triggered, not a manual mid-stream control
+  // — so we surface the form automatically when the goal has reached
+  // (or passed) its end_date. ISO YYYY-MM-DD strings sort
+  // lexicographically, so a string compare is equivalent to a date
+  // compare here.
+  const dueForWrapUp = today !== null && goal.end_date <= today;
 
   return (
-    <Card>
+    <Card className={dueForWrapUp ? "border-accent/50" : undefined}>
       <CardHeader className="pb-2">
         <CardTitle className="font-serif text-base">{goal.title}</CardTitle>
       </CardHeader>
@@ -103,24 +150,11 @@ function ActiveGoalCard({ goal }: { goal: Goal }) {
           {goal.start_date} → {goal.end_date}
         </p>
 
-        {!wrapping ? (
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => setWrapping(true)}>
-              Wrap up
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                abandon.mutate({ id: goal.id, conclusionText: "" })
-              }
-              disabled={abandon.isPending}
-            >
-              Abandon
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-3 rounded-md border border-border/60 p-3">
+        {dueForWrapUp ? (
+          <div className="space-y-3 rounded-md border border-accent/40 bg-accent/5 p-3">
+            <p className="text-sm font-medium">
+              This goal ends today — how did it go?
+            </p>
             <div className="space-y-1">
               <label className="text-xs uppercase tracking-wider text-muted-foreground">
                 Outcome
@@ -148,31 +182,79 @@ function ActiveGoalCard({ goal }: { goal: Goal }) {
                 placeholder="What got in the way, what worked…"
               />
             </div>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={() => {
-                  complete.mutate(
-                    { id: goal.id, outcome, conclusionText },
-                    { onSuccess: () => setWrapping(false) },
-                  );
-                }}
-                disabled={complete.isPending}
-              >
-                Save wrap-up
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setWrapping(false)}
-                disabled={complete.isPending}
-              >
-                Cancel
-              </Button>
-            </div>
+            <Button
+              size="sm"
+              onClick={() => {
+                complete.mutate({ id: goal.id, outcome, conclusionText });
+              }}
+              disabled={complete.isPending}
+            >
+              Save wrap-up
+            </Button>
           </div>
-        )}
+        ) : null}
+
+        {/* Abandon is always available — mid-stream "this isn't working"
+         *  is a separate path from the natural end-date wrap-up. Spec:
+         *  "Failure data is more valuable than completion data."
+         *
+         *  The why-modal is required: knowing why a goal didn't stick
+         *  is the actual value of capturing the failure, so we won't
+         *  let the user submit an empty reason. */}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setAbandonReason("");
+            setAbandonOpen(true);
+          }}
+          disabled={abandon.isPending}
+        >
+          Abandon
+        </Button>
       </CardContent>
+
+      <AlertDialog open={abandonOpen} onOpenChange={setAbandonOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Abandon &ldquo;{goal.title}&rdquo;?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Knowing why you didn&apos;t follow your goal to the end is more
+              important than actually following it. Make sure to fill that in.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea
+            rows={3}
+            value={abandonReason}
+            onChange={(e) => setAbandonReason(e.target.value)}
+            maxLength={1000}
+            placeholder="What got in the way? Wrong shape, wrong time, wrong question…"
+            autoFocus
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep the goal</AlertDialogCancel>
+            <AlertDialogAction
+              className={cn(buttonVariants({ variant: "destructive" }))}
+              disabled={abandonReason.trim().length === 0 || abandon.isPending}
+              onClick={(e) => {
+                if (abandonReason.trim().length === 0) {
+                  // Belt-and-suspenders: AlertDialogAction auto-closes
+                  // on click, so we cancel that path when empty even
+                  // though `disabled` should already block it.
+                  e.preventDefault();
+                  return;
+                }
+                abandon.mutate({
+                  id: goal.id,
+                  conclusionText: abandonReason.trim(),
+                });
+              }}
+            >
+              Abandon goal
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

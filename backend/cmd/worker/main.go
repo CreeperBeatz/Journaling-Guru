@@ -70,11 +70,11 @@ func main() {
 
 	summaryLLM := llm.NewOpenRouter(
 		cfg.OpenRouterKey, cfg.SummaryModel,
-		cfg.PublicBaseURL, "JournAI",
+		cfg.PublicBaseURL, "Journaling Guru",
 	)
 	classifyLLM := llm.NewOpenRouter(
 		cfg.OpenRouterKey, cfg.ClassifyModel,
-		cfg.PublicBaseURL, "JournAI",
+		cfg.PublicBaseURL, "Journaling Guru",
 	)
 
 	scheduler := &jobs.Scheduler{
@@ -85,14 +85,15 @@ func main() {
 	}
 
 	worker := &jobs.SummaryWorker{
-		Summaries:   summaries,
-		Jobs:        jobsStore,
-		Entries:     entries,
-		DailyInputs: dailyInputs,
-		Users:       users,
-		Scheduler:   scheduler,
-		LLM:         summaryLLM,
-		Logger:      logger,
+		Summaries:      summaries,
+		Jobs:           jobsStore,
+		Entries:        entries,
+		DailyInputs:    dailyInputs,
+		DailyEntryTags: dailyEntryTags,
+		Users:          users,
+		Scheduler:      scheduler,
+		LLM:            summaryLLM,
+		Logger:         logger,
 	}
 	reminderScheduler := &jobs.ReminderScheduler{
 		Jobs:   reminderJobs,

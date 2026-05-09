@@ -132,17 +132,22 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	}
 	tagsH := &handlers.TagHandler{Tags: tags, Logger: logger}
 	goalsH := &handlers.GoalHandler{
-		Goals:    goals,
-		CheckIns: goalCheckIns,
-		Users:    users,
-		Logger:   logger,
+		Goals:     goals,
+		CheckIns:  goalCheckIns,
+		Users:     users,
+		Logger:    logger,
+		// ChatLLM + ChatModel filled in below alongside the chat handler
+		// — the shaper streams via the same chat-tier client.
 	}
 	summariesH := &handlers.SummaryHandler{
-		Summaries:   summaries,
-		Jobs:        summaryJobs,
-		Users:       users,
-		DailyInputs: dailyInputs,
-		Logger:      logger,
+		Summaries:      summaries,
+		Jobs:           summaryJobs,
+		Users:          users,
+		DailyInputs:    dailyInputs,
+		DailyEntryTags: dailyEntryTags,
+		Goals:          goals,
+		CheckIns:       goalCheckIns,
+		Logger:         logger,
 	}
 	pushH := &handlers.PushHandler{
 		Subs:        pushSubs,
@@ -156,11 +161,11 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	}
 	chatLLM := llm.NewOpenRouter(
 		cfg.OpenRouterKey, cfg.ChatModel,
-		cfg.PublicBaseURL, "JournAI",
+		cfg.PublicBaseURL, "Journaling Guru",
 	)
 	classifyLLM := llm.NewOpenRouter(
 		cfg.OpenRouterKey, cfg.ClassifyModel,
-		cfg.PublicBaseURL, "JournAI",
+		cfg.PublicBaseURL, "Journaling Guru",
 	)
 	chatH := &handlers.ChatHandler{
 		Sessions:       chatSessions,
@@ -179,6 +184,12 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		KeepLastN:      cfg.ChatTranscriptKeepLast,
 		ResourcesURL:   cfg.ChatCrisisResourcesURL,
 	}
+	// SMART shaper streams via the same chat-tier client. The model
+	// constant is the chat model unless a per-call override is added
+	// later (per-user model preference is a v2.x feature).
+	goalsH.ChatLLM = chatLLM
+	goalsH.ChatModel = cfg.ChatModel
+
 	healthH := handlers.NewHealth(db)
 
 	r := chi.NewRouter()
@@ -250,9 +261,10 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 					r.Post("/tags/{id}/merge", tagsH.Merge)
 					r.Delete("/tags/{id}", tagsH.Archive)
 
-					r.Post("/goals", goalsH.Create)
-					r.Patch("/goals/{id}", goalsH.Update)
-					r.Post("/goals/{id}/check-ins", goalsH.CheckIn)
+					// /goals routes are mounted on a dedicated subrouter
+					// further down (chi requires a single Route block per
+					// prefix; the SSE /draft endpoint needs to escape the
+					// chimw.Timeout middleware, so we keep them together).
 
 					r.Post("/summaries/regenerate", summariesH.Regenerate)
 
@@ -276,14 +288,48 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 
 				r.Get("/tags", tagsH.List)
 
-				r.Get("/goals", goalsH.List)
+				// /goals reads also live on the dedicated /goals subrouter.
 
 				r.Get("/summaries", summariesH.List)
 				r.Get("/summaries/stats", summariesH.Stats)
 				r.Get("/summaries/jobs/status", summariesH.JobStatus)
 				r.Get("/summaries/{id}", summariesH.Get)
 
+				// Energy Audit three-zone summary surface.
+				r.Get("/summary/zone1", summariesH.Zone1)
+				r.Get("/summary/zone2", summariesH.Zone2)
+				r.Get("/summary/zone3", summariesH.Zone3)
+
+				// Phase 7 — Weekly reflection pattern view.
+				r.Get("/reflection/this-week", summariesH.WeeklyReflection)
+
 				r.Get("/push/state", pushH.State)
+			})
+		})
+
+		// /api/goals — single subrouter so chi doesn't have to choose
+		// between sibling matchers. The /draft SSE stream skips
+		// chimw.Timeout (Flusher issue, same as /api/chat); the rest
+		// of the goals routes get the standard 30s timeout.
+		r.Route("/goals", func(r chi.Router) {
+			r.Use(mw.RequireAuth(sessionSvc, cfg.SessionCookieName))
+
+			// Streaming endpoint — no Timeout.
+			r.Group(func(r chi.Router) {
+				r.Use(mw.CSRF)
+				r.Post("/draft", goalsH.Draft)
+			})
+
+			// Non-streaming endpoints — with Timeout.
+			r.Group(func(r chi.Router) {
+				r.Use(chimw.Timeout(30 * time.Second))
+				r.Get("/", goalsH.List)
+				r.Group(func(r chi.Router) {
+					r.Use(mw.CSRF)
+					r.Post("/", goalsH.Create)
+					r.Patch("/{id}", goalsH.Update)
+					r.Post("/{id}/check-ins", goalsH.CheckIn)
+				})
 			})
 		})
 

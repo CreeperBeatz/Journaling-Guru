@@ -13,6 +13,8 @@ import (
 
 	"github.com/cosmosthrace/journai/backend/internal/domain"
 	"github.com/cosmosthrace/journai/backend/internal/httpapi/middleware"
+	"github.com/cosmosthrace/journai/backend/internal/llm"
+	"github.com/cosmosthrace/journai/backend/internal/llm/goals"
 	"github.com/cosmosthrace/journai/backend/internal/store"
 	"github.com/cosmosthrace/journai/backend/internal/timezone"
 )
@@ -21,10 +23,12 @@ import (
 // a pattern" and "tried to change something." Each active goal renders
 // a yes/no daily check-in on /today.
 type GoalHandler struct {
-	Goals    *store.GoalStore
-	CheckIns *store.GoalCheckInStore
-	Users    *store.UserStore
-	Logger   *slog.Logger
+	Goals     *store.GoalStore
+	CheckIns  *store.GoalCheckInStore
+	Users     *store.UserStore
+	ChatLLM   *llm.OpenRouter // shaper streams via the chat-tier client
+	ChatModel string
+	Logger    *slog.Logger
 }
 
 const (
@@ -279,6 +283,156 @@ func (h *GoalHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, c)
+}
+
+// ---------- /goals/draft (SMART shaper) ----------
+
+type draftMessage struct {
+	Role    string `json:"role"`    // "user" | "assistant"
+	Content string `json:"content"`
+}
+
+type draftRequest struct {
+	Messages []draftMessage `json:"messages"`
+	// Opener=true on the first call: the FE has just opened the modal
+	// with no conversation yet and wants the shaper's welcoming first
+	// message. Server injects the opener instruction.
+	Opener bool `json:"opener"`
+}
+
+const (
+	maxDraftTurns        = 24   // hard cap on conversation depth
+	maxDraftMessageChars = 4000 // per turn
+	shaperMaxTokens      = 400  // small replies; tool calls don't need much
+)
+
+// Draft handles POST /api/goals/draft. Streams a single assistant turn
+// from the SMART shaper given the prior conversation. Stateless on the
+// server — the FE owns the message history and resends it each turn.
+//
+// SSE event vocabulary mirrors /api/chat (token / tool / done / error)
+// so the FE can reuse its parser.
+func (h *GoalHandler) Draft(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if h.ChatLLM == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "shaper not configured")
+		return
+	}
+	var req draftRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if len(req.Messages) > maxDraftTurns {
+		writeJSONError(w, http.StatusBadRequest, "conversation too long")
+		return
+	}
+
+	llmMsgs := make([]llm.Message, 0, len(req.Messages)+1)
+	for _, m := range req.Messages {
+		role := strings.TrimSpace(m.Role)
+		content := strings.TrimSpace(m.Content)
+		if content == "" {
+			continue
+		}
+		if len(content) > maxDraftMessageChars {
+			content = content[:maxDraftMessageChars]
+		}
+		switch role {
+		case "user", "assistant":
+			llmMsgs = append(llmMsgs, llm.Message{Role: role, Content: content})
+		default:
+			// Drop unknown roles silently; never trust client input.
+			continue
+		}
+	}
+
+	if req.Opener {
+		// Synthetic priming user turn that's NOT echoed back to the FE
+		// — the system prompt's rules + this nudge make the model
+		// produce the welcoming first message.
+		llmMsgs = []llm.Message{{Role: "user", Content: goals.ShaperOpenerInstruction}}
+	} else if len(llmMsgs) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "empty conversation")
+		return
+	}
+
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+	writeSSEHeaders(w)
+
+	model := h.ChatModel
+	chunks, err := h.ChatLLM.CompleteStream(r.Context(), llm.StreamRequest{
+		Model:           model,
+		System:          goals.ShaperSystemPrompt,
+		Messages:        llmMsgs,
+		Tools:           goals.ShaperTools,
+		MaxTokens:       shaperMaxTokens,
+		Temperature:     0.5,
+		SystemCacheable: true,
+	})
+	if err != nil {
+		writeSSEFrame(w, rc, "error", map[string]any{"message": err.Error()})
+		return
+	}
+
+	type heldToolCall struct {
+		Name string
+		Args map[string]any
+	}
+	var fullContent strings.Builder
+	var toolCalls []heldToolCall
+	var done *llm.StreamDone
+	var streamErr error
+
+	for chunk := range chunks {
+		if r.Context().Err() != nil {
+			for range chunks {
+			}
+			return
+		}
+		if chunk.Err != nil {
+			streamErr = chunk.Err
+			break
+		}
+		if chunk.Delta != "" {
+			fullContent.WriteString(chunk.Delta)
+			if !writeSSEFrame(w, rc, "token", map[string]any{"delta": chunk.Delta}) {
+				return
+			}
+		}
+		if chunk.ToolCall != nil {
+			toolCalls = append(toolCalls, heldToolCall{Name: chunk.ToolCall.Name, Args: chunk.ToolCall.Args})
+		}
+		if chunk.Done != nil {
+			done = chunk.Done
+		}
+	}
+
+	if streamErr != nil {
+		writeSSEFrame(w, rc, "error", map[string]any{"message": streamErr.Error()})
+		return
+	}
+
+	for _, tc := range toolCalls {
+		writeSSEFrame(w, rc, "tool", map[string]any{
+			"name": tc.Name,
+			"args": tc.Args,
+		})
+	}
+
+	donePayload := map[string]any{}
+	if done != nil {
+		donePayload["prompt_tokens"] = done.PromptTokens
+		donePayload["completion_tokens"] = done.CompletionTokens
+		donePayload["finish_reason"] = done.FinishReason
+		donePayload["model"] = done.Model
+	}
+	writeSSEFrame(w, rc, "done", donePayload)
 }
 
 func (h *GoalHandler) resolveCheckInDate(ctx context.Context, userID string, raw *string) (time.Time, error) {

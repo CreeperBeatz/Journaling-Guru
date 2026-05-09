@@ -14,6 +14,12 @@ interface Props {
   // The textarea + send button still render normally; only the wrapper
   // changes.
   bare?: boolean;
+  // Slot rendered on the left side of the action row beneath the
+  // textarea (e.g. a kebab menu).
+  bottomLeft?: React.ReactNode;
+  // Slot rendered on the right side of the action row, immediately
+  // before the Send button (e.g. a wrap-up CTA).
+  bottomRight?: React.ReactNode;
 }
 
 const MAX_LEN = 4_000;
@@ -22,7 +28,7 @@ const MAX_LEN = 4_000;
 // chat. Auto-grows up to ~6 lines, then scrolls. Enter submits;
 // Shift+Enter inserts a newline. The send button is the only mouse
 // affordance — Cmd/Ctrl+Enter also fires it for keyboard heavies.
-export function ComposerInput({ onSend, disabled, pending, placeholder, bare }: Props) {
+export function ComposerInput({ onSend, disabled, pending, placeholder, bare, bottomLeft, bottomRight }: Props) {
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -54,7 +60,7 @@ export function ComposerInput({ onSend, disabled, pending, placeholder, bare }: 
   return (
     <div
       className={cn(
-        "flex items-end gap-2",
+        "flex flex-col gap-1",
         bare
           ? cn("px-1 py-1", disabled && "opacity-60")
           : cn(
@@ -75,26 +81,32 @@ export function ComposerInput({ onSend, disabled, pending, placeholder, bare }: 
         disabled={disabled}
         placeholder={placeholder ?? "Say something…"}
         className={cn(
-          "min-w-0 flex-1 resize-none bg-transparent py-2 text-base leading-relaxed",
+          "w-full resize-none bg-transparent py-1 text-base leading-relaxed",
           "placeholder:text-muted-foreground focus:outline-none",
           "min-h-[2.5rem] max-h-60",
         )}
       />
-      <Button
-        type="button"
-        size="icon"
-        variant="default"
-        onClick={submit}
-        disabled={disabled || pending || value.trim().length === 0}
-        aria-label="Send message"
-        className="shrink-0"
-      >
-        {pending ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Send className="h-4 w-4" />
-        )}
-      </Button>
+      <div className="flex items-center gap-2">
+        <div className="flex items-center">{bottomLeft}</div>
+        <div className="ml-auto flex items-center gap-2">
+          {bottomRight}
+          <Button
+            type="button"
+            size="icon"
+            variant="default"
+            onClick={submit}
+            disabled={disabled || pending || value.trim().length === 0}
+            aria-label="Send message"
+            className="shrink-0"
+          >
+            {pending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

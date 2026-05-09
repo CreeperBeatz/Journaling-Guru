@@ -1,30 +1,28 @@
-import { useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useSummaries } from "@/features/summaries/hooks";
+import { Zone1Card, Zone2Card, Zone3Card } from "./Zones";
+import {
+  useSummaryZone1,
+  useSummaryZone2,
+  useSummaryZone3,
+} from "./hooks";
 
-import { WeeklyLetter } from "./WeeklyLetter";
-import { ByQuestionTimeline } from "./ByQuestionTimeline";
-import { TrendsDashboard } from "./TrendsDashboard";
-
-type Tab = "trends" | "by-question";
-
-/**
- * /summary — two-tab surface:
- *   - Trends: WeeklyLetter (hero) + collapsible TrendsDashboard
- *     (StatTiles + MoodLine + WordCloud + GuruNote).
- *   - By Question: question rail + vertical timeline.
- *
- * The most recent weekly summary drives the letter and seeds the
- * dashboard's GuruNote / accent pick. When no weekly summary exists
- * yet, WeeklyLetter renders its empty-state copy and the dashboard
- * still surfaces stats from the daily summary stream.
- */
+// /summary — three-zone vertical stack under the Energy Audit pivot.
+//
+//   Zone 1 — At a glance:    sparkline, 7d-vs-prior delta, headline,
+//                            active goal status.
+//   Zone 2 — What's driving: top drainers + top chargers (last 30d)
+//                            with avg-mood and a low-confidence badge
+//                            for tags under the spec's 7-appearance
+//                            threshold.
+//   Zone 3 — What I tried:   goals ledger (active + historical).
+//
+// Replaces the prior Trends + By Question tabs surface entirely. Each
+// zone is its own query so a single failure doesn't blank the page.
 export function SummaryPage() {
-  const [tab, setTab] = useState<Tab>("trends");
-  const weekly = useSummaries("week", 1);
-
-  const latestLetter = weekly.data?.[0] ?? null;
+  const zone1 = useSummaryZone1();
+  const zone2 = useSummaryZone2(30);
+  const zone3 = useSummaryZone3();
 
   return (
     <div className="space-y-6">
@@ -32,24 +30,52 @@ export function SummaryPage() {
         <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
           Summary
         </p>
-        <h1 className="font-serif text-h1">Patterns over time</h1>
+        <h1 className="font-serif text-h1">Patterns</h1>
       </header>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="trends">Trends</TabsTrigger>
-          <TabsTrigger value="by-question">By question</TabsTrigger>
-        </TabsList>
+      {zone1.isPending ? (
+        <SkeletonCard label="Loading at-a-glance…" />
+      ) : zone1.isError ? (
+        <ErrorCard message={zone1.error.message} />
+      ) : zone1.data ? (
+        <Zone1Card data={zone1.data} />
+      ) : null}
 
-        <TabsContent value="trends" className="m-0 space-y-6">
-          <WeeklyLetter summary={latestLetter} loading={weekly.isPending} />
-          <TrendsDashboard weekly={latestLetter} />
-        </TabsContent>
+      {zone2.isPending ? (
+        <SkeletonCard label="Loading drainers and chargers…" />
+      ) : zone2.isError ? (
+        <ErrorCard message={zone2.error.message} />
+      ) : zone2.data ? (
+        <Zone2Card data={zone2.data} />
+      ) : null}
 
-        <TabsContent value="by-question" className="m-0">
-          <ByQuestionTimeline />
-        </TabsContent>
-      </Tabs>
+      {zone3.isPending ? (
+        <SkeletonCard label="Loading goals…" />
+      ) : zone3.isError ? (
+        <ErrorCard message={zone3.error.message} />
+      ) : zone3.data ? (
+        <Zone3Card data={zone3.data} />
+      ) : null}
     </div>
+  );
+}
+
+function SkeletonCard({ label }: { label: string }) {
+  return (
+    <Card>
+      <CardContent className="px-6 py-8 text-sm text-muted-foreground">
+        {label}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ErrorCard({ message }: { message: string }) {
+  return (
+    <Card>
+      <CardContent className="px-6 py-8 text-sm text-destructive">
+        {message}
+      </CardContent>
+    </Card>
   );
 }

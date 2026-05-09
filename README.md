@@ -1,4 +1,4 @@
-# JournAI v2
+# Journaling Guru
 
 Daily journaling app — written or spoken — with multi-period AI reflections, push reminders, and magic-link auth. Self-hosted SaaS.
 

@@ -4,7 +4,6 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,7 +15,6 @@ import {
   useFinalizeChat,
   useTodayChatSession,
 } from "@/features/chat/hooks";
-import { minutesToHHMM } from "@/lib/dayStart";
 
 import { listEntries } from "./api";
 import { useEntries, ENTRY_DATES_KEY, entriesKey } from "./hooks";
@@ -24,6 +22,7 @@ import { DailyInputs } from "@/features/daily/DailyInputs";
 import type { DailyInput, DailyInputUpsertBody, TagDayLink } from "@/features/daily/api";
 import { useDailyInput, useSaveDailyInput } from "@/features/daily/hooks";
 import { GoalCheckInBlock } from "@/features/goals/GoalCheckInBlock";
+import { WeeklyReflection } from "@/features/reflection/WeeklyReflection";
 
 // Three modes coexist on /today (Phase 6a). Talk is reserved for 6b
 // (voice via OpenAI Realtime) and renders as a disabled "soon" tab.
@@ -48,29 +47,13 @@ function readDefaultMode(urlMode: string | null): TodayMode {
   return "chat";
 }
 
-// useNow ticks every 30s — fine-grained enough that the clock visibly
-// matches the wall and the rollover boundary appears live, without
-// re-rendering the page every second.
-function useNow(): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(t);
-  }, []);
-  return now;
-}
-
-function formatHumanDate(yyyymmdd: string): string {
+// weekdayOf returns 0..6 (Sun..Sat) for a YYYY-MM-DD string. The
+// local_date is a wall-clock day, so we parse in UTC space and read
+// getUTCDay — this avoids any timezone drift.
+function weekdayOf(yyyymmdd: string): number | null {
   const [y, m, d] = yyyymmdd.split("-").map(Number);
-  if (!y || !m || !d) return yyyymmdd;
-  const date = new Date(Date.UTC(y, m - 1, d));
-  return date.toLocaleDateString(undefined, {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  if (!y || !m || !d) return null;
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
 // Calendar arithmetic in UTC space — the local_date is a wall-clock day so
@@ -91,14 +74,8 @@ export function DailyEntry() {
   const entries = useEntries();
   const dailyInput = useDailyInput();
   const saveDaily = useSaveDailyInput();
-  // Auto-hide the date banner when the chat scrolls down. ChatPanel
-  // attaches a scroll listener and calls back with a hidden flag.
-  // Reset to visible whenever the user switches modes — sticking
-  // hidden across a Manual ↔ Chat round-trip would be confusing.
-  const [headerHidden, setHeaderHidden] = useState(false);
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const now = useNow();
 
   const [searchParams, setSearchParams] = useSearchParams();
   const urlMode = searchParams.get("mode");
@@ -118,7 +95,6 @@ export function DailyEntry() {
     (next: string) => {
       if (!isMode(next) || next === "talk") return; // talk is disabled in 6a
       setMode(next);
-      setHeaderHidden(false);
       if (typeof window !== "undefined") {
         window.localStorage.setItem(MODE_STORAGE_KEY, next);
       }
@@ -160,16 +136,32 @@ export function DailyEntry() {
 
   const today = entries.data?.local_date;
   const yesterday = today ? dayBefore(today) : null;
-  const dayLabel = today ? formatHumanDate(today) : "Today";
 
-  const currentTime = me.data
-    ? new Intl.DateTimeFormat(undefined, {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZone: me.data.timezone,
-      }).format(now)
-    : null;
+  // Phase 7 — Weekly reflection. On the user's chosen reflection_weekday
+  // we replace the daily Manual/Chat tabs with the reflection flow. The
+  // user can opt out by passing ?mode=manual or ?mode=chat in the URL
+  // (and a "switch to today's check-in" link is rendered inline).
+  const todayWeekday = today ? weekdayOf(today) : null;
+  const onReflectionDay =
+    !!me.data && todayWeekday !== null && todayWeekday === me.data.reflection_weekday;
+  const userOverride = isMode(urlMode) && urlMode !== "talk";
+  if (onReflectionDay && !userOverride) {
+    return (
+      <div className="space-y-6">
+        <WeeklyReflection
+          dailyInput={dailyInput.data?.input ?? null}
+          tags={dailyInput.data?.tags ?? []}
+        />
+        <button
+          type="button"
+          onClick={() => handleModeChange("manual")}
+          className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+        >
+          Switch to today&apos;s daily check-in instead →
+        </button>
+      </div>
+    );
+  }
 
   const onRefresh = async () => {
     await Promise.all([
@@ -207,10 +199,7 @@ export function DailyEntry() {
       </TabsContent>
 
       <TabsContent value="chat" className="mt-0">
-        <ChatPanel
-          headerHidden={headerHidden}
-          onHeaderHiddenChange={setHeaderHidden}
-        />
+        <ChatPanel />
       </TabsContent>
 
       <TabsContent value="talk" className="mt-6">
@@ -223,74 +212,52 @@ export function DailyEntry() {
     </>
   );
 
+  const statusPill =
+    extractionStatus === "pending" || extractionStatus === "running" ? (
+      <span
+        role="status"
+        aria-live="polite"
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-medium text-accent"
+      >
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+        Updating check-in…
+      </span>
+    ) : extractionStatus === "failed" ? (
+      <button
+        type="button"
+        onClick={handleRetryFinalize}
+        disabled={finalizeRetry.isPending}
+        title={extractionError ?? "Extraction failed — tap to retry"}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-60"
+      >
+        <AlertCircle className="h-3 w-3" aria-hidden />
+        {finalizeRetry.isPending ? "Retrying…" : "Retry update"}
+      </button>
+    ) : null;
+
   return (
     <Tabs value={mode} onValueChange={handleModeChange}>
-      {/* Auto-hide-on-scroll-down: max-height + opacity collapse when
-       *  ChatPanel reports a downward scroll. Transitioning max-height
-       *  rather than display so the tab strip below slides up smoothly
-       *  and the chat panel's `top` (which depends on headerHidden) can
-       *  animate in lockstep. */}
-      <header
-        aria-hidden={headerHidden}
-        className={cn(
-          "flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2 overflow-hidden",
-          "transition-[max-height,opacity,margin] duration-200 ease-out",
-          headerHidden
-            ? "pointer-events-none mb-0 max-h-0 opacity-0"
-            : "mb-4 max-h-[8rem] opacity-100",
-        )}
-      >
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="font-serif text-h1">{dayLabel}</h1>
-          {me.data ? (
-            <p className="font-mono text-xs tabular-nums text-muted-foreground">
-              <span>{currentTime}</span> · {me.data.timezone} · new day at{" "}
-              {minutesToHHMM(me.data.day_start_minutes)}
-            </p>
-          ) : null}
-        </div>
-
-        {extractionStatus === "pending" || extractionStatus === "running" ? (
-          <span
-            role="status"
-            aria-live="polite"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-medium text-accent"
-          >
-            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-            Updating check-in…
-          </span>
-        ) : extractionStatus === "failed" ? (
-          <button
-            type="button"
-            onClick={handleRetryFinalize}
-            disabled={finalizeRetry.isPending}
-            title={extractionError ?? "Extraction failed — tap to retry"}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-60"
-          >
-            <AlertCircle className="h-3 w-3" aria-hidden />
-            {finalizeRetry.isPending ? "Retrying…" : "Retry update"}
-          </button>
-        ) : null}
-      </header>
-
       <div
         // Top offset is the AppShell mobile header's actual rendered
         // height (set as a CSS var by AppShell's ResizeObserver).
         // Resolves to 0 on desktop where the mobile header is
         // `md:hidden`, so the bar pins to viewport top there.
         style={{ top: "var(--app-mobile-header-h, 0px)" }}
-        className="sticky z-20 -mx-4 md:-mx-8 px-4 md:px-8 py-2 bg-background/85 backdrop-blur-md border-b border-border/60"
+        className="sticky z-20 -mx-4 -mt-6 md:-mx-8 md:-mt-10 px-4 md:px-8 py-2 bg-background/85 backdrop-blur-md border-b border-border/60"
       >
-        <TabsList className="grid h-9 w-full grid-cols-3 md:inline-flex md:w-auto">
-          <TabsTrigger value="manual">Manual</TabsTrigger>
-          <TabsTrigger value="chat">Chat</TabsTrigger>
-          <TabsTrigger value="talk" disabled className="gap-1.5">
-            Talk
-            <span className="rounded-full bg-muted-foreground/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-              soon
-            </span>
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex items-center gap-3">
+          <TabsList className="grid w-full grid-cols-3 md:inline-flex md:w-auto">
+            <TabsTrigger value="manual">Manual</TabsTrigger>
+            <TabsTrigger value="chat">Chat</TabsTrigger>
+            <TabsTrigger value="talk" disabled className="gap-1.5">
+              Talk
+              <span className="rounded-full bg-muted-foreground/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                soon
+              </span>
+            </TabsTrigger>
+          </TabsList>
+          {statusPill ? <div className="ml-auto">{statusPill}</div> : null}
+        </div>
       </div>
 
       <PullToRefresh onRefresh={onRefresh}>

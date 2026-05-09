@@ -16,14 +16,14 @@ import {
   useTodayChatSession,
   visibleMessages,
 } from "./hooks";
-import { ComposerActions } from "./components/ComposerActions";
+import { ChatKebab, WrapUpButton } from "./components/ComposerActions";
 import { ComposerInput } from "./components/ComposerInput";
-import { CoverageChips } from "./components/CoverageChips";
 import { CrisisCard } from "./components/CrisisCard";
 import { MessageList } from "./components/MessageList";
 
 // All four Energy Audit topic codes. Mirrors backend
-// internal/llm/chat/coverage.go::CoverageCodes.
+// internal/llm/chat/coverage.go::CoverageCodes. Used to gate the
+// Wrap-up CTA: once every topic is covered, we stop nudging.
 const ALL_TOPIC_CODES = ["drained", "charged", "grateful", "else"] as const;
 
 // "At bottom" tolerance for auto-follow: if the user is within this many
@@ -32,27 +32,10 @@ const ALL_TOPIC_CODES = ["drained", "charged", "grateful", "else"] as const;
 // even when slightly scrolled up).
 const AT_BOTTOM_PX = 80;
 
-// Threshold for the auto-hide-on-scroll-down trigger. The banner stays
-// visible until the user has scrolled down at least this far.
-const HIDE_HEADER_AFTER_PX = 80;
-
-// Minimum scroll-delta to react to (avoids jitter from inertial scroll
-// rebound and pixel-rounded touchpads).
-const SCROLL_DELTA_MIN_PX = 8;
-
-interface Props {
-  // Called when the chat's internal scroll direction changes meaningfully.
-  // DailyEntry uses this to auto-hide the date banner.
-  onHeaderHiddenChange?: (hidden: boolean) => void;
-  // Whether the date banner is currently hidden. Drives the chat's `top`
-  // offset so the chat surface gains the banner's height when collapsed.
-  headerHidden?: boolean;
-}
-
 // ChatPanel is the chat-mode body of /today. Claude.ai-style: full-bleed
-// fixed overlay between the AppShell's sidebar / mobile header / bottom
-// tab bar. The message stream owns its own scroll container; its right
-// edge coincides with the viewport right edge so the browser scrollbar
+// fixed overlay between the AppShell's sidebar / mobile header. The
+// message stream owns its own scroll container; its right edge
+// coincides with the viewport right edge so the browser scrollbar
 // appears there, NOT buried inside a centered max-width card.
 //
 // Fade + composer pill live INSIDE the scroll container as sticky-bottom
@@ -61,7 +44,7 @@ interface Props {
 // composer's own height is part of the scrollable content, so
 // scrollHeight already accounts for it — auto-scroll-to-bottom lands
 // the messages at the visible region above the pinned composer.
-export function ChatPanel({ onHeaderHiddenChange, headerHidden }: Props) {
+export function ChatPanel() {
   const sessionQuery = useTodayChatSession();
   const createOrResume = useCreateOrResumeSession();
   const finalize = useFinalizeChat();
@@ -100,53 +83,17 @@ export function ChatPanel({ onHeaderHiddenChange, headerHidden }: Props) {
     return new Set<string>(session?.covered_question_ids ?? []);
   }, [session?.covered_question_ids]);
 
-  // Scroll bookkeeping. Two derived signals:
-  //   1. isAtBottomRef — controls auto-follow. We re-anchor to the bottom
-  //      on every content change as long as the user hasn't scrolled away.
-  //   2. lastY for the header-hide direction detector.
+  // isAtBottomRef controls auto-follow — we re-anchor to the bottom on
+  // every content change as long as the user hasn't scrolled away.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isAtBottomRef = useRef(true);
-  const lastY = useRef(0);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const y = el.scrollTop;
-    const distanceFromBottom = el.scrollHeight - el.clientHeight - y;
+    const distanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
     isAtBottomRef.current = distanceFromBottom <= AT_BOTTOM_PX;
-
-    if (!onHeaderHiddenChange) return;
-
-    // Auto-follow / at-bottom: force banner hidden, ignore direction
-    // entirely. This is the load-bearing fix for the flicker — token-
-    // by-token programmatic scrolls during streaming were producing
-    // tiny deltas in both directions that rapidly toggled the banner.
-    if (isAtBottomRef.current && y > HIDE_HEADER_AFTER_PX) {
-      onHeaderHiddenChange(true);
-      lastY.current = y;
-      return;
-    }
-
-    // Near the top: always show the banner. A user who's scrolled all
-    // the way back up is reading from the start and shouldn't be
-    // chasing a hidden header.
-    if (y <= HIDE_HEADER_AFTER_PX) {
-      onHeaderHiddenChange(false);
-      lastY.current = y;
-      return;
-    }
-
-    // Mid-scroll, not at-bottom: follow scroll direction.
-    const delta = y - lastY.current;
-    if (Math.abs(delta) >= SCROLL_DELTA_MIN_PX) {
-      if (delta > 0) {
-        onHeaderHiddenChange(true);
-      } else {
-        onHeaderHiddenChange(false);
-      }
-      lastY.current = y;
-    }
-  }, [onHeaderHiddenChange]);
+  }, []);
 
   // Auto-follow: snap the scroll to the bottom whenever the visible
   // content grows AND the user was already at-or-near the bottom. Use
@@ -242,20 +189,17 @@ export function ChatPanel({ onHeaderHiddenChange, headerHidden }: Props) {
   const remainingTopics = ALL_TOPIC_CODES.some((code) => !coveredCodes.has(code));
   const showWrapUp = hasUserTurns && remainingTopics && phase !== "wrapping_up";
 
-  // Top offset values (banner shown vs hidden). The chat panel grows
-  // upward as the banner collapses.
-  const topOffset = headerHidden ? "3.5rem" : "9rem";
-
   return (
     <div
       className={cn(
-        "fixed left-0 right-0 z-10 md:left-60",
-        "bottom-14 md:bottom-0",
+        "fixed inset-x-0 bottom-0 z-10 md:left-60",
         "flex flex-col bg-background",
-        "transition-[top] duration-200 ease-out",
       )}
       style={{
-        top: `calc(var(--app-mobile-header-h, 0px) + ${topOffset})`,
+        // AppShell mobile header height + DailyEntry's sticky tab strip
+        // (~3.5rem). On desktop the mobile header is `md:hidden` so the
+        // CSS var resolves to 0 and only the tab strip offset applies.
+        top: "calc(var(--app-mobile-header-h, 0px) + 3.5rem)",
       }}
     >
       <div
@@ -302,29 +246,31 @@ export function ChatPanel({ onHeaderHiddenChange, headerHidden }: Props) {
                   "px-3 pt-3 pb-2",
                 )}
               >
-                {(coveredCodes.size > 0 || showWrapUp || hasUserTurns) ? (
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pb-2">
-                    <CoverageChips coveredCodes={coveredCodes} />
-                    <ComposerActions
-                      showWrapUp={showWrapUp}
-                      wrapUpPending={composerDisabled}
-                      busy={composerDisabled}
-                      finishDisabled={!hasUserTurns}
-                      restartDisabled={visibleMsgs.length === 0}
-                      finishPending={finalize.isPending}
-                      restartPending={resetChat.isPending}
-                      onWrapUp={handleWrapUp}
-                      onFinish={handleFinalize}
-                      onRestart={handleReset}
-                    />
-                  </div>
-                ) : null}
                 <ComposerInput
                   onSend={stream.sendMessage}
                   disabled={composerDisabled || stream.state.crisis !== null}
                   pending={stream.state.status === "streaming"}
                   placeholder={placeholderForPhase(phase)}
                   bare
+                  bottomLeft={
+                    <ChatKebab
+                      finishDisabled={!hasUserTurns}
+                      restartDisabled={visibleMsgs.length === 0}
+                      finishPending={finalize.isPending}
+                      restartPending={resetChat.isPending}
+                      onFinish={handleFinalize}
+                      onRestart={handleReset}
+                    />
+                  }
+                  bottomRight={
+                    showWrapUp ? (
+                      <WrapUpButton
+                        pending={composerDisabled}
+                        disabled={composerDisabled}
+                        onWrapUp={handleWrapUp}
+                      />
+                    ) : null
+                  }
                 />
                 {stream.state.lastError ? (
                   <p className="px-1 pt-1 text-xs text-destructive/80">

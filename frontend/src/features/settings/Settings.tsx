@@ -30,14 +30,17 @@ import { cn } from "@/lib/utils";
 import { ME_KEY, useInvalidateMe, useMe } from "@/features/auth/useAuth";
 import { deleteAccount, logout, type User } from "@/features/auth/api";
 import { hhmmToMinutes, minutesToHHMM } from "@/lib/dayStart";
-import { QuestionEditor } from "@/features/journal/QuestionEditor";
+// QuestionEditor is retained in the codebase as scaffolding for future
+// custom-prompts expansion (the questions table + handlers stay
+// wired), but it's hidden from the user under the Energy Audit pivot —
+// the five prompts are fixed, so a CRUD UI for them would be confusing.
 
 import { RemindersCard } from "@/features/push/RemindersCard";
 
 import { updateMe, UpdateMePatch } from "./api";
 import { AppearanceCard } from "./AppearanceCard";
 
-const VALID_TABS = ["general", "notifications", "questions", "account"] as const;
+const VALID_TABS = ["general", "notifications", "account"] as const;
 
 const WEEKDAY_LABELS = [
   "Sunday",
@@ -181,9 +184,8 @@ export function Settings() {
       </header>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as SettingsTab)}>
-        <TabsList className="grid w-full grid-cols-4 sm:inline-flex sm:w-auto">
+        <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">
           <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="questions">Questions</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="account">Account</TabsTrigger>
         </TabsList>
@@ -296,24 +298,6 @@ export function Settings() {
                   ))}
                 </SelectContent>
               </Select>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="questions" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="font-serif">Daily questions</CardTitle>
-              <CardDescription>
-                Reorder, edit, and archive prompts — add new ones at the
-                bottom. Archived questions keep their history but stop
-                showing on Today.
-              </CardDescription>
-            </CardHeader>
-            {/* p-0: let the QuestionEditor's row gutters and separators
-                run edge-to-edge of the card, like a settings list. */}
-            <CardContent className="p-0">
-              <QuestionEditor />
             </CardContent>
           </Card>
         </TabsContent>

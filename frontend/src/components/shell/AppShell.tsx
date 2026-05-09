@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Navigate,
-  NavLink,
   Outlet,
   useLocation,
 } from "react-router-dom";
+import { Menu, LogOut } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { logout } from "@/features/auth/api";
@@ -13,6 +13,7 @@ import {
   ENTRY_DATES_KEY,
   QUESTIONS_KEY,
   entriesKey,
+  useEntries,
 } from "@/features/journal/hooks";
 import {
   listEntries,
@@ -27,24 +28,32 @@ import { chatSessionKey } from "@/features/chat/hooks";
 import { getTodaySession } from "@/features/chat/api";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Toaster } from "@/components/ui/sonner";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { formatShortHumanDate } from "@/lib/date";
+import { cn } from "@/lib/utils";
 
 import { Sidebar } from "./Sidebar";
-import { BottomTabBar } from "./BottomTabBar";
+import { NavMenu } from "./NavMenu";
 import { AppShellSkeleton } from "./AppShellSkeleton";
-
-function pageTitle(pathname: string): string {
-  if (pathname === "/") return "Chats";
-  if (pathname.startsWith("/history")) return "History";
-  if (pathname.startsWith("/summary")) return "Summary";
-  if (pathname.startsWith("/questions")) return "Questions";
-  if (pathname.startsWith("/settings")) return "Settings";
-  return "JournAI";
-}
 
 export function AppShell() {
   const me = useMe();
   const qc = useQueryClient();
   const location = useLocation();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Close the drawer whenever route changes (e.g. tap a NavLink inside
+  // the drawer). Keying on pathname keeps it simple — every navigation
+  // commit dismisses the sheet.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
 
   // Once /api/me lands, fan out prefetches in parallel — kills the cold
   // waterfall (me → render → questions/entries). Both queries are warm
@@ -174,24 +183,89 @@ export function AppShell() {
       <div className="flex min-h-svh min-w-0 flex-1 flex-col">
         <header
           ref={headerRef}
-          className="sticky top-0 z-30 flex items-center justify-between border-b border-border/60 bg-background/80 px-4 backdrop-blur-md md:hidden pt-[env(safe-area-inset-top)]"
+          className="sticky top-0 z-30 flex items-center justify-between border-b border-border/60 bg-background/80 px-2 backdrop-blur-md md:hidden pt-[env(safe-area-inset-top)]"
         >
-          <NavLink to="/" className="font-serif italic text-lg leading-none py-3">
-            JournAI
-          </NavLink>
-          <span className="text-sm font-medium text-muted-foreground">
-            {pageTitle(location.pathname)}
-          </span>
+          <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+            <SheetTrigger asChild>
+              <button
+                type="button"
+                aria-label="Open menu"
+                className={cn(
+                  "inline-flex h-10 w-10 items-center justify-center rounded-md",
+                  "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background",
+                )}
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+            </SheetTrigger>
+            <MobileDrawerContent
+              user={me.data}
+              onSignOut={() => signOut.mutate()}
+              signingOut={signOut.isPending}
+            />
+          </Sheet>
           <ThemeToggle />
         </header>
-        <main className="flex-1 pb-20 md:pb-12">
+        <main className="flex-1 pb-12">
           <div className="mx-auto w-full max-w-3xl px-4 py-6 md:px-8 md:py-10">
             <Outlet />
           </div>
         </main>
       </div>
-      <BottomTabBar />
       <Toaster />
     </div>
+  );
+}
+
+interface MobileDrawerContentProps {
+  user: ReturnType<typeof useMe>["data"];
+  onSignOut: () => void;
+  signingOut: boolean;
+}
+
+function MobileDrawerContent({ user, onSignOut, signingOut }: MobileDrawerContentProps) {
+  const entries = useEntries();
+  const today = entries.data?.local_date;
+  const dateLabel = today ? formatShortHumanDate(today) : null;
+
+  return (
+    <SheetContent side="left" className="p-0">
+      <SheetHeader className="pt-5 pb-2">
+        <SheetTitle>Journaling Guru</SheetTitle>
+        {dateLabel ? (
+          <p className="font-mono text-xs text-muted-foreground">{dateLabel}</p>
+        ) : null}
+      </SheetHeader>
+      <div className="flex flex-1 flex-col px-3">
+        <NavMenu layoutId="drawer-nav-active" />
+      </div>
+      <div className="border-t border-border/60 p-3 space-y-2">
+        {user ? (
+          <p className="truncate px-2 text-xs text-muted-foreground" title={user.email}>
+            {user.email}
+          </p>
+        ) : null}
+        <div className="flex items-center justify-between gap-2 px-1">
+          <ThemeToggle />
+          <button
+            type="button"
+            onClick={onSignOut}
+            disabled={signingOut}
+            aria-label="Sign out"
+            title="Sign out"
+            className={cn(
+              "inline-flex h-9 items-center gap-2 rounded-md px-2.5 text-xs",
+              "text-muted-foreground hover:bg-secondary hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background",
+              "disabled:opacity-50",
+            )}
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            {signingOut ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
+      </div>
+    </SheetContent>
   );
 }
