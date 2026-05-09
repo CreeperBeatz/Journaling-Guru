@@ -35,10 +35,10 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { formatShortHumanDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 import { Sidebar } from "./Sidebar";
+import { JournalDateBlock } from "./JournalDateBlock";
 import { NavMenu } from "./NavMenu";
 import { AppShellSkeleton } from "./AppShellSkeleton";
 
@@ -226,17 +226,16 @@ interface MobileDrawerContentProps {
 
 function MobileDrawerContent({ user, onSignOut, signingOut }: MobileDrawerContentProps) {
   const entries = useEntries();
-  const today = entries.data?.local_date;
-  const dateLabel = today ? formatShortHumanDate(today) : null;
+  const journalDate = entries.data?.local_date ?? null;
 
   return (
     <SheetContent side="left" className="p-0">
-      <SheetHeader className="pt-5 pb-2">
+      <SheetHeader className="pt-5 pb-1">
         <SheetTitle>Journaling Guru</SheetTitle>
-        {dateLabel ? (
-          <p className="font-mono text-xs text-muted-foreground">{dateLabel}</p>
-        ) : null}
       </SheetHeader>
+      <div className="px-4 pb-2">
+        <JournalDateBlock journalDate={journalDate} />
+      </div>
       <div className="flex flex-1 flex-col px-3">
         <NavMenu layoutId="drawer-nav-active" />
       </div>

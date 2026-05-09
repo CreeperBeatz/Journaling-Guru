@@ -4,9 +4,9 @@ import { LogOut } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { cn } from "@/lib/utils";
 import { useEntries } from "@/features/journal/hooks";
-import { formatShortHumanDate } from "@/lib/date";
 
 import type { User } from "@/features/auth/api";
+import { JournalDateBlock } from "./JournalDateBlock";
 import { NavMenu } from "./NavMenu";
 
 interface Props {
@@ -17,21 +17,14 @@ interface Props {
 
 export function Sidebar({ user, onSignOut, signingOut }: Props) {
   const entries = useEntries();
-  const today = entries.data?.local_date;
-  const dateLabel = today ? formatShortHumanDate(today) : null;
+  const journalDate = entries.data?.local_date ?? null;
 
   return (
     <aside className="hidden h-screen w-60 flex-col border-r border-border bg-card/40 p-4 md:flex md:sticky md:top-0">
       <NavLink to="/" className="px-2 pt-3 font-serif italic text-xl tracking-tight leading-none">
         Journaling Guru
       </NavLink>
-      {dateLabel ? (
-        <p className="px-2 pb-3 pt-1 font-mono text-xs text-muted-foreground">
-          {dateLabel}
-        </p>
-      ) : (
-        <div className="pb-3" />
-      )}
+      <JournalDateBlock journalDate={journalDate} />
       <div className="mt-2 flex flex-1 flex-col">
         <NavMenu layoutId="sidebar-nav-active" />
       </div>

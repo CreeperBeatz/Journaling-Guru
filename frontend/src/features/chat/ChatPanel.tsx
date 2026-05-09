@@ -307,7 +307,6 @@ export function ChatPanel() {
                       onRestart={handleReset}
                     />
                   }
-                  bottomCenter={<JournalDateLabel iso={session.local_date} />}
                   bottomRight={
                     showWrapUp ? (
                       <WrapUpButton
@@ -329,28 +328,6 @@ export function ChatPanel() {
         </div>
       </div>
     </div>
-  );
-}
-
-// JournalDateLabel surfaces which calendar day the current session
-// files into. Critical when a user journals after midnight but before
-// their day-start cutoff — without this, "today" feels ambiguous.
-// Parses YYYY-MM-DD as UTC so timezone normalization can't shift it.
-function JournalDateLabel({ iso }: { iso: string }) {
-  const [y, m, d] = iso.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
-  const label = dt.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-  return (
-    <span
-      className="truncate font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground"
-      title={`Filling in journal for ${iso}`}
-    >
-      Filling in for {label}
-    </span>
   );
 }
 

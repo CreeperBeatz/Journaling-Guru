@@ -17,9 +17,6 @@ interface Props {
   // Slot rendered on the left side of the action row beneath the
   // textarea (e.g. a kebab menu).
   bottomLeft?: React.ReactNode;
-  // Slot rendered centered between bottomLeft and bottomRight (e.g.
-  // the journal-for-date label). Truncates on narrow viewports.
-  bottomCenter?: React.ReactNode;
   // Slot rendered on the right side of the action row, immediately
   // before the Send button (e.g. a wrap-up CTA).
   bottomRight?: React.ReactNode;
@@ -31,7 +28,7 @@ const MAX_LEN = 4_000;
 // chat. Auto-grows up to ~6 lines, then scrolls. Enter submits;
 // Shift+Enter inserts a newline. The send button is the only mouse
 // affordance — Cmd/Ctrl+Enter also fires it for keyboard heavies.
-export function ComposerInput({ onSend, disabled, pending, placeholder, bare, bottomLeft, bottomCenter, bottomRight }: Props) {
+export function ComposerInput({ onSend, disabled, pending, placeholder, bare, bottomLeft, bottomRight }: Props) {
   const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -90,11 +87,8 @@ export function ComposerInput({ onSend, disabled, pending, placeholder, bare, bo
         )}
       />
       <div className="flex items-center gap-2">
-        <div className="flex shrink-0 items-center">{bottomLeft}</div>
-        <div className="flex min-w-0 flex-1 justify-center">
-          {bottomCenter}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex items-center">{bottomLeft}</div>
+        <div className="ml-auto flex items-center gap-2">
           {bottomRight}
           <Button
             type="button"
