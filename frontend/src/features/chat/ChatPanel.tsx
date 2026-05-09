@@ -20,6 +20,7 @@ import { ChatKebab, WrapUpButton } from "./components/ComposerActions";
 import { ComposerInput } from "./components/ComposerInput";
 import { CrisisCard } from "./components/CrisisCard";
 import { MessageList } from "./components/MessageList";
+import { WrapUpAffordance } from "./components/WrapUpAffordance";
 
 // "At bottom" tolerance for auto-follow: if the user is within this many
 // pixels of the bottom, consider them "reading the latest" and re-anchor
@@ -278,6 +279,14 @@ export function ChatPanel() {
                 <CrisisCard
                   resourcesUrl={stream.state.crisis.resources_url}
                   onResume={stream.dismissCrisis}
+                />
+              </div>
+            ) : null}
+            {wrappedUp && !stream.state.crisis ? (
+              <div className="mt-4">
+                <WrapUpAffordance
+                  onFinalize={handleFinalize}
+                  pending={finalize.isPending}
                 />
               </div>
             ) : null}

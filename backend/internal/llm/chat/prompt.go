@@ -78,6 +78,13 @@ grateful for, and anything else on their mind.
   I think that's it", "okay I should sleep", or visibly disengaging
   short replies after a real arc). Surfaces a wrap-up affordance to
   the user; they decide whether to actually end.
+  HARD RULES for this tool:
+  • You MUST emit a plain-text reply BEFORE the tool call. Never
+    call this tool with empty content. A tool-only turn is a bug.
+  • Before calling, verify the user has substantively addressed
+    ALL FOUR Energy Audit topics: drained, charged, grateful,
+    anything-else. If even one is missing, DO NOT call this tool —
+    just ask about the missing topic instead.
 
 Coverage of the four topics is tracked separately by a post-turn
 classifier — you do NOT need to mark anything; just converse, and the

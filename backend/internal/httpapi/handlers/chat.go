@@ -705,10 +705,6 @@ func (h *ChatHandler) runStream(
 		return
 	}
 
-	type heldToolCall struct {
-		Name string
-		Args map[string]any
-	}
 	var fullContent strings.Builder
 	var toolCalls []heldToolCall
 	var done *llm.StreamDone
@@ -760,12 +756,48 @@ func (h *ChatHandler) runStream(
 		firstToolArgs = toolCalls[0].Args
 	}
 
-	// Safety net: a tool-call-only turn (e.g. the model called
-	// propose_wrap_up without text) leaves the user staring at an empty
-	// bubble that visibleMessages filters out. Inject a default sign-off
-	// so the user always sees something. We also stream it as a token
-	// frame so the UI animates it like any other reply rather than
-	// snapping in on refetch.
+	// Retry: a tool-call-only propose_wrap_up turn breaks the UX
+	// (empty bubble) and may also be premature if the model jumped to
+	// wrap-up without verifying every Energy Audit topic was actually
+	// covered. Throw away the empty turn, push a corrective system
+	// note, and run a second LLM pass. The corrective note is short
+	// so it doesn't dominate the system window.
+	if finalContent == "" && firstToolName != nil && *firstToolName == chat.ToolProposeWrapUp {
+		retryNote := "Your previous reply was a propose_wrap_up tool call with NO text. " +
+			"That is forbidden. Re-do this turn now: " +
+			"(1) ALWAYS emit a plain-text reply to the user FIRST. " +
+			"(2) Re-read the transcript and verify whether ALL FOUR Energy Audit topics " +
+			"(drained, charged, grateful, anything-else) have been substantively addressed by the user. " +
+			"(3) If any topic is still missing or only thinly touched, ask ONE focused open question " +
+			"on the most important uncovered topic AND DO NOT call propose_wrap_up — the user is not done. " +
+			"(4) Only if all four topics are clearly covered may you call propose_wrap_up, and only AFTER " +
+			"emitting a short warm sign-off sentence as text. Never tool-call without text."
+		retryMsgs := append([]llm.Message{}, llmMsgs...)
+		retryMsgs = append(retryMsgs, llm.Message{Role: "system", Content: retryNote})
+		retryContent, retryToolCalls, retryDone, retryErr := h.streamAssistantOnce(r, w, rc, model, systemPrompt, retryMsgs, maxTokens)
+		if retryErr != nil {
+			h.Logger.Warn("wrap-up retry failed", "err", retryErr, "session_id", session.ID)
+			// Fall through with the safety-net text below.
+		} else {
+			finalContent = retryContent
+			toolCalls = retryToolCalls
+			if done == nil || retryDone != nil {
+				done = retryDone
+			}
+			firstToolName = nil
+			firstToolArgs = nil
+			if len(toolCalls) > 0 {
+				n := toolCalls[0].Name
+				firstToolName = &n
+				firstToolArgs = toolCalls[0].Args
+			}
+		}
+	}
+
+	// Safety net: if we still have no text + a tool call (retry also
+	// misbehaved, or non-wrap-up tool that produced no text), inject a
+	// default sign-off so the user always sees something visible. Also
+	// streamed as a token frame so it animates in.
 	if finalContent == "" && firstToolName != nil {
 		fallback := defaultToolFallbackText(*firstToolName)
 		if fallback != "" {
@@ -869,6 +901,72 @@ func defaultToolFallbackText(toolName string) string {
 		return "Thanks for sharing all that. Whenever you're ready, you can finish the check-in."
 	}
 	return ""
+}
+
+// heldToolCall captures a tool call emitted by the assistant stream.
+// Lifted to package scope so retry helpers can return it.
+type heldToolCall struct {
+	Name string
+	Args map[string]any
+}
+
+// streamAssistantOnce runs a single LLM completion stream and
+// surfaces token deltas as SSE token frames the same way the inline
+// loop in runStream does. Returns the accumulated content, tool
+// calls, and the trailing done payload. Errors mid-stream surface as
+// a non-nil error (the caller decides whether to write an SSE error
+// frame or fall back). On client disconnect the helper drains and
+// returns nil error with empty content — the caller can treat as
+// "no result."
+func (h *ChatHandler) streamAssistantOnce(
+	r *http.Request,
+	w http.ResponseWriter,
+	rc *http.ResponseController,
+	model, systemPrompt string,
+	messages []llm.Message,
+	maxTokens int,
+) (string, []heldToolCall, *llm.StreamDone, error) {
+	chunks, err := h.ChatLLM.CompleteStream(r.Context(), llm.StreamRequest{
+		Model:           model,
+		System:          systemPrompt,
+		Messages:        messages,
+		Tools:           chat.AssistantTools,
+		MaxTokens:       maxTokens,
+		Temperature:     0.7,
+		SystemCacheable: true,
+	})
+	if err != nil {
+		return "", nil, nil, err
+	}
+	var content strings.Builder
+	var calls []heldToolCall
+	var done *llm.StreamDone
+	for chunk := range chunks {
+		if r.Context().Err() != nil {
+			for range chunks {
+			}
+			return "", nil, nil, nil
+		}
+		if chunk.Err != nil {
+			return "", nil, nil, chunk.Err
+		}
+		if chunk.Delta != "" {
+			content.WriteString(chunk.Delta)
+			if !writeSSEFrame(w, rc, "token", map[string]any{"delta": chunk.Delta}) {
+				return "", nil, nil, nil
+			}
+		}
+		if chunk.ToolCall != nil {
+			calls = append(calls, heldToolCall{
+				Name: chunk.ToolCall.Name,
+				Args: chunk.ToolCall.Args,
+			})
+		}
+		if chunk.Done != nil {
+			done = chunk.Done
+		}
+	}
+	return strings.TrimSpace(content.String()), calls, done, nil
 }
 
 // runCoverageClassifier loads the latest transcript + active questions
