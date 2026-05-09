@@ -17,22 +17,33 @@ import { cn } from "@/lib/utils";
 interface WrapUpButtonProps {
   pending: boolean;
   disabled: boolean;
+  // wrappedUp = the session has already entered the wrapping_up phase
+  // (the model proposed wrap-up or the user already triggered it).
+  // Renders a non-interactive "Wrapping up" pill so the user sees
+  // they're in the closing pass without losing the affordance.
+  wrappedUp: boolean;
   onWrapUp: () => void;
 }
 
 // WrapUpButton — small pill CTA shown next to the Send button. Lets the
 // user signal "I'm ready to wrap up" before all topics are covered.
-export function WrapUpButton({ pending, disabled, onWrapUp }: WrapUpButtonProps) {
+export function WrapUpButton({ pending, disabled, wrappedUp, onWrapUp }: WrapUpButtonProps) {
+  const inert = pending || disabled || wrappedUp;
+  let label = "Wrap up";
+  if (pending) label = "Wrapping…";
+  else if (wrappedUp) label = "Wrapping up";
   return (
     <button
       type="button"
-      onClick={onWrapUp}
-      disabled={pending || disabled}
+      onClick={wrappedUp ? undefined : onWrapUp}
+      disabled={inert}
       aria-label="Wrap up the conversation"
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10",
-        "px-3 py-1 text-xs font-medium text-accent transition-colors",
-        "hover:bg-accent/20 disabled:opacity-60",
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+        wrappedUp
+          ? "border-border bg-muted text-muted-foreground"
+          : "border-accent/40 bg-accent/10 text-accent hover:bg-accent/20",
+        "disabled:opacity-60",
       )}
     >
       {pending ? (
@@ -40,7 +51,7 @@ export function WrapUpButton({ pending, disabled, onWrapUp }: WrapUpButtonProps)
       ) : (
         <Sparkles className="h-3 w-3" />
       )}
-      {pending ? "Wrapping…" : "Wrap up"}
+      {label}
     </button>
   );
 }

@@ -242,7 +242,12 @@ export function ChatPanel() {
   const hasUserTurns = userTurnCount > 0;
 
   const remainingTopics = ALL_TOPIC_CODES.some((code) => !coveredCodes.has(code));
-  const showWrapUp = hasUserTurns && remainingTopics && phase !== "wrapping_up";
+  // Keep the button mounted in wrapping_up so the user has a visible
+  // "Wrapping up" pill instead of the affordance disappearing on them.
+  // Hidden only when there are no user turns yet, or when every topic
+  // is already covered AND we're not wrapping up.
+  const showWrapUp = hasUserTurns && (remainingTopics || phase === "wrapping_up");
+  const wrappedUp = phase === "wrapping_up";
 
   return (
     <div
@@ -322,6 +327,7 @@ export function ChatPanel() {
                       <WrapUpButton
                         pending={wrapUpClicked}
                         disabled={composerDisabled}
+                        wrappedUp={wrappedUp}
                         onWrapUp={handleWrapUp}
                       />
                     ) : null
