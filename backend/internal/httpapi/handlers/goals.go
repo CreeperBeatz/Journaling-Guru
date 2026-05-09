@@ -269,9 +269,13 @@ func (h *GoalHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	startDate, _ := time.Parse("2006-01-02", goal.StartDate)
-	endDate, _ := time.Parse("2006-01-02", goal.EndDate)
-	if date.Before(startDate) || date.After(endDate) {
+	// Compare on the calendar-date string, not on time.Time instants:
+	// `date` is midnight in the user's IANA zone (from timezone.LocalDate),
+	// while parsing goal.StartDate/EndDate as YYYY-MM-DD yields midnight
+	// UTC. For any non-UTC zone those instants disagree by the offset,
+	// so an instant comparison incorrectly rejects same-day check-ins.
+	checkInDate := date.Format("2006-01-02")
+	if checkInDate < goal.StartDate || checkInDate > goal.EndDate {
 		writeJSONError(w, http.StatusBadRequest, "date outside goal range")
 		return
 	}
