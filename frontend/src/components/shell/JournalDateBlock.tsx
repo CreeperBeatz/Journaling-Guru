@@ -24,16 +24,28 @@ export function JournalDateBlock({ journalDate }: { journalDate: string | null }
     month: "short",
     day: "numeric",
   })} · ${time}`;
-  const showJournalHint = journalDate && journalDate !== wallDate;
+  // Highlight the journal hint when the day-start cutoff has rolled
+  // it back to yesterday's calendar date — that's the case the user
+  // most needs to notice. Otherwise render it muted, as a quiet
+  // confirmation of which day they're filing into.
+  const isShifted = journalDate !== null && journalDate !== wallDate;
   return (
     <div className="px-2 pb-3 pt-1 space-y-0.5">
       <p className="font-mono text-xs text-muted-foreground">{wallLabel}</p>
-      {showJournalHint ? (
+      {journalDate ? (
         <p
-          className="font-mono text-[11px] text-primary/85"
-          title={`Past midnight, before your day-start cutoff — this entry files under ${journalDate}.`}
+          className={
+            isShifted
+              ? "font-mono text-[11px] text-primary/85"
+              : "font-mono text-[11px] text-muted-foreground/80"
+          }
+          title={
+            isShifted
+              ? `Past midnight, before your day-start cutoff — this entry files under ${journalDate}.`
+              : `This entry files under ${journalDate}.`
+          }
         >
-          Journal for {formatShortHumanDate(journalDate!)}
+          Journal for {formatShortHumanDate(journalDate)}
         </p>
       ) : null}
     </div>
