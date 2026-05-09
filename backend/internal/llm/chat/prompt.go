@@ -193,6 +193,12 @@ type BuildSystemPromptParams struct {
 	RecentTopEmotions []string
 	Phase             string
 	HardCapMinutes    int
+	// UncoveredTopics names the Energy Audit topics still missing from
+	// chat_sessions.covered_question_ids, in canonical priority order
+	// (drained > charged > grateful > else). The wrapping_up branch of
+	// the template uses this to tell the model exactly which topic to
+	// ask about on the closing pass.
+	UncoveredTopics []string
 }
 
 // BuildSystemPrompt concatenates the static persona prompt with the

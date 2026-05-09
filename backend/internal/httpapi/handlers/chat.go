@@ -980,6 +980,21 @@ func (h *ChatHandler) buildSystemPrompt(
 	}
 	dayStartLabel := fmt.Sprintf("%02d:%02d", dsm/60, dsm%60)
 
+	// Uncovered topics in canonical priority order. CoverageCodes is
+	// already drained → charged → grateful → else; we filter out
+	// already-covered codes and pass the rest so the wrapping_up
+	// branch of the prompt can name them explicitly.
+	covered := make(map[string]struct{}, len(session.CoveredQuestionIDs))
+	for _, c := range session.CoveredQuestionIDs {
+		covered[c] = struct{}{}
+	}
+	uncovered := make([]string, 0, len(chat.CoverageCodes))
+	for _, code := range chat.CoverageCodes {
+		if _, ok := covered[code]; !ok {
+			uncovered = append(uncovered, code)
+		}
+	}
+
 	return chat.BuildSystemPrompt(chat.BuildSystemPromptParams{
 		DisplayName:       displayName,
 		JournalDate:       session.LocalDate,
@@ -994,5 +1009,6 @@ func (h *ChatHandler) buildSystemPrompt(
 		RecentTopEmotions: topEmotions,
 		Phase:             session.Phase,
 		HardCapMinutes:    h.HardCapMinutes,
+		UncoveredTopics:   uncovered,
 	})
 }

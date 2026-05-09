@@ -23,6 +23,8 @@
      .RecentTopEmotions — []string (retired — empty under the pivot)
      .HardCapMinutes    — soft hint, not a hard timer the model controls
      .Phase             — current ChatPhase enum value
+     .UncoveredTopics   — []string of Energy Audit codes still missing,
+                          in priority order (drained > charged > grateful > else)
 */ -}}
 
 # Today's session
@@ -71,12 +73,19 @@ The session is closing. There are two flavors of this phase — read the
 recent transcript to tell which:
 
 1. **User clicked "Wrap up"** (you'll see a `(event: user_wrap_up)` line
-   in the recent context). They're ready to finish but at least one
-   topic from drained / charged / grateful / anything-else may still
-   be uncovered. Do a fast covering pass: ask ONE focused question on
-   the most important uncovered topic. Then call `propose_wrap_up`. If
-   everything is already covered, skip the question and just call
-   `propose_wrap_up` with a short warm sign-off.
+   in the recent context). They're ready to finish.
+   {{if .UncoveredTopics -}}
+   Topics still uncovered, ranked by priority: **{{joinStrings .UncoveredTopics ", "}}**.
+   Send a fresh assistant turn that briefly names what's still missing
+   and asks ONE focused open question on the **first** topic in that
+   list — that's the highest-priority gap. Don't list all the
+   uncovered topics back to the user, just pivot to the most important
+   one. Do NOT call `propose_wrap_up` yet — give them a chance to
+   answer first.
+   {{- else -}}
+   Every Energy Audit topic is already covered. Skip any new question
+   and just call `propose_wrap_up` with a short warm sign-off.
+   {{- end}}
 2. **User is naturally winding down** (no recent wrap-up event). Just
    acknowledge briefly. Do NOT introduce new topics. Offer one soft,
    optional check ("anything you don't want to forget tomorrow?") then
