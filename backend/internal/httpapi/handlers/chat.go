@@ -759,6 +759,20 @@ func (h *ChatHandler) runStream(
 		firstToolName = &n
 		firstToolArgs = toolCalls[0].Args
 	}
+
+	// Safety net: a tool-call-only turn (e.g. the model called
+	// propose_wrap_up without text) leaves the user staring at an empty
+	// bubble that visibleMessages filters out. Inject a default sign-off
+	// so the user always sees something. We also stream it as a token
+	// frame so the UI animates it like any other reply rather than
+	// snapping in on refetch.
+	if finalContent == "" && firstToolName != nil {
+		fallback := defaultToolFallbackText(*firstToolName)
+		if fallback != "" {
+			finalContent = fallback
+			writeSSEFrame(w, rc, "token", map[string]any{"delta": fallback})
+		}
+	}
 	var asstID string
 	var asstCreatedAt time.Time
 	if finalContent != "" || firstToolName != nil {
@@ -843,6 +857,18 @@ func (h *ChatHandler) runStream(
 	// (see the wrapping_up branch in daily_chat_context.tmpl). Saves an
 	// LLM call per turn and removes a moving piece. runCoverageClassifier
 	// is left in place dormant in case we re-enable later.
+}
+
+// defaultToolFallbackText returns a short visible reply to use when
+// the model emitted a tool call without any accompanying text. Keeps
+// the user from staring at an empty bubble. Empty string ⇒ no
+// injection (the tool truly produces no user-facing message).
+func defaultToolFallbackText(toolName string) string {
+	switch toolName {
+	case chat.ToolProposeWrapUp:
+		return "Thanks for sharing all that. Whenever you're ready, you can finish the check-in."
+	}
+	return ""
 }
 
 // runCoverageClassifier loads the latest transcript + active questions
