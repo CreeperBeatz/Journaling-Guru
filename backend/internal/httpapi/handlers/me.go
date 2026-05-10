@@ -24,11 +24,29 @@ type MeHandler struct {
 // Get returns the current user. Returns 401 when no session is attached
 // (which RequireAuth prevents from happening, but we double-check so this
 // handler is safe to mount under OptionalAuth too).
+//
+// Optional ?tz=<IANA> query param: when the caller is in auto mode and the
+// detected browser zone differs from the stored one, we silently sync it
+// before returning. Invalid / unknown zones are ignored — a read endpoint
+// should never 400 on a malformed hint.
 func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	sess := middleware.SessionFromCtx(r.Context())
 	if sess == nil {
 		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
 		return
+	}
+	if hint := strings.TrimSpace(r.URL.Query().Get("tz")); hint != "" && timezone.IsValidIANA(hint) {
+		if synced, changed, err := h.Users.MaybeAutoSyncTimezone(r.Context(), sess.UserID, hint); err != nil {
+			h.Logger.Warn("auto-sync timezone", "err", err, "user_id", sess.UserID)
+		} else if changed && synced != nil {
+			if h.Replanner != nil {
+				if err := h.Replanner.Replan(r.Context(), sess.UserID); err != nil {
+					h.Logger.Warn("replan reminders after tz auto-sync", "err", err, "user_id", sess.UserID)
+				}
+			}
+			writeJSON(w, http.StatusOK, synced)
+			return
+		}
 	}
 	u, err := h.Users.GetByID(r.Context(), sess.UserID)
 	if err != nil {
@@ -45,6 +63,7 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 type updateMeRequest struct {
 	DisplayName       *string `json:"display_name,omitempty"`
 	Timezone          *string `json:"timezone,omitempty"`
+	TimezoneAuto      *bool   `json:"timezone_auto,omitempty"`
 	ReminderTime      *string `json:"reminder_time,omitempty"`
 	ReminderEnabled   *bool   `json:"reminder_enabled,omitempty"`
 	DayStartMinutes   *int    `json:"day_start_minutes,omitempty"`
@@ -72,6 +91,7 @@ func (h *MeHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	patch := store.SettingsPatch{
 		ReminderEnabled: req.ReminderEnabled,
+		TimezoneAuto:    req.TimezoneAuto,
 	}
 	if req.DisplayName != nil {
 		trimmed := strings.TrimSpace(*req.DisplayName)

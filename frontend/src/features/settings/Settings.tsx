@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { ME_KEY, useInvalidateMe, useMe } from "@/features/auth/useAuth";
 import { deleteAccount, logout, type User } from "@/features/auth/api";
 import { hhmmToMinutes, minutesToHHMM } from "@/lib/dayStart";
+import { allBrowserTimezones, detectBrowserTimezone } from "@/lib/timezone";
 // QuestionEditor is retained in the codebase as scaffolding for future
 // custom-prompts expansion (the questions table + handlers stay
 // wired), but it's hidden from the user under the Energy Audit pivot —
@@ -52,42 +53,6 @@ const WEEKDAY_LABELS = [
   "Saturday",
 ];
 type SettingsTab = (typeof VALID_TABS)[number];
-
-const COMMON_TIMEZONES = [
-  "UTC",
-  "Europe/London",
-  "Europe/Berlin",
-  "Europe/Sofia",
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Los_Angeles",
-  "Asia/Tokyo",
-  "Asia/Singapore",
-  "Australia/Sydney",
-];
-
-function detectBrowserTimezone(): string | null {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
-  } catch {
-    return null;
-  }
-}
-
-function allBrowserTimezones(): string[] {
-  const intl = Intl as typeof Intl & {
-    supportedValuesOf?: (key: "timeZone") => string[];
-  };
-  if (typeof intl.supportedValuesOf === "function") {
-    try {
-      return intl.supportedValuesOf("timeZone").slice();
-    } catch {
-      /* fall through */
-    }
-  }
-  return COMMON_TIMEZONES;
-}
 
 export function Settings() {
   const me = useMe();
@@ -128,6 +93,7 @@ export function Settings() {
   });
 
   const [tz, setTz] = useState("");
+  const [tzAuto, setTzAuto] = useState(true);
   const [reminderTime, setReminderTime] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [dayStart, setDayStart] = useState("06:00");
@@ -136,6 +102,7 @@ export function Settings() {
   useEffect(() => {
     if (me.data) {
       setTz(me.data.timezone);
+      setTzAuto(me.data.timezone_auto);
       setReminderTime(me.data.reminder_time.slice(0, 5));
       setDisplayName(me.data.display_name ?? "");
       setDayStart(minutesToHHMM(me.data.day_start_minutes));
@@ -150,8 +117,14 @@ export function Settings() {
   if (!me.data) return null;
 
   const dayStartMinutes = hhmmToMinutes(dayStart);
+  // In override mode the picker value matters; in auto mode it doesn't —
+  // dirty only fires on the mode flip, since auto resyncs from the browser
+  // hint on the next /api/me load.
+  const tzDirty =
+    tzAuto !== me.data.timezone_auto ||
+    (!tzAuto && tz !== me.data.timezone);
   const dirty =
-    tz !== me.data.timezone ||
+    tzDirty ||
     reminderTime !== me.data.reminder_time.slice(0, 5) ||
     displayName !== (me.data.display_name ?? "") ||
     (dayStartMinutes !== null && dayStartMinutes !== me.data.day_start_minutes) ||
@@ -159,7 +132,8 @@ export function Settings() {
 
   const handleSave = () => {
     const patch: UpdateMePatch = {};
-    if (tz !== me.data?.timezone) patch.timezone = tz;
+    if (tzAuto !== me.data?.timezone_auto) patch.timezone_auto = tzAuto;
+    if (!tzAuto && tz !== me.data?.timezone) patch.timezone = tz;
     if (reminderTime !== me.data?.reminder_time.slice(0, 5)) patch.reminder_time = reminderTime;
     if (displayName !== (me.data?.display_name ?? "")) patch.display_name = displayName;
     if (
@@ -214,37 +188,74 @@ export function Settings() {
             <CardHeader>
               <CardTitle className="font-serif">Timezone</CardTitle>
               <CardDescription>
-                Determines what counts as "today" for your daily entry. Changing
-                it can shift the current day forward or back by one.
+                Determines what counts as "today" for your daily entry. By
+                default the app follows your device. Pin a specific zone if
+                you want to keep a fixed clock even when traveling.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <label className="block text-sm font-medium">IANA timezone</label>
-              <Select value={tz} onValueChange={setTz}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a timezone" />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {tzOptions.map((z) => (
-                    <SelectItem key={z} value={z}>
-                      {z}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {/* Gate on `tz` being non-empty so the button doesn't flash
-                  during the initial render where me.data hasn't synced into
-                  local state yet (tz === "" makes browserTz !== tz true
-                  for one frame). */}
-              {tz && browserTz && browserTz !== tz ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setTz(browserTz)}
-                >
-                  Use browser timezone ({browserTz})
-                </Button>
-              ) : null}
+            <CardContent className="space-y-4">
+              <div
+                role="radiogroup"
+                aria-label="Timezone mode"
+                className="inline-flex rounded-md border border-border bg-muted p-1"
+              >
+                {[
+                  { value: "auto", label: "Automatic" },
+                  { value: "override", label: "Override" },
+                ].map(({ value, label }) => {
+                  const active = (value === "auto") === tzAuto;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => setTzAuto(value === "auto")}
+                      className={cn(
+                        "inline-flex h-8 items-center rounded px-3 text-sm font-medium transition-colors",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background",
+                        active
+                          ? "bg-background text-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {tzAuto ? (
+                <div className="space-y-1">
+                  <p className="text-sm">
+                    Following your device · <span className="font-medium">{browserTz ?? me.data.timezone}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    The app picks up your browser's timezone every time it
+                    loads.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium">IANA timezone</label>
+                  <Select value={tz} onValueChange={setTz}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select a timezone" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      {tzOptions.map((z) => (
+                        <SelectItem key={z} value={z}>
+                          {z}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Pinned to <span className="font-medium">{tz || "—"}</span>. The app
+                    will not follow your device.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
 

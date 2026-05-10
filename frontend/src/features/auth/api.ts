@@ -10,6 +10,7 @@ export interface User {
   email_verified: boolean;
   display_name?: string | null;
   timezone: string;
+  timezone_auto: boolean;
   reminder_time: string;
   reminder_enabled: boolean;
   day_start_minutes: number;
@@ -37,8 +38,9 @@ export function logout(): Promise<{ ok: boolean }> {
   return api("/api/auth/logout", { method: "POST" });
 }
 
-export function fetchMe(): Promise<User> {
-  return api<User>("/api/me");
+export function fetchMe(tzHint?: string | null): Promise<User> {
+  const path = tzHint ? `/api/me?tz=${encodeURIComponent(tzHint)}` : "/api/me";
+  return api<User>(path);
 }
 
 export function deleteAccount(): Promise<{ ok: boolean }> {

@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError } from "@/api/client";
+import { detectBrowserTimezone } from "@/lib/timezone";
 
 import { fetchMe, type User } from "./api";
 
@@ -14,7 +15,10 @@ export function useMe() {
     queryKey: ME_KEY,
     queryFn: async () => {
       try {
-        return await fetchMe();
+        // Pass the browser-detected IANA zone as a hint. The server
+        // silently auto-syncs users.timezone for users in auto mode and
+        // ignores the hint for users with an explicit override.
+        return await fetchMe(detectBrowserTimezone());
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           return null;

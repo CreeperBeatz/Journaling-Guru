@@ -11,6 +11,7 @@ type User struct {
 	EmailVerified      bool       `json:"email_verified"`
 	DisplayName        *string    `json:"display_name,omitempty"`
 	Timezone           string     `json:"timezone"`
+	TimezoneAuto       bool       `json:"timezone_auto"`
 	ReminderTime       string     `json:"reminder_time"` // "HH:MM:SS"
 	ReminderEnabled    bool       `json:"reminder_enabled"`
 	DayStartMinutes    int        `json:"day_start_minutes"`

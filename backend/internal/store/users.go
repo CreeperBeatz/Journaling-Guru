@@ -19,7 +19,7 @@ type UserStore struct {
 
 func NewUserStore(db *pgxpool.Pool) *UserStore { return &UserStore{DB: db} }
 
-const userColumns = `id, email, email_verified, display_name, timezone,
+const userColumns = `id, email, email_verified, display_name, timezone, timezone_auto,
     to_char(reminder_time, 'HH24:MI:SS') AS reminder_time,
     reminder_enabled, day_start_minutes, reflection_weekday,
     created_at, updated_at, deleted_at`
@@ -27,7 +27,7 @@ const userColumns = `id, email, email_verified, display_name, timezone,
 func scanUser(row pgx.Row) (*domain.User, error) {
 	var u domain.User
 	if err := row.Scan(
-		&u.ID, &u.Email, &u.EmailVerified, &u.DisplayName, &u.Timezone,
+		&u.ID, &u.Email, &u.EmailVerified, &u.DisplayName, &u.Timezone, &u.TimezoneAuto,
 		&u.ReminderTime, &u.ReminderEnabled, &u.DayStartMinutes, &u.ReflectionWeekday,
 		&u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 	); err != nil {
@@ -78,6 +78,7 @@ func (s *UserStore) MarkEmailVerified(ctx context.Context, id string) error {
 type SettingsPatch struct {
 	DisplayName       *string
 	Timezone          *string
+	TimezoneAuto      *bool
 	ReminderTime      *string // "HH:MM" or "HH:MM:SS"
 	ReminderEnabled   *bool
 	DayStartMinutes   *int
@@ -91,20 +92,46 @@ func (s *UserStore) UpdateSettings(ctx context.Context, id string, p SettingsPat
 		UPDATE users
 		   SET display_name        = COALESCE($2, display_name),
 		       timezone            = COALESCE($3, timezone),
-		       reminder_time       = COALESCE($4::time, reminder_time),
-		       reminder_enabled    = COALESCE($5, reminder_enabled),
-		       day_start_minutes   = COALESCE($6, day_start_minutes),
-		       reflection_weekday  = COALESCE($7, reflection_weekday),
+		       timezone_auto       = COALESCE($4, timezone_auto),
+		       reminder_time       = COALESCE($5::time, reminder_time),
+		       reminder_enabled    = COALESCE($6, reminder_enabled),
+		       day_start_minutes   = COALESCE($7, day_start_minutes),
+		       reflection_weekday  = COALESCE($8, reflection_weekday),
 		       updated_at          = now()
 		 WHERE id = $1 AND deleted_at IS NULL
 		 RETURNING ` + userColumns
-	row := s.DB.QueryRow(ctx, q, id, p.DisplayName, p.Timezone, p.ReminderTime,
+	row := s.DB.QueryRow(ctx, q, id, p.DisplayName, p.Timezone, p.TimezoneAuto, p.ReminderTime,
 		p.ReminderEnabled, p.DayStartMinutes, p.ReflectionWeekday)
 	u, err := scanUser(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	return u, err
+}
+
+// MaybeAutoSyncTimezone updates users.timezone to browserTZ only when the
+// user is in auto mode and the value actually differs. Returns the post-
+// update user (or the original row if nothing changed) and `changed=true`
+// when the UPDATE took effect — callers use that to decide whether to
+// kick the reminder Replanner.
+func (s *UserStore) MaybeAutoSyncTimezone(ctx context.Context, id, browserTZ string) (*domain.User, bool, error) {
+	const q = `
+		UPDATE users
+		   SET timezone = $2,
+		       updated_at = now()
+		 WHERE id = $1
+		   AND deleted_at IS NULL
+		   AND timezone_auto = true
+		   AND timezone <> $2
+		 RETURNING ` + userColumns
+	u, err := scanUser(s.DB.QueryRow(ctx, q, id, browserTZ))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return u, true, nil
 }
 
 // SoftDelete sets deleted_at and cascades to dependent rows we need cleared

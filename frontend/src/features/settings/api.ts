@@ -4,6 +4,7 @@ import type { User } from "@/features/auth/api";
 export interface UpdateMePatch {
   display_name?: string;
   timezone?: string;
+  timezone_auto?: boolean;
   reminder_time?: string;
   reminder_enabled?: boolean;
   day_start_minutes?: number;
