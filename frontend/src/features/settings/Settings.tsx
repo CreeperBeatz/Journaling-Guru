@@ -38,6 +38,7 @@ import { WEEKDAY_LABELS } from "@/lib/weekdays";
 // the five prompts are fixed, so a CRUD UI for them would be confusing.
 
 import { RemindersCard } from "@/features/push/RemindersCard";
+import { InstallCard } from "@/features/install/InstallCard";
 
 import { updateMe, UpdateMePatch } from "./api";
 import { AppearanceCard } from "./AppearanceCard";
@@ -157,6 +158,8 @@ export function Settings() {
         </TabsList>
 
         <TabsContent value="general" className="space-y-4">
+          <InstallCard />
+
           <AppearanceCard />
 
           <Card>

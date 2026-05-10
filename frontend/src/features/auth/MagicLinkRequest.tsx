@@ -5,6 +5,7 @@ import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { InstallCard } from "@/features/install/InstallCard";
 
 import { requestMagicLink } from "./api";
 import { useRecentEmails } from "./recentEmails";
@@ -44,71 +45,77 @@ export function MagicLinkRequest() {
 
   if (send.isSuccess) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Check your inbox</CardTitle>
-          <CardDescription>
-            We sent a sign-in link to <span className="font-medium">{email}</span>. The link
-            is good for 15 minutes and can only be used once.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              send.reset();
-              setEmail("");
-            }}
-          >
-            Use a different email
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Check your inbox</CardTitle>
+            <CardDescription>
+              We sent a sign-in link to <span className="font-medium">{email}</span>. The link
+              is good for 15 minutes and can only be used once.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                send.reset();
+                setEmail("");
+              }}
+            >
+              Use a different email
+            </Button>
+          </CardContent>
+        </Card>
+        <InstallCard />
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Sign in to Journaling Guru</CardTitle>
-        <CardDescription>
-          Enter your email and we'll send you a one-time link.
-          No passwords.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={onSubmit} className="space-y-3">
-          <Input
-            type="email"
-            name="email"
-            inputMode="email"
-            autoComplete="email"
-            list="journai-recent-emails"
-            required
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={send.isPending}
-          />
-          {recent.length > 0 && (
-            <datalist id="journai-recent-emails">
-              {recent.map((e) => (
-                <option key={e} value={e} />
-              ))}
-            </datalist>
-          )}
-          {send.isError && (
-            <p className="text-sm text-destructive">
-              {send.error.status === 429
-                ? "Too many requests — wait a few minutes and try again."
-                : send.error.message}
-            </p>
-          )}
-          <Button type="submit" disabled={send.isPending} className="w-full">
-            {send.isPending ? "Sending…" : "Email me a link"}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Sign in to Journaling Guru</CardTitle>
+          <CardDescription>
+            Enter your email and we'll send you a one-time link.
+            No passwords.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={onSubmit} className="space-y-3">
+            <Input
+              type="email"
+              name="email"
+              inputMode="email"
+              autoComplete="email"
+              list="journai-recent-emails"
+              required
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={send.isPending}
+            />
+            {recent.length > 0 && (
+              <datalist id="journai-recent-emails">
+                {recent.map((e) => (
+                  <option key={e} value={e} />
+                ))}
+              </datalist>
+            )}
+            {send.isError && (
+              <p className="text-sm text-destructive">
+                {send.error.status === 429
+                  ? "Too many requests — wait a few minutes and try again."
+                  : send.error.message}
+              </p>
+            )}
+            <Button type="submit" disabled={send.isPending} className="w-full">
+              {send.isPending ? "Sending…" : "Email me a link"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+      <InstallCard />
+    </div>
   );
 }
