@@ -50,7 +50,7 @@ export function VoiceFocusOverlay({ status, lastError, onToggle, onDone }: Props
             "relative flex h-32 w-32 items-center justify-center rounded-full",
             "border border-border/60 transition-all",
             isLive
-              ? "bg-destructive text-destructive-foreground shadow-lg ring-4 ring-destructive/20 animate-pulse"
+              ? "bg-primary text-primary-foreground shadow-lg ring-4 ring-primary/20 animate-pulse"
               : "bg-accent text-accent-foreground hover:bg-accent/85",
             isConnecting && "animate-pulse",
             isEnding && "opacity-60",
