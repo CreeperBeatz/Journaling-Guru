@@ -373,11 +373,11 @@ export function Settings() {
         </TabsContent>
       </Tabs>
 
-      {/* Sticky save bar. Mobile: parks flush on top of the bottom-tab bar
-          (tab bar is h-14 + env(safe-area-inset-bottom)). Desktop: sticks at
-          the bottom of the scroll container. Always rendered; disabled state
-          carries "nothing to save" so it doesn't flicker on tab mount. */}
-      <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-10 -mx-4 flex justify-end border-t border-border bg-background/85 px-4 py-3 backdrop-blur-md md:bottom-0 md:-mx-8 md:px-8">
+      {/* Sticky save bar. Sticks to the bottom of the scroll container on
+          both mobile and desktop; mobile keeps clear of the safe-area inset.
+          Always rendered; disabled state carries "nothing to save" so it
+          doesn't flicker on tab mount. */}
+      <div className="sticky bottom-[env(safe-area-inset-bottom)] z-10 -mx-4 flex justify-end border-t border-border bg-background/85 px-4 py-3 backdrop-blur-md md:bottom-0 md:-mx-8 md:px-8">
         <Button onClick={handleSave} disabled={!dirty || update.isPending}>
           {update.isPending ? "Saving…" : "Save changes"}
         </Button>
