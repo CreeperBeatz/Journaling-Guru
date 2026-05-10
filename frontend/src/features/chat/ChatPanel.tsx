@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Mic } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
@@ -21,8 +23,9 @@ import { ChatKebab, WrapUpButton } from "./components/ComposerActions";
 import { ComposerInput } from "./components/ComposerInput";
 import { CrisisCard } from "./components/CrisisCard";
 import { MessageList } from "./components/MessageList";
+import { VoiceFocusOverlay } from "./components/VoiceFocusOverlay";
 import { WrapUpAffordance } from "./components/WrapUpAffordance";
-import { useVoiceLive } from "./useVoice";
+import { useVoice } from "./useVoice";
 
 // "At bottom" tolerance for auto-follow: if the user is within this many
 // pixels of the bottom, consider them "reading the latest" and re-anchor
@@ -180,10 +183,12 @@ export function ChatPanel() {
     }
   }, [streamStatus, partialLen, visibleMsgsLen, stream]);
 
-  // When a Talk call is live, the same chat_sessions row is being
-  // written to from the voice path. Disable the text composer so user
-  // turns don't interleave with realtime audio turns.
-  const voiceLive = useVoiceLive();
+  // Voice = an input mode on the same conversation. Tapping the mic
+  // mounts <VoiceFocusOverlay /> over the chat; transcripts continue to
+  // be persisted live by appendVoiceTranscript (and shown the moment
+  // the overlay unmounts on return-to-idle).
+  const voice = useVoice(session?.id ?? null);
+  const voiceActive = voice.status !== "idle";
 
   // wrapUpClicked drives the WrapUpButton's spinner so it only spins
   // when the user actually pressed it — not on every assistant reply.
@@ -253,7 +258,15 @@ export function ChatPanel() {
   }
 
   const phase: ChatPhase = session.phase;
-  const composerDisabled = stream.state.status === "streaming" || voiceLive;
+  const composerDisabled = stream.state.status === "streaming" || voiceActive;
+  const streaming = stream.state.status === "streaming";
+  const handleMicToggle = () => {
+    if (voice.status === "idle") {
+      void voice.start();
+    } else {
+      void voice.stop();
+    }
+  };
   const handleFinalize = () => {
     finalize.mutate({ sessionId: session.id });
   };
@@ -280,6 +293,15 @@ export function ChatPanel() {
   const wrappedUp = phase === "wrapping_up";
 
   return (
+    <>
+    {voiceActive ? (
+      <VoiceFocusOverlay
+        status={voice.status}
+        lastError={voice.lastError}
+        onToggle={handleMicToggle}
+        onDone={() => void voice.stop()}
+      />
+    ) : null}
     <div
       className={cn(
         "fixed inset-x-0 bottom-0 z-10 md:left-60",
@@ -348,24 +370,33 @@ export function ChatPanel() {
                   onSend={stream.sendMessage}
                   disabled={composerDisabled || stream.state.crisis !== null}
                   pending={stream.state.status === "streaming"}
-                  placeholder={
-                    voiceLive
-                      ? "Voice session in progress — switch to Talk to continue."
-                      : placeholderForPhase(phase)
-                  }
+                  placeholder={placeholderForPhase(phase)}
                   bare
                   bottomLeft={
-                    <ChatKebab
-                      finishDisabled={!hasUserTurns}
-                      restartDisabled={visibleMsgs.length === 0}
-                      finishPending={finalize.isPending}
-                      restartPending={resetChat.isPending}
-                      onFinish={handleFinalize}
-                      onRestart={handleReset}
-                      wrappedUp={wrappedUp}
-                      cancelWrapUpPending={cancelWrap.isPending}
-                      onCancelWrapUp={handleCancelWrapUp}
-                    />
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={handleMicToggle}
+                        disabled={streaming}
+                        aria-label="Start voice session"
+                        className="shrink-0"
+                      >
+                        <Mic className="h-4 w-4" />
+                      </Button>
+                      <ChatKebab
+                        finishDisabled={!hasUserTurns}
+                        restartDisabled={visibleMsgs.length === 0}
+                        finishPending={finalize.isPending}
+                        restartPending={resetChat.isPending}
+                        onFinish={handleFinalize}
+                        onRestart={handleReset}
+                        wrappedUp={wrappedUp}
+                        cancelWrapUpPending={cancelWrap.isPending}
+                        onCancelWrapUp={handleCancelWrapUp}
+                      />
+                    </div>
                   }
                   bottomRight={
                     showWrapUp ? (
@@ -389,6 +420,7 @@ export function ChatPanel() {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

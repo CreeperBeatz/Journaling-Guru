@@ -7,7 +7,6 @@ import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChatPanel } from "@/features/chat/ChatPanel";
-import { VoicePanel } from "@/features/chat/VoicePanel";
 import {
   isExtractionInFlight,
   useExtractionStatus,
@@ -22,25 +21,28 @@ import type { DailyInput, DailyInputUpsertBody, TagDayLink } from "@/features/da
 import { useDailyInput, useSaveDailyInput } from "@/features/daily/hooks";
 import { GoalCheckInBlock } from "@/features/goals/GoalCheckInBlock";
 
-// Three modes coexist on /today (Phase 6a). Talk is reserved for 6b
-// (voice via OpenAI Realtime) and renders as a disabled "soon" tab.
-type TodayMode = "manual" | "chat" | "talk";
+// Two modes coexist on /today: Manual (structured form) and Chat
+// (free-form conversation, with voice as an in-composer input mode).
+type TodayMode = "manual" | "chat";
 
 const MODE_STORAGE_KEY = "journai.todayMode";
 
 function isMode(s: string | null | undefined): s is TodayMode {
-  return s === "manual" || s === "chat" || s === "talk";
+  return s === "manual" || s === "chat";
 }
 
 // Default mode resolution: ?mode= URL param → localStorage → 'chat'.
 // URL takes precedence so deep-links and reload-after-toggle stay
 // stable; localStorage gives a "remember my last tab" feel; the chat-
 // first default reflects the v6a thesis (engagement > data entry).
+// A legacy stored value of "talk" maps to "chat" — voice is now an
+// input mode inside the chat composer, not its own tab.
 function readDefaultMode(urlMode: string | null): TodayMode {
   if (isMode(urlMode)) return urlMode;
   if (typeof window !== "undefined") {
     const stored = window.localStorage.getItem(MODE_STORAGE_KEY);
     if (isMode(stored)) return stored;
+    if (stored === "talk") return "chat";
   }
   return "chat";
 }
@@ -168,10 +170,6 @@ export function DailyEntry() {
       <TabsContent value="chat" className="mt-0">
         <ChatPanel />
       </TabsContent>
-
-      <TabsContent value="talk" className="mt-6">
-        <VoicePanel />
-      </TabsContent>
     </>
   );
 
@@ -210,10 +208,9 @@ export function DailyEntry() {
       >
         <div className="flex flex-col gap-2">
           {statusPill ? <div className="self-end">{statusPill}</div> : null}
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="manual">Manual</TabsTrigger>
             <TabsTrigger value="chat">Chat</TabsTrigger>
-            <TabsTrigger value="talk">Talk</TabsTrigger>
           </TabsList>
         </div>
       </div>

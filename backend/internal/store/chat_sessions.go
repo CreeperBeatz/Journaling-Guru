@@ -209,24 +209,27 @@ func (s *ChatSessionStore) AdvancePhase(
 }
 
 // MarkVoice flips a session into voice mode and stamps the OpenAI
-// Realtime session id + model. Idempotent: re-issuing /voice/start for
-// the same session updates the openai_session_id (a stale ephemeral
-// secret may have expired) without changing user-visible state.
+// Realtime session id. Idempotent: re-issuing /voice/start for the same
+// session updates the openai_session_id (a stale ephemeral secret may
+// have expired) without changing user-visible state.
+//
+// chat_model is intentionally NOT touched here: it pins the OpenRouter
+// chat-tier model and writing the realtime model name into it would
+// break the next text turn (OpenRouter has no such model).
 //
 // Scoped by user_id as defense-in-depth even though the caller already
 // loaded the session via GetByID.
 func (s *ChatSessionStore) MarkVoice(
-	ctx context.Context, userID, sessionID, model, openaiSessionID string,
+	ctx context.Context, userID, sessionID, openaiSessionID string,
 ) error {
 	ct, err := s.DB.Exec(ctx,
 		`UPDATE chat_sessions
 		    SET mode              = 'voice',
 		        openai_session_id = $3,
-		        chat_model        = CASE WHEN $4 = '' THEN chat_model ELSE $4 END,
 		        last_activity_at  = now(),
 		        updated_at        = now()
 		  WHERE id = $1 AND user_id = $2`,
-		sessionID, userID, openaiSessionID, model)
+		sessionID, userID, openaiSessionID)
 	if err != nil {
 		return err
 	}

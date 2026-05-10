@@ -757,14 +757,19 @@ func (h *ChatHandler) StartVoice(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "prompt build failed")
 		return
 	}
-	// Voice tone tweak: append a short instruction so the model speaks
-	// conversationally instead of emitting markdown bullet structure.
-	// Cheap append; doesn't disturb the cache-friendly persona prefix
-	// because the realtime API's prompt cache is independent of the
-	// chat-tier OpenRouter cache anyway.
+	// Voice tone tweak + tool override. The base system prompt advertises
+	// a propose_wrap_up tool (used in text/SSE mode), but the realtime
+	// session has no tools registered — function-call attempts surface
+	// as empty `{}` transcript turns. Override here so the model just
+	// has a conversation; wrap-up lives in the chat composer after the
+	// call ends.
 	systemPrompt += "\n\nYou are speaking out loud now — voice mode. Skip headers, " +
 		"bullet lists, and any formatting that doesn't read aloud. Keep replies " +
-		"short and conversational; let pauses do work."
+		"short and conversational; let pauses do work. " +
+		"Voice mode has NO tools available: ignore the Tools section above. " +
+		"Do not call propose_wrap_up or any other tool — never emit a function " +
+		"call. When the user signals they're done, just say a short closing " +
+		"line and stop talking; the user will end the call themselves."
 
 	out, err := h.Realtime.MintEphemeralSecret(r.Context(), realtime.MintRequest{
 		Model:            h.RealtimeModel,
@@ -781,7 +786,7 @@ func (h *ChatHandler) StartVoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Sessions.MarkVoice(r.Context(), sess.UserID, session.ID, out.Model, out.SessionID); err != nil {
+	if err := h.Sessions.MarkVoice(r.Context(), sess.UserID, session.ID, out.SessionID); err != nil {
 		h.Logger.Error("mark session voice", "err", err, "session_id", session.ID)
 		writeJSONError(w, http.StatusInternalServerError, "session update failed")
 		return
@@ -981,7 +986,12 @@ func (h *ChatHandler) runStream(
 	writeSSEHeaders(w)
 
 	model := h.ChatModel
-	if session.ChatModel != "" {
+	// Honor a per-session pin, but ignore values that aren't OpenRouter
+	// chat-tier models. Older rows may have the realtime model name
+	// stamped into chat_model from a prior MarkVoice bug; sending that
+	// to OpenRouter 400s. Treat anything matching the realtime model as
+	// "not pinned."
+	if session.ChatModel != "" && session.ChatModel != h.RealtimeModel {
 		model = session.ChatModel
 	}
 	chunks, err := h.ChatLLM.CompleteStream(r.Context(), llm.StreamRequest{
