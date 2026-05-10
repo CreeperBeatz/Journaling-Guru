@@ -29,6 +29,15 @@ type ExtractionResult struct {
 	DrainedTagProposals   []string          // ≤ 5 short labels for negative tags
 	ChargedTagProposals   []string          // ≤ 5 short labels for positive tags
 	Answers               map[string]string // question_id → text; omitted-keys absent
+	GoalCheckIns          []GoalCheckInExtraction
+}
+
+// GoalCheckInExtraction is one yes/no answer to a goal's daily check-in
+// question, surfaced from the transcript. Apply step skips entries whose
+// goal_id already has a manual check-in row for the day (manual-wins).
+type GoalCheckInExtraction struct {
+	GoalID string
+	Value  bool
 }
 
 // extractionMaxTokens caps the response. The schema is small but the
@@ -49,6 +58,7 @@ const (
 type ExtractParams struct {
 	Model     string // per-call override; empty falls back to client default
 	Questions []QuestionView
+	Goals     []GoalView
 	Messages  []domain.ChatMessage
 }
 
@@ -65,7 +75,7 @@ func Extract(
 	if len(lines) == 0 {
 		return nil, errors.New("extract: empty transcript")
 	}
-	system, user, err := BuildExtractionPrompts(params.Questions, params.Messages)
+	system, user, err := BuildExtractionPrompts(params.Questions, params.Goals, params.Messages)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +93,7 @@ func Extract(
 	if err != nil {
 		return nil, fmt.Errorf("parse extraction response: %w (content: %s)", err, truncate(resp.Content, 300))
 	}
-	validated := validateExtraction(parsed, params.Questions)
+	validated := validateExtraction(parsed, params.Questions, params.Goals)
 	return validated, nil
 }
 
@@ -97,6 +107,12 @@ type rawExtraction struct {
 	DrainedTagProposals []string          `json:"drained_tag_proposals"`
 	ChargedTagProposals []string          `json:"charged_tag_proposals"`
 	Answers             map[string]string `json:"answers"`
+	GoalCheckIns        []rawGoalCheckIn  `json:"goal_check_ins"`
+}
+
+type rawGoalCheckIn struct {
+	GoalID string `json:"goal_id"`
+	Value  bool   `json:"value"`
 }
 
 func parseExtractionJSON(content string) (*rawExtraction, error) {
@@ -112,13 +128,17 @@ func parseExtractionJSON(content string) (*rawExtraction, error) {
 //   - mood: out-of-range (anything not 1..3) becomes nil.
 //   - drained/charged/gratitude_text: trimmed, capped at 1000 chars.
 //   - reflection_text: trimmed, capped at 4000 chars.
-//   - answers: only keys matching one of `params.Questions` are kept.
+//   - answers: only keys matching one of `questions` are kept.
 //     Empty/whitespace bodies are dropped.
+//   - goal_check_ins: only entries whose goal_id matches one of `goals`
+//     are kept; later occurrences of the same goal_id overwrite earlier
+//     ones (the apply step then skips entirely if a manual row exists).
 //
-// The returned result is safe to feed into MergeFromExtraction.
-func validateExtraction(raw *rawExtraction, questions []QuestionView) *ExtractionResult {
+// The returned result is safe to feed into ApplyExtraction.
+func validateExtraction(raw *rawExtraction, questions []QuestionView, goals []GoalView) *ExtractionResult {
 	out := &ExtractionResult{
-		Answers: map[string]string{},
+		Answers:      map[string]string{},
+		GoalCheckIns: []GoalCheckInExtraction{},
 	}
 	if raw.Mood != nil && *raw.Mood >= 1 && *raw.Mood <= 3 {
 		m := *raw.Mood
@@ -144,6 +164,28 @@ func validateExtraction(raw *rawExtraction, questions []QuestionView) *Extractio
 			continue
 		}
 		out.Answers[qid] = body
+	}
+
+	validGoalIDs := map[string]struct{}{}
+	for _, g := range goals {
+		validGoalIDs[g.ID] = struct{}{}
+	}
+	// Dedupe by goal_id; last occurrence wins. Order is preserved by the
+	// goal's first appearance, which is fine for the apply loop.
+	dedup := make(map[string]int, len(raw.GoalCheckIns))
+	for _, gc := range raw.GoalCheckIns {
+		if _, ok := validGoalIDs[gc.GoalID]; !ok {
+			continue
+		}
+		if idx, exists := dedup[gc.GoalID]; exists {
+			out.GoalCheckIns[idx].Value = gc.Value
+			continue
+		}
+		dedup[gc.GoalID] = len(out.GoalCheckIns)
+		out.GoalCheckIns = append(out.GoalCheckIns, GoalCheckInExtraction{
+			GoalID: gc.GoalID,
+			Value:  gc.Value,
+		})
 	}
 	return out
 }

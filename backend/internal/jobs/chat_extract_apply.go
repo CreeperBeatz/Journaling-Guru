@@ -24,6 +24,8 @@ type ApplyDeps struct {
 	DailyInputs    *store.DailyInputStore
 	Tags           *store.TagStore
 	DailyEntryTags *store.DailyEntryTagStore
+	Goals          *store.GoalStore        // optional; nil disables goal_check_ins writes
+	GoalCheckIns   *store.GoalCheckInStore // paired with Goals
 	LLM            *llm.OpenRouter
 	Logger         *slog.Logger
 	Scheduler      *Scheduler // optional; nil-safe
@@ -122,6 +124,36 @@ func ApplyExtraction(
 				continue
 			}
 			return fmt.Errorf("update entry %s: %w", qid, err)
+		}
+	}
+
+	if d.Goals != nil && d.GoalCheckIns != nil && len(result.GoalCheckIns) > 0 {
+		existingCheckIns, err := d.GoalCheckIns.GetForDay(ctx, user.ID, localDate)
+		if err != nil {
+			return fmt.Errorf("load existing goal check-ins: %w", err)
+		}
+		for _, gc := range result.GoalCheckIns {
+			// Manual-wins: if the user already toggled the check-in
+			// on /today before extraction ran, leave it alone.
+			if _, exists := existingCheckIns[gc.GoalID]; exists {
+				continue
+			}
+			// Defensive: re-fetch the goal. validateExtraction only
+			// asserted the ID was in the listed goals; status and
+			// date range can still drift between list and apply.
+			g, err := d.Goals.GetByID(ctx, user.ID, gc.GoalID)
+			if err != nil {
+				return fmt.Errorf("load goal %s: %w", gc.GoalID, err)
+			}
+			if g == nil || g.Status != domain.GoalStatusActive {
+				continue
+			}
+			if session.LocalDate < g.StartDate || session.LocalDate > g.EndDate {
+				continue
+			}
+			if _, err := d.GoalCheckIns.Upsert(ctx, gc.GoalID, localDate, gc.Value); err != nil {
+				return fmt.Errorf("upsert goal check-in %s: %w", gc.GoalID, err)
+			}
 		}
 	}
 

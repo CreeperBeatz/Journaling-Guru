@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/riverqueue/river"
 
@@ -81,6 +82,8 @@ type ChatExtractionWorker struct {
 	Tags           *store.TagStore
 	DailyEntryTags *store.DailyEntryTagStore
 	Questions      *store.QuestionStore
+	Goals          *store.GoalStore
+	GoalCheckIns   *store.GoalCheckInStore
 	Users          *store.UserStore
 	Scheduler      *Scheduler // re-seeds summaries after extraction lands
 	// LLM is the classify-tier client (CLASSIFY_MODEL default). Per-call
@@ -187,6 +190,22 @@ func (w *ChatExtractionWorker) process(
 	}
 	views := chat.QuestionViewsFromDomain(questions)
 
+	// Active goals for the journal date. ListActive already filters by
+	// status='active' AND end_date >= asOf; ordered by end_date ASC so
+	// the prompt surfaces near-end goals first.
+	var goalViews []chat.GoalView
+	if w.Goals != nil {
+		asOf, perr := time.Parse("2006-01-02", session.LocalDate)
+		if perr != nil {
+			return fmt.Errorf("parse session local_date: %w", perr)
+		}
+		activeGoals, gerr := w.Goals.ListActive(ctx, user.ID, asOf)
+		if gerr != nil {
+			return fmt.Errorf("load active goals: %w", gerr)
+		}
+		goalViews = chat.GoalViewsFromDomain(activeGoals)
+	}
+
 	// Per-session pin (set on CreateOrResume) wins over the LLM client
 	// default — keeps replays consistent across env changes. Empty pin
 	// → empty per-call Model → client default (CLASSIFY_MODEL).
@@ -195,6 +214,7 @@ func (w *ChatExtractionWorker) process(
 	result, err := chat.Extract(ctx, w.LLM, chat.ExtractParams{
 		Model:     model,
 		Questions: views,
+		Goals:     goalViews,
 		Messages:  messages,
 	})
 	if err != nil {
@@ -207,6 +227,8 @@ func (w *ChatExtractionWorker) process(
 		DailyInputs:    w.DailyInputs,
 		Tags:           w.Tags,
 		DailyEntryTags: w.DailyEntryTags,
+		Goals:          w.Goals,
+		GoalCheckIns:   w.GoalCheckIns,
 		LLM:            w.LLM,
 		Logger:         w.Logger,
 		Scheduler:      w.Scheduler,

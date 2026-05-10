@@ -178,6 +178,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		Messages:       chatMessages,
 		Jobs:           chatExtractionJobs,
 		Questions:      questions,
+		Goals:          goals,
 		Users:          users,
 		DailyInputs:    dailyInputs,
 		ChatLLM:        chatLLM,

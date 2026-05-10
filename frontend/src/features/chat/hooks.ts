@@ -374,6 +374,7 @@ export function useExtractionStatus(sessionId: string | null, enabled: boolean) 
       qc.invalidateQueries({ queryKey: dailyInputKey() });
       qc.invalidateQueries({ queryKey: entriesKey() });
       qc.invalidateQueries({ queryKey: STATS_KEY(90) });
+      qc.invalidateQueries({ queryKey: ["goals"] });
       toast.success("Check-in updated", {
         description: "Mood, emotions, and answers refreshed from the conversation. Keep chatting whenever.",
       });

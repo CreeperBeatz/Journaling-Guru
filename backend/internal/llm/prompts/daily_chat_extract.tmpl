@@ -1,9 +1,10 @@
 {{/* User-prompt template for the extraction step. The system prompt
-   (chatExtractionSystemPrompt in chat/extract.go) sets the schema and
+   (chatExtractionSystemPrompt in chat/prompt.go) sets the schema and
    rules; this template provides the inputs.
 
    Variables:
      .Questions — []QuestionView{ID, Prompt}
+     .Goals     — []GoalView{ID, Title, CheckInQuestion}
      .Messages  — []TranscriptLine{Role, Content}
 */ -}}
 
@@ -13,6 +14,17 @@
 ({{.ID}}) {{.Prompt}}
 {{end}}
 
+{{if .Goals -}}
+# Active goals on file
+
+Each has a yes/no check-in question. Populate `goal_check_ins` only when
+the transcript clearly resolves the question for today. Use the goal_id
+verbatim — never invent.
+
+{{range .Goals -}}
+({{.ID}}) "{{.CheckInQuestion}}" (goal: {{.Title}})
+{{end}}
+{{end -}}
 # Transcript (verbatim)
 
 {{range .Messages -}}
@@ -22,4 +34,5 @@
 
 Now emit the JSON object exactly per the schema in the system prompt.
 Omit `answers` keys for any question the user did not substantively
-answer. Use the user's voice, never the assistant's.
+answer. Omit goals from `goal_check_ins` unless the user clearly said
+yes or no for today. Use the user's voice, never the assistant's.

@@ -36,6 +36,7 @@ type ChatHandler struct {
 	Messages       *store.ChatMessageStore
 	Jobs           *store.ChatExtractionJobStore
 	Questions      *store.QuestionStore
+	Goals          *store.GoalStore
 	Users          *store.UserStore
 	DailyInputs    *store.DailyInputStore
 	ChatLLM        *llm.OpenRouter
@@ -1362,6 +1363,21 @@ func (h *ChatHandler) buildSystemPrompt(
 	}
 	views := chat.QuestionViewsFromDomain(questions)
 
+	// Active goals scoped to the session's journal date (post day-start
+	// cutoff) — consumed by both text chat (this prompt) and voice
+	// (StartVoice reuses buildSystemPrompt before minting the realtime
+	// secret), so a single load covers both surfaces.
+	var goalViews []chat.GoalView
+	if h.Goals != nil {
+		if asOf, perr := time.Parse("2006-01-02", session.LocalDate); perr == nil {
+			activeGoals, gerr := h.Goals.ListActive(ctx, user.ID, asOf)
+			if gerr != nil {
+				return "", fmt.Errorf("load goals: %w", gerr)
+			}
+			goalViews = chat.GoalViewsFromDomain(activeGoals)
+		}
+	}
+
 	// Recent context: 7-day window ending yesterday (today excluded).
 	localToday, err := timezone.LocalDate(time.Now(), user.Timezone, user.DayStartMinutes)
 	if err != nil {
@@ -1407,6 +1423,7 @@ func (h *ChatHandler) buildSystemPrompt(
 		DayStartLabel:     dayStartLabel,
 		LocalTimeOfDay:    chat.TimeOfDay(nowLocal),
 		Questions:         views,
+		Goals:             goalViews,
 		Recent7DayMoodAvg: moodAvg,
 		RecentTopEmotions: topEmotions,
 		Phase:             session.Phase,

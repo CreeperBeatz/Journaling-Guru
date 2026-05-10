@@ -116,7 +116,8 @@ schema is exactly:
   "reflection_text":       <string>,                 // ≤ 4000 chars
   "drained_tag_proposals": [<short label>],          // ≤ 5, lowercase
   "charged_tag_proposals": [<short label>],          // ≤ 5, lowercase
-  "answers":               {<question_id>: <string>} // omit uncovered keys
+  "answers":               {<question_id>: <string>}, // omit uncovered keys
+  "goal_check_ins":        [{"goal_id": <uuid>, "value": true|false}] // omit goals not clearly answered
 }
 
 # Rules
@@ -151,6 +152,12 @@ schema is exactly:
 - answers: only include keys for questions the user substantively
   answered. NEVER invent or guess. The user's voice — third-person
   paragraphs are fine, but no meta-commentary, no questions.
+- goal_check_ins: each entry is one of the goal IDs listed in the user
+  prompt's "Active goals on file" section, paired with true/false. Only
+  include a goal when the user CLEARLY affirmed or denied keeping it
+  today (e.g. "yeah I walked", "didn't read tonight"). Ambiguous,
+  inferred, or unmentioned → omit. Never invent a goal_id; only IDs
+  from the listed goals are valid. Each goal_id appears at most once.
 - Never quote the assistant's words. Never quote tool calls.
 - The transcript is verbatim. Use the user's voice, not yours.`
 
@@ -171,6 +178,30 @@ func QuestionViewsFromDomain(qs []domain.Question) []QuestionView {
 			continue
 		}
 		out = append(out, QuestionView{ID: q.ID, Prompt: q.Prompt})
+	}
+	return out
+}
+
+// GoalView is the minimal shape of an active goal passed into the chat
+// templates. The model uses CheckInQuestion in dialogue and ID purely as
+// a stable correlator for the extraction step's goal_check_ins array.
+type GoalView struct {
+	ID              string
+	Title           string
+	CheckInQuestion string
+}
+
+// GoalViewsFromDomain converts the active-goals slice to the prompt view
+// shape. Caller is expected to have filtered by status='active' and
+// end_date already (GoalStore.ListActive does both).
+func GoalViewsFromDomain(gs []domain.Goal) []GoalView {
+	out := make([]GoalView, 0, len(gs))
+	for _, g := range gs {
+		out = append(out, GoalView{
+			ID:              g.ID,
+			Title:           g.Title,
+			CheckInQuestion: g.CheckInQuestion,
+		})
 	}
 	return out
 }
@@ -198,6 +229,7 @@ type BuildSystemPromptParams struct {
 	DayStartLabel     string
 	LocalTimeOfDay    string
 	Questions         []QuestionView
+	Goals             []GoalView
 	Recent7DayMoodAvg *float64
 	RecentTopEmotions []string
 	Phase          string
@@ -244,9 +276,14 @@ func TranscriptLinesFromMessages(messages []domain.ChatMessage) []TranscriptLine
 // BuildExtractionPrompts returns (system, user) prompts for the
 // extraction step. System is a constant; user is rendered from the
 // transcript template.
-func BuildExtractionPrompts(questions []QuestionView, messages []domain.ChatMessage) (string, string, error) {
+func BuildExtractionPrompts(
+	questions []QuestionView,
+	goals []GoalView,
+	messages []domain.ChatMessage,
+) (string, string, error) {
 	user, err := renderChatTemplate("daily_chat_extract.tmpl", map[string]any{
 		"Questions": questions,
+		"Goals":     goals,
 		"Messages":  TranscriptLinesFromMessages(messages),
 	})
 	if err != nil {

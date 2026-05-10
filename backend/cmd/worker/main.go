@@ -67,6 +67,8 @@ func main() {
 	chatSessions := store.NewChatSessionStore(db)
 	chatMessages := store.NewChatMessageStore(db)
 	chatExtractionJobs := store.NewChatExtractionJobStore(db)
+	goalStore := store.NewGoalStore(db)
+	goalCheckIns := store.NewGoalCheckInStore(db)
 
 	summaryLLM := llm.NewOpenRouter(
 		cfg.OpenRouterKey, cfg.SummaryModel,
@@ -134,6 +136,8 @@ func main() {
 		Tags:           tagStore,
 		DailyEntryTags: dailyEntryTags,
 		Questions:      questions,
+		Goals:          goalStore,
+		GoalCheckIns:   goalCheckIns,
 		Users:          users,
 		Scheduler:      scheduler,
 		LLM:            classifyLLM,
