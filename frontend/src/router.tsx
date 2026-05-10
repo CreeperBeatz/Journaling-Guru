@@ -44,6 +44,11 @@ const ResourcesPage = lazy(() =>
 const GoalsPage = lazy(() =>
   import("./features/goals/GoalsPage").then((m) => ({ default: m.GoalsPage })),
 );
+const WeeklyReflectionPage = lazy(() =>
+  import("./features/reflection/WeeklyReflectionPage").then((m) => ({
+    default: m.WeeklyReflectionPage,
+  })),
+);
 
 function withSuspense(node: ReactNode, fallback: ReactNode) {
   return <Suspense fallback={fallback}>{node}</Suspense>;
@@ -107,6 +112,7 @@ export const router = createBrowserRouter([
       { path: "summaries", element: <Navigate to="/summary" replace /> },
       { path: "summaries/:id", element: <Navigate to="/summary" replace /> },
       { path: "goals", element: withSuspense(<GoalsPage />, <p className="text-sm text-muted-foreground">Loading…</p>) },
+      { path: "weekly", element: withSuspense(<WeeklyReflectionPage />, <p className="text-sm text-muted-foreground">Loading…</p>) },
     ],
   },
 ]);

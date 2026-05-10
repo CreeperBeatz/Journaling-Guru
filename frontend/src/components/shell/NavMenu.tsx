@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import {
+  CalendarCheck,
   CalendarDays,
   MessageSquare,
   Settings as SettingsIcon,
@@ -11,6 +12,9 @@ import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
+  // Weekly sits above Today as the primary-tinted CTA. It always points
+  // at /weekly; the page itself handles "no reflection in flight" copy.
+  { to: "/weekly", end: false, label: "Weekly", icon: CalendarCheck, primary: true },
   { to: "/", end: true, label: "Today", icon: MessageSquare },
   { to: "/history", end: false, label: "History", icon: CalendarDays },
   { to: "/goals", end: false, label: "Goals", icon: Target },
@@ -35,9 +39,13 @@ export function NavMenu({ layoutId, onNavigate }: Props) {
           className={({ isActive }) =>
             cn(
               "relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              isActive
-                ? "text-foreground"
-                : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+              item.primary
+                ? isActive
+                  ? "text-primary-foreground"
+                  : "text-primary hover:text-primary-foreground"
+                : isActive
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
             )
           }
         >
@@ -46,9 +54,14 @@ export function NavMenu({ layoutId, onNavigate }: Props) {
               {isActive ? (
                 <motion.span
                   layoutId={layoutId}
-                  className="absolute inset-0 rounded-md bg-secondary"
+                  className={cn(
+                    "absolute inset-0 rounded-md",
+                    item.primary ? "bg-primary" : "bg-secondary",
+                  )}
                   transition={{ type: "spring", stiffness: 380, damping: 32 }}
                 />
+              ) : item.primary ? (
+                <span className="absolute inset-0 rounded-md bg-primary/10 ring-1 ring-inset ring-primary/30" />
               ) : null}
               <item.icon className="relative h-4 w-4" />
               <span className="relative">{item.label}</span>

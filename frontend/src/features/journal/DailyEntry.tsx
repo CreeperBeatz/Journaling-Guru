@@ -6,7 +6,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useMe } from "@/features/auth/useAuth";
 import { ChatPanel } from "@/features/chat/ChatPanel";
 import { VoicePanel } from "@/features/chat/VoicePanel";
 import {
@@ -22,7 +21,6 @@ import { DailyInputs } from "@/features/daily/DailyInputs";
 import type { DailyInput, DailyInputUpsertBody, TagDayLink } from "@/features/daily/api";
 import { useDailyInput, useSaveDailyInput } from "@/features/daily/hooks";
 import { GoalCheckInBlock } from "@/features/goals/GoalCheckInBlock";
-import { WeeklyReflection } from "@/features/reflection/WeeklyReflection";
 
 // Three modes coexist on /today (Phase 6a). Talk is reserved for 6b
 // (voice via OpenAI Realtime) and renders as a disabled "soon" tab.
@@ -47,15 +45,6 @@ function readDefaultMode(urlMode: string | null): TodayMode {
   return "chat";
 }
 
-// weekdayOf returns 0..6 (Sun..Sat) for a YYYY-MM-DD string. The
-// local_date is a wall-clock day, so we parse in UTC space and read
-// getUTCDay — this avoids any timezone drift.
-function weekdayOf(yyyymmdd: string): number | null {
-  const [y, m, d] = yyyymmdd.split("-").map(Number);
-  if (!y || !m || !d) return null;
-  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-}
-
 // Calendar arithmetic in UTC space — the local_date is a wall-clock day so
 // "the day before" is a calendar subtraction, not a timezone shift.
 function dayBefore(yyyymmdd: string): string | null {
@@ -70,7 +59,6 @@ function dayBefore(yyyymmdd: string): string | null {
 }
 
 export function DailyEntry() {
-  const me = useMe();
   const entries = useEntries();
   const dailyInput = useDailyInput();
   const saveDaily = useSaveDailyInput();
@@ -138,31 +126,9 @@ export function DailyEntry() {
   const today = entries.data?.local_date;
   const yesterday = today ? dayBefore(today) : null;
 
-  // Phase 7 — Weekly reflection. On the user's chosen reflection_weekday
-  // we replace the daily Manual/Chat tabs with the reflection flow. The
-  // user can opt out by passing ?mode=manual or ?mode=chat in the URL
-  // (and a "switch to today's check-in" link is rendered inline).
-  const todayWeekday = today ? weekdayOf(today) : null;
-  const onReflectionDay =
-    !!me.data && todayWeekday !== null && todayWeekday === me.data.reflection_weekday;
-  const userOverride = isMode(urlMode) && urlMode !== "talk";
-  if (onReflectionDay && !userOverride) {
-    return (
-      <div className="space-y-6">
-        <WeeklyReflection
-          dailyInput={dailyInput.data?.input ?? null}
-          tags={dailyInput.data?.tags ?? []}
-        />
-        <button
-          type="button"
-          onClick={() => handleModeChange("manual")}
-          className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-        >
-          Switch to today&apos;s daily check-in instead →
-        </button>
-      </div>
-    );
-  }
+  // Phase 7 — Weekly reflection lives at its own /weekly route, reached
+  // via the Weekly nav button. /today no longer auto-redirects on the
+  // user's reflection_weekday — that fought tab switching.
 
   const onRefresh = async () => {
     await Promise.all([

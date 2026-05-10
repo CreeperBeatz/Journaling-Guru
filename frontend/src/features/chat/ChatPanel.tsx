@@ -180,76 +180,20 @@ export function ChatPanel() {
     }
   }, [streamStatus, partialLen, visibleMsgsLen, stream]);
 
-  if (sessionQuery.isPending) {
-    return (
-      <Card>
-        <CardContent className="px-6 py-12 text-center text-sm text-muted-foreground">
-          Loading conversation…
-        </CardContent>
-      </Card>
-    );
-  }
-  if (sessionQuery.isError) {
-    return (
-      <Card>
-        <CardContent className="px-6 py-8 text-sm text-destructive">
-          Couldn&apos;t load chat: {sessionQuery.error.message}
-        </CardContent>
-      </Card>
-    );
-  }
-  if (!session) {
-    return (
-      <Card>
-        <CardContent className="px-6 py-8 text-sm text-muted-foreground">
-          Starting a new conversation…
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const phase: ChatPhase = session.phase;
   // When a Talk call is live, the same chat_sessions row is being
   // written to from the voice path. Disable the text composer so user
   // turns don't interleave with realtime audio turns.
   const voiceLive = useVoiceLive();
-  const composerDisabled = stream.state.status === "streaming" || voiceLive;
-  const handleFinalize = (overwrite = false) => {
-    if (!session) return;
-    finalize.mutate({ sessionId: session.id, overwrite });
-  };
-  const handleReset = () => {
-    if (!session) return;
-    openerFiredForRef.current = null;
-    resetChat.mutate(session.id);
-  };
-  const handleCancelWrapUp = () => {
-    if (!session) return;
-    cancelWrap.mutate(session.id);
-  };
+
   // wrapUpClicked drives the WrapUpButton's spinner so it only spins
   // when the user actually pressed it — not on every assistant reply.
   // Cleared once the wrap-up turn finishes streaming.
   const [wrapUpClicked, setWrapUpClicked] = useState(false);
-  const handleWrapUp = () => {
-    setWrapUpClicked(true);
-    void stream.triggerWrapUp();
-  };
   useEffect(() => {
     if (wrapUpClicked && stream.state.status !== "streaming") {
       setWrapUpClicked(false);
     }
   }, [wrapUpClicked, stream.state.status]);
-
-  const userTurnCount = visibleMsgs.filter((m) => m.role === "user").length;
-  const hasUserTurns = userTurnCount > 0;
-
-  // Coverage classifier is disabled — the model itself decides what's
-  // missing on the wrap-up turn. So the button is shown whenever the
-  // user has spoken at all, and the wrappedUp state just toggles its
-  // disabled "Wrapping up" presentation.
-  const showWrapUp = hasUserTurns;
-  const wrappedUp = phase === "wrapping_up";
 
   // The "Update check-in" affordance is gated on the model itself
   // calling propose_wrap_up — NOT just the phase. Phase=wrapping_up
@@ -279,6 +223,61 @@ export function ChatPanel() {
     }
     return proposed;
   }, [messages, stream.state.toolEvents]);
+
+  if (sessionQuery.isPending) {
+    return (
+      <Card>
+        <CardContent className="px-6 py-12 text-center text-sm text-muted-foreground">
+          Loading conversation…
+        </CardContent>
+      </Card>
+    );
+  }
+  if (sessionQuery.isError) {
+    return (
+      <Card>
+        <CardContent className="px-6 py-8 text-sm text-destructive">
+          Couldn&apos;t load chat: {sessionQuery.error.message}
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!session) {
+    return (
+      <Card>
+        <CardContent className="px-6 py-8 text-sm text-muted-foreground">
+          Starting a new conversation…
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const phase: ChatPhase = session.phase;
+  const composerDisabled = stream.state.status === "streaming" || voiceLive;
+  const handleFinalize = (overwrite = false) => {
+    finalize.mutate({ sessionId: session.id, overwrite });
+  };
+  const handleReset = () => {
+    openerFiredForRef.current = null;
+    resetChat.mutate(session.id);
+  };
+  const handleCancelWrapUp = () => {
+    cancelWrap.mutate(session.id);
+  };
+  const handleWrapUp = () => {
+    setWrapUpClicked(true);
+    void stream.triggerWrapUp();
+  };
+
+  const userTurnCount = visibleMsgs.filter((m) => m.role === "user").length;
+  const hasUserTurns = userTurnCount > 0;
+
+  // Coverage classifier is disabled — the model itself decides what's
+  // missing on the wrap-up turn. So the button is shown whenever the
+  // user has spoken at all, and the wrappedUp state just toggles its
+  // disabled "Wrapping up" presentation.
+  const showWrapUp = hasUserTurns;
+  const wrappedUp = phase === "wrapping_up";
 
   return (
     <div
