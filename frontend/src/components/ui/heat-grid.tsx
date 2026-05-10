@@ -12,6 +12,10 @@ export interface HeatCellData {
   date: string; // YYYY-MM-DD
   level: HeatLevel;
   moodUp: boolean;
+  // True when this date is the week_end of a *completed* weekly
+  // reflection. Renders a small accent dot in the cell so the user
+  // can spot which days have a reflection to view in History.
+  hasWeeklyReflection?: boolean;
 }
 
 export type HeatView = "year" | "month";
@@ -55,7 +59,7 @@ function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
-const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
+const WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
 export function HeatGrid({
   cells,
@@ -157,7 +161,9 @@ function MonthGrid({
   });
 
   const totalDays = daysInMonth(year, month);
-  const firstDow = startOfMonth(year, month).getUTCDay(); // 0=Sun
+  // Week starts on Monday → ends on Sunday. Map JS getUTCDay() (0=Sun)
+  // to a 0=Mon..6=Sun offset.
+  const firstDow = (startOfMonth(year, month).getUTCDay() + 6) % 7;
   // Month view (lg) goes fluid: cells fill their grid column and stay
   // square via aspect-ratio so the calendar grows with the container.
   // Year-tile (sm) keeps its compact fixed-pixel grid.
@@ -169,9 +175,9 @@ function MonthGrid({
   const labelClass =
     size === "lg" ? "text-sm font-medium" : "text-xs font-medium";
 
-  // Build week rows: 6 rows × 7 cells (max). Each row is a Sunday-start
-  // week. Leading empties pad the 1st to its real weekday; trailing
-  // empties round out the last row.
+  // Build week rows: 6 rows × 7 cells (max). Each row is a Monday-start
+  // week (ends Sunday). Leading empties pad the 1st to its real weekday;
+  // trailing empties round out the last row.
   const totalCells = firstDow + totalDays;
   const totalRows = Math.ceil(totalCells / 7);
   const weeks: { id: string; cells: { iso: string | null; day: number | null }[] }[] = [];
@@ -222,6 +228,7 @@ function MonthGrid({
               const data = byDate.get(c.iso);
               const level: HeatLevel = data?.level ?? 0;
               const moodUp = data?.moodUp ?? false;
+              const hasReflection = data?.hasWeeklyReflection ?? false;
               const isToday = c.iso === todayISO;
               const isFuture = c.iso > todayISO;
               const interactive = !!onSelect && !isFuture;
@@ -241,6 +248,17 @@ function MonthGrid({
                 backgroundColor: LEVEL_VAR[level],
                 boxShadow: moodUp ? "inset 0 0 0 1px var(--heat-mood)" : undefined,
               } as const;
+              const reflectionDot = hasReflection ? (
+                <span
+                  aria-hidden
+                  className={cn(
+                    "absolute rounded-full bg-accent",
+                    size === "lg"
+                      ? "right-1 top-1 h-1.5 w-1.5"
+                      : "right-0.5 top-0.5 h-1 w-1",
+                  )}
+                />
+              ) : null;
               if (interactive) {
                 return (
                   <button
@@ -252,6 +270,7 @@ function MonthGrid({
                     title={cellLabel(c.iso, data)}
                     aria-label={cellLabel(c.iso, data)}
                   >
+                    {reflectionDot}
                     {size === "lg" ? c.day : null}
                   </button>
                 );
@@ -265,6 +284,7 @@ function MonthGrid({
                   className={cellClass}
                   style={styleProps}
                 >
+                  {reflectionDot}
                   {size === "lg" ? c.day : null}
                 </span>
               );
@@ -311,9 +331,13 @@ function MonthGrid({
 }
 
 function cellLabel(iso: string, data?: HeatCellData): string {
-  if (!data || data.level === 0) return `${iso}: no entry`;
+  if (!data || data.level === 0) {
+    if (data?.hasWeeklyReflection) return `${iso}: weekly reflection`;
+    return `${iso}: no entry`;
+  }
   const parts = [iso, "entry logged"];
   if (data.moodUp) parts.push("mood up");
+  if (data.hasWeeklyReflection) parts.push("weekly reflection");
   return parts.join(" · ");
 }
 
@@ -326,10 +350,13 @@ function cellLabel(iso: string, data?: HeatCellData): string {
  */
 export function buildHeatCells(
   days: { local_date: string; answered: number; chat_turns: number; mood?: number | null }[],
+  reflectionDates?: string[],
 ): HeatCellData[] {
+  const reflectionSet = new Set(reflectionDates ?? []);
   return days.map((d) => ({
     date: d.local_date,
     level: d.answered > 0 || d.chat_turns >= 3 ? 1 : 0,
     moodUp: (d.mood ?? 0) >= 3,
+    hasWeeklyReflection: reflectionSet.has(d.local_date),
   }));
 }
