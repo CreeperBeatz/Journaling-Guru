@@ -318,16 +318,12 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
 
 export interface FinalizeArgs {
   sessionId: string;
-  // overwrite=true flips the worker to session-wins for daily_inputs.
-  // Default false preserves manual-wins (the original Phase 6a behavior).
-  overwrite?: boolean;
 }
 
 export function useFinalizeChat() {
   const qc = useQueryClient();
   return useMutation<FinalizeResponse, ApiError, FinalizeArgs>({
-    mutationFn: ({ sessionId, overwrite }) =>
-      finalizeSession(sessionId, { overwrite }),
+    mutationFn: ({ sessionId }) => finalizeSession(sessionId),
     onSuccess: (resp) => {
       // Optimistically reflect the new phase + extraction_status so the
       // sticky-bar "Updating…" pill appears immediately, before the

@@ -253,16 +253,21 @@ export class VoiceController {
       return;
     }
 
-    // Assistant audio transcript completed.
-    //   response.audio_transcript.done { transcript: "..." }
-    if (evt.type === "response.audio_transcript.done") {
+    // Assistant audio transcript completed. Realtime GA (2026-05+)
+    // emits `response.output_audio_transcript.done`; the legacy
+    // (gpt-4o-realtime-preview) name was `response.audio_transcript.done`.
+    // Handle both so a model swap doesn't silently break transcript
+    // capture.
+    if (
+      evt.type === "response.output_audio_transcript.done" ||
+      evt.type === "response.audio_transcript.done"
+    ) {
       const text = (evt.transcript ?? "").trim();
       if (text) this.persistTurn("assistant", text);
       return;
     }
 
-    // Some models emit response.output_text.done instead (text-only
-    // response on a voice channel — rare but defensible to capture).
+    // Text-only response on a voice channel (rare but defensible).
     if (evt.type === "response.output_text.done") {
       const text = (evt.text ?? "").trim();
       if (text) this.persistTurn("assistant", text);

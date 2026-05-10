@@ -82,6 +82,23 @@ func (s *EntryStore) ListByDateWithPrompts(
 	return out, rows.Err()
 }
 
+// GetByQuestionAndDate returns the entry for one (user, question, day),
+// or (nil, nil) when the user hasn't answered that question on that day.
+// Used by the chat extraction worker to decide between insert and merge.
+func (s *EntryStore) GetByQuestionAndDate(
+	ctx context.Context, userID, questionID string, localDate time.Time,
+) (*domain.JournalEntry, error) {
+	const q = `SELECT ` + entryColumns + `
+	             FROM journal_entries
+	            WHERE user_id = $1 AND question_id = $2 AND local_date = $3`
+	row := s.DB.QueryRow(ctx, q, userID, questionID, localDate)
+	out, err := scanEntry(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return out, err
+}
+
 // HasEntryOnDate is a cheap probe used by the lazy-seed path: was today
 // already the user's first-write-of-the-day for this period? If so,
 // scheduling is skipped to avoid INSERT churn on every keystroke save.

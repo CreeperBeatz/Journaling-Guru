@@ -65,9 +65,7 @@ func (s *ChatIdleSweeper) Sweep(ctx context.Context, limit int) int {
 		if err := s.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionPending, nil); err != nil {
 			s.Logger.Warn("idle sweep set status pending", "err", err, "session_id", session.ID)
 		}
-		// Idle sweeper never overwrites manual edits — the user didn't
-		// choose; default to manual-wins.
-		if _, err := s.Jobs.Schedule(ctx, session.ID, session.UserID, false); err != nil {
+		if _, err := s.Jobs.Schedule(ctx, session.ID, session.UserID); err != nil {
 			s.Logger.Warn("idle sweep schedule", "err", err, "session_id", session.ID)
 			continue
 		}

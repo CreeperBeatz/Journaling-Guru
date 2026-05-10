@@ -48,9 +48,14 @@ type MintRequest struct {
 	// Model overrides the client default when non-empty.
 	Model        string
 	Instructions string
-	// Voice picks the assistant voice. OpenAI defaults to "alloy"; we
-	// expose it so a future per-user knob can flow through.
+	// Voice picks the assistant voice. Realtime GA defaults to "marin";
+	// we expose it so a future per-user knob can flow through.
 	Voice string
+	// SafetyIdentifier binds an OpenAI-Safety-Identifier to the
+	// resulting ephemeral token. Pass a stable hashed user id so abuse
+	// signals from this user can be correlated server-side without the
+	// browser ever sending the raw id over the data channel.
+	SafetyIdentifier string
 }
 
 // MintResponse is what we return to the browser. Value is the ephemeral
@@ -82,9 +87,14 @@ func (c *Client) MintEphemeralSecret(ctx context.Context, req MintRequest) (*Min
 	}
 	voice := req.Voice
 	if voice == "" {
-		voice = "alloy"
+		voice = "marin"
 	}
 
+	// Current GA shape (2026-05): audio.input config takes both a
+	// transcription model and turn_detection. Semantic VAD is the
+	// recommended default — it cuts the model in only after the user
+	// has actually finished a thought, instead of every 300ms of
+	// silence.
 	body := map[string]any{
 		"session": map[string]any{
 			"type":         "realtime",
@@ -93,7 +103,10 @@ func (c *Client) MintEphemeralSecret(ctx context.Context, req MintRequest) (*Min
 			"audio": map[string]any{
 				"input": map[string]any{
 					"transcription": map[string]any{
-						"model": "whisper-1",
+						"model": "gpt-4o-mini-transcribe",
+					},
+					"turn_detection": map[string]any{
+						"type": "semantic_vad",
 					},
 				},
 				"output": map[string]any{
@@ -113,6 +126,11 @@ func (c *Client) MintEphemeralSecret(ctx context.Context, req MintRequest) (*Min
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	if req.SafetyIdentifier != "" {
+		// Bound to the resulting ephemeral token; the browser doesn't
+		// need to forward this header on its WebRTC handshake.
+		httpReq.Header.Set("OpenAI-Safety-Identifier", req.SafetyIdentifier)
+	}
 	// No OpenAI-Beta header — the GA Realtime API rejects beta-tagged
 	// client_secrets with api_version_mismatch.
 

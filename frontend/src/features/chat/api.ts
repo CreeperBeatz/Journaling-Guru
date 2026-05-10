@@ -87,16 +87,14 @@ export function createOrResumeSession(): Promise<ChatSessionEnvelope> {
   return api("/api/chat/sessions", { method: "POST", body: {} });
 }
 
-// finalizeSession schedules the extraction job. `overwrite=true` flips
-// the worker to session-wins for daily_inputs (mood + text); default
-// false preserves manual edits per the original Phase 6a contract.
-export function finalizeSession(
-  id: string,
-  opts: { overwrite?: boolean } = {},
-): Promise<FinalizeResponse> {
+// finalizeSession schedules the extraction job. The worker silently
+// merges extracted content into any pre-existing manual entries
+// (LLM-merge for non-empty conflicts; manual fields preserved when
+// nothing was extracted). No keep/replace fork.
+export function finalizeSession(id: string): Promise<FinalizeResponse> {
   return api(`/api/chat/sessions/${encodeURIComponent(id)}/finalize`, {
     method: "POST",
-    body: { overwrite: !!opts.overwrite },
+    body: {},
   });
 }
 

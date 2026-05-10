@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -14,6 +15,53 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/llm/chat"
 	"github.com/cosmosthrace/journai/backend/internal/store"
 )
+
+type dailyField int
+
+const (
+	fieldDrained dailyField = iota
+	fieldCharged
+	fieldGratitude
+	fieldReflection
+)
+
+// mergedField returns the value to persist for one daily_input text
+// field. If the extracted value is empty, returns "" so the
+// session-wins SQL preserves the existing field. If both manual and
+// extracted are non-empty, runs an LLM-merge (with append fallback);
+// the result replaces both via OverwriteFromExtraction.
+func mergedField(
+	ctx context.Context,
+	client *llm.OpenRouter,
+	model, label string,
+	existing *domain.DailyInput,
+	chatText string,
+	field dailyField,
+) string {
+	chatText = strings.TrimSpace(chatText)
+	if chatText == "" {
+		return ""
+	}
+	if existing == nil {
+		return chatText
+	}
+	var existingText string
+	switch field {
+	case fieldDrained:
+		existingText = existing.DrainedText
+	case fieldCharged:
+		existingText = existing.ChargedText
+	case fieldGratitude:
+		existingText = existing.GratitudeText
+	case fieldReflection:
+		existingText = existing.ReflectionText
+	}
+	existingText = strings.TrimSpace(existingText)
+	if existingText == "" {
+		return chatText
+	}
+	return chat.MergeText(ctx, client, model, label, existingText, chatText)
+}
 
 // ChatExtractionWorker runs the single-shot extraction LLM call at
 // session-end (or idle-finalize) and writes the structured fields to
@@ -159,26 +207,28 @@ func (w *ChatExtractionWorker) process(
 		return fmt.Errorf("parse local_date: %w", err)
 	}
 
-	// Daily-inputs writeback. Default is manual-wins
-	// (MergeFromExtraction); when the user picked the explicit
-	// "Finish & replace from this session" affordance, job.Overwrite is
-	// true and we use the session-wins variant instead. Either path is
-	// empty-safe: an extracted "" will not blank an existing field.
+	// Daily-inputs writeback. Silent-merge semantics: for each text
+	// field, if both the existing manual value and the extracted value
+	// are non-empty, run an LLM-merge so both pieces land in one
+	// coherent passage. Empty extracted values never blank an existing
+	// field. Mood is manual-wins via COALESCE inside MergeFromExtraction.
+	existingDaily, err := w.DailyInputs.GetByDate(ctx, user.ID, localDate)
+	if err != nil {
+		return fmt.Errorf("load existing daily_inputs: %w", err)
+	}
+	mergeModel := session.ExtractionModel
 	dailyPayload := store.DailyInputUpsert{
 		Mood:           result.Mood,
-		DrainedText:    result.DrainedText,
-		ChargedText:    result.ChargedText,
-		GratitudeText:  result.GratitudeText,
-		ReflectionText: result.ReflectionText,
+		DrainedText:    mergedField(ctx, w.LLM, mergeModel, "what drained you today", existingDaily, result.DrainedText, fieldDrained),
+		ChargedText:    mergedField(ctx, w.LLM, mergeModel, "what energized/charged you today", existingDaily, result.ChargedText, fieldCharged),
+		GratitudeText:  mergedField(ctx, w.LLM, mergeModel, "what you're grateful for today", existingDaily, result.GratitudeText, fieldGratitude),
+		ReflectionText: mergedField(ctx, w.LLM, mergeModel, "broader reflection on today", existingDaily, result.ReflectionText, fieldReflection),
 	}
-	if job.Overwrite {
-		if _, err := w.DailyInputs.OverwriteFromExtraction(ctx, user.ID, localDate, dailyPayload); err != nil {
-			return fmt.Errorf("overwrite daily_inputs: %w", err)
-		}
-	} else {
-		if _, err := w.DailyInputs.MergeFromExtraction(ctx, user.ID, localDate, dailyPayload); err != nil {
-			return fmt.Errorf("merge daily_inputs: %w", err)
-		}
+	// Use OverwriteFromExtraction so the merged values (which already
+	// include the existing manual content) actually land. The "merge"
+	// step happened above; the store call just persists.
+	if _, err := w.DailyInputs.OverwriteFromExtraction(ctx, user.ID, localDate, dailyPayload); err != nil {
+		return fmt.Errorf("write daily_inputs: %w", err)
 	}
 
 	// Tag reconciliation. UpsertByLabel is idempotent on
@@ -209,21 +259,46 @@ func (w *ChatExtractionWorker) process(
 		}
 	}
 
-	// Overwrite each answered question. Same warning-then-overwrite
-	// contract as daily_inputs. UpsertFromChat preserves any question
-	// the chat didn't actually cover (extraction omits the key).
+	// For each answered question: if no manual entry exists, insert the
+	// chat-extracted body. If a manual entry already exists with non-
+	// empty body, LLM-merge the two passages and update in place. The
+	// merge helper falls back to lossless append on LLM error.
 	for qid, body := range result.Answers {
-		_, _, err := w.Entries.UpsertFromChat(
-			ctx, user.ID, qid, localDate, body, session.ID,
-		)
+		body = strings.TrimSpace(body)
+		if body == "" {
+			continue
+		}
+		existing, err := w.Entries.GetByQuestionAndDate(ctx, user.ID, qid, localDate)
 		if err != nil {
-			if errors.Is(err, store.ErrEntryQuestionMissing) {
-				// Question was archived between session start and now —
-				// silently skip; no point failing the whole extraction.
-				w.Logger.Info("skip archived question", "session_id", session.ID, "question_id", qid)
+			return fmt.Errorf("load existing entry %s: %w", qid, err)
+		}
+		// Find the prompt text for the merge helper's context.
+		prompt := ""
+		for _, q := range views {
+			if q.ID == qid {
+				prompt = q.Prompt
+				break
+			}
+		}
+		if existing == nil || strings.TrimSpace(existing.Body) == "" {
+			if _, _, err := w.Entries.UpsertFromChat(ctx, user.ID, qid, localDate, body, session.ID); err != nil {
+				if errors.Is(err, store.ErrEntryQuestionMissing) {
+					w.Logger.Info("skip archived question", "session_id", session.ID, "question_id", qid)
+					continue
+				}
+				return fmt.Errorf("upsert entry %s: %w", qid, err)
+			}
+			continue
+		}
+		merged := chat.MergeEntry(ctx, w.LLM, mergeModel, prompt, existing.Body, body)
+		if strings.TrimSpace(merged) == strings.TrimSpace(existing.Body) {
+			continue
+		}
+		if _, _, err := w.Entries.UpdateBody(ctx, user.ID, existing.ID, merged); err != nil {
+			if errors.Is(err, store.ErrEntryNotFound) {
 				continue
 			}
-			return fmt.Errorf("upsert entry %s: %w", qid, err)
+			return fmt.Errorf("update entry %s: %w", qid, err)
 		}
 	}
 

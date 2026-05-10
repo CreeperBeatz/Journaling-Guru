@@ -254,8 +254,8 @@ export function ChatPanel() {
 
   const phase: ChatPhase = session.phase;
   const composerDisabled = stream.state.status === "streaming" || voiceLive;
-  const handleFinalize = (overwrite = false) => {
-    finalize.mutate({ sessionId: session.id, overwrite });
+  const handleFinalize = () => {
+    finalize.mutate({ sessionId: session.id });
   };
   const handleReset = () => {
     openerFiredForRef.current = null;
@@ -323,13 +323,8 @@ export function ChatPanel() {
             ) : null}
             {modelProposedWrapUp && !stream.state.crisis ? (
               <div className="mt-4">
-                {/* The wrap-up affordance is the prominent CTA after the
-                 *  model proposes wrap-up, and its copy promises that
-                 *  manual fields will be overwritten — so it goes through
-                 *  the session-wins path. The less-prominent kebab
-                 *  "Finish" stays manual-wins. */}
                 <WrapUpAffordance
-                  onFinalize={() => handleFinalize(true)}
+                  onFinalize={handleFinalize}
                   pending={finalize.isPending}
                 />
               </div>

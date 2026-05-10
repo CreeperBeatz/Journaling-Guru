@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -425,16 +427,11 @@ func (h *ChatHandler) Opener(w http.ResponseWriter, r *http.Request) {
 
 // ---------- /sessions/:id/finalize ----------
 
-// finalizeRequest is the body shape for POST /finalize. `overwrite=true`
-// flips the worker to session-wins semantics for daily_inputs (mood +
-// text). Default false preserves manual-wins.
-type finalizeRequest struct {
-	Overwrite bool `json:"overwrite"`
-}
-
 // Finalize handles POST /api/chat/sessions/:id/finalize. Schedules the
 // extraction job and returns 202 with the job state. Idempotent —
-// double-clicks within the same minute return the same job.
+// double-clicks within the same minute return the same job. Body is
+// ignored; the worker always merges silently (LLM-merge for non-empty
+// conflicts, manual fields preserved when nothing was extracted).
 func (h *ChatHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 	sess := middleware.SessionFromCtx(r.Context())
 	if sess == nil {
@@ -445,12 +442,6 @@ func (h *ChatHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 	if sessionID == "" {
 		writeJSONError(w, http.StatusBadRequest, "id required")
 		return
-	}
-	// Body is optional — empty body decodes to zero-value (overwrite=false),
-	// preserving the existing manual-wins default.
-	var req finalizeRequest
-	if r.ContentLength > 0 {
-		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
 	session, err := h.Sessions.GetByID(r.Context(), sess.UserID, sessionID)
 	if err != nil {
@@ -473,7 +464,7 @@ func (h *ChatHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 	if err := h.Sessions.SetExtractionStatus(r.Context(), sessionID, domain.ChatExtractionPending, nil); err != nil {
 		h.Logger.Warn("set extraction status pending", "err", err, "session_id", sessionID)
 	}
-	if _, err := h.Jobs.Schedule(r.Context(), session.ID, session.UserID, req.Overwrite); err != nil {
+	if _, err := h.Jobs.Schedule(r.Context(), session.ID, session.UserID); err != nil {
 		h.Logger.Error("schedule extraction", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "schedule failed")
 		return
@@ -776,8 +767,9 @@ func (h *ChatHandler) StartVoice(w http.ResponseWriter, r *http.Request) {
 		"short and conversational; let pauses do work."
 
 	out, err := h.Realtime.MintEphemeralSecret(r.Context(), realtime.MintRequest{
-		Model:        h.RealtimeModel,
-		Instructions: systemPrompt,
+		Model:            h.RealtimeModel,
+		Instructions:     systemPrompt,
+		SafetyIdentifier: hashedSafetyID(user.ID),
 	})
 	if err != nil {
 		if errors.Is(err, realtime.ErrNoAPIKey) {
@@ -1190,6 +1182,13 @@ func (h *ChatHandler) runStream(
 	// (see the wrapping_up branch in daily_chat_context.tmpl). Saves an
 	// LLM call per turn and removes a moving piece. runCoverageClassifier
 	// is left in place dormant in case we re-enable later.
+}
+
+// hashedSafetyID returns a 16-hex-char prefix of sha256(userID), stable
+// per-user but opaque, suitable for OpenAI-Safety-Identifier.
+func hashedSafetyID(userID string) string {
+	sum := sha256.Sum256([]byte(userID))
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 // defaultToolFallbackText returns a short visible reply to use when
