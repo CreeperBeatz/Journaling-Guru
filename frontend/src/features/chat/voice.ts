@@ -137,6 +137,17 @@ export class VoiceController {
     const dc = pc.createDataChannel("oai-events");
     this.dc = dc;
     dc.onmessage = (e) => this.handleDataChannelMessage(e);
+    // Auto-opener: ask the model to speak first the moment the channel
+    // is ready. Mirrors the text chat's opener stream — the system
+    // prompt's greeting block does the rest. Without this, OpenAI
+    // Realtime waits silently for the user to speak.
+    dc.onopen = () => {
+      try {
+        dc.send(JSON.stringify({ type: "response.create" }));
+      } catch {
+        /* ignore — connection may have torn down between connect + open */
+      }
+    };
 
     pc.onconnectionstatechange = () => {
       if (!this.pc) return;
