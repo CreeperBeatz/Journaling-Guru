@@ -24,7 +24,7 @@ Five fixed prompts per day. three are analyzed, two are not.
 
 | # | Prompt | Type | Analyzed? |
 |---|--------|------|-----------|
-| 1 | Mood (sad / neutral / happy faces) | scale | yes |
+| 1 | Mood | scale | yes |
 | 2 | What drained you? | valenced tag (negative) | yes |
 | 3 | What charged you? | valenced tag (positive) | yes |
 | 4 | What are you grateful for? | gratitude, free text | no |
@@ -160,9 +160,6 @@ Readable in 5 seconds.
 
 > **LLM kicks in here, for the headline insight only.** The LLM looks at the week's tag table and writes a single sentence about the most informative pattern. If there's no clear pattern, it says so honestly.
 >
-> **Without an LLM:** a static headline like *"Top drainer this week: meetings (4 days, avg mood 2.1)"* generated from the tag table directly. Less narrative, equally useful.
-
-For the first ~14 days, this zone shows a "still building your baseline" state instead of trends. Patterns need ~2 weeks to be meaningful.
 
 ### Zone 2 — What's driving it
 
