@@ -49,6 +49,11 @@ const WeeklyReflectionPage = lazy(() =>
     default: m.WeeklyReflectionPage,
   })),
 );
+const OnboardingLayout = lazy(() =>
+  import("./features/onboarding/OnboardingLayout").then((m) => ({
+    default: m.OnboardingLayout,
+  })),
+);
 
 function withSuspense(node: ReactNode, fallback: ReactNode) {
   return <Suspense fallback={fallback}>{node}</Suspense>;
@@ -90,6 +95,13 @@ export const router = createBrowserRouter([
         element: withSuspense(<ResourcesPage />, <AuthCardSkeleton />),
       },
     ],
+  },
+  // First-run walkthrough. Owns its auth + onboarded gates internally so
+  // it can sit outside <App /> (no app chrome). Reachable directly via
+  // /onboarding?replay=1 from Settings to re-run for fun.
+  {
+    path: "/onboarding",
+    element: withSuspense(<OnboardingLayout />, <AuthCardSkeleton />),
   },
   {
     path: "/",

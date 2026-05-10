@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -31,6 +31,7 @@ import { ME_KEY, useInvalidateMe, useMe } from "@/features/auth/useAuth";
 import { deleteAccount, logout, type User } from "@/features/auth/api";
 import { hhmmToMinutes, minutesToHHMM } from "@/lib/dayStart";
 import { allBrowserTimezones, detectBrowserTimezone } from "@/lib/timezone";
+import { WEEKDAY_LABELS } from "@/lib/weekdays";
 // QuestionEditor is retained in the codebase as scaffolding for future
 // custom-prompts expansion (the questions table + handlers stay
 // wired), but it's hidden from the user under the Energy Audit pivot —
@@ -43,15 +44,6 @@ import { AppearanceCard } from "./AppearanceCard";
 
 const VALID_TABS = ["general", "notifications", "account"] as const;
 
-const WEEKDAY_LABELS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
 type SettingsTab = (typeof VALID_TABS)[number];
 
 export function Settings() {
@@ -311,6 +303,21 @@ export function Settings() {
               </Select>
             </CardContent>
           </Card>
+
+          {/* Low-emphasis link back into the first-run walkthrough.
+              Useful for re-reading the intro, or for showing the app to
+              someone else. ?replay=1 bypasses the "already onboarded →
+              redirect" check inside OnboardingLayout. */}
+          <p className="px-1 text-xs text-muted-foreground">
+            <Link
+              to="/onboarding?replay=1"
+              className="underline-offset-2 hover:underline focus-visible:outline-none focus-visible:underline"
+            >
+              Replay walkthrough
+            </Link>
+            <span className="mx-1.5">·</span>
+            Re-runs the first-time setup tour. Doesn't reset anything.
+          </p>
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-4">

@@ -68,6 +68,10 @@ type updateMeRequest struct {
 	ReminderEnabled   *bool   `json:"reminder_enabled,omitempty"`
 	DayStartMinutes   *int    `json:"day_start_minutes,omitempty"`
 	ReflectionWeekday *int    `json:"reflection_weekday,omitempty"`
+	// MarkOnboarded=true stamps onboarded_at=now() server-side. Only a
+	// boolean is accepted so the client can't backdate or null out the
+	// timestamp; the actual onboarded_at value is read-only on the wire.
+	MarkOnboarded *bool `json:"mark_onboarded,omitempty"`
 }
 
 // reminderTimePattern matches "HH:MM" or "HH:MM:SS" with leading zeros.
@@ -143,6 +147,19 @@ func (h *MeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if u == nil {
 		writeJSONError(w, http.StatusUnauthorized, "user not found")
 		return
+	}
+
+	if req.MarkOnboarded != nil && *req.MarkOnboarded {
+		if err := h.Users.MarkOnboarded(r.Context(), sess.UserID); err != nil {
+			h.Logger.Warn("mark onboarded", "err", err, "user_id", sess.UserID)
+		} else {
+			// Re-read so the response carries the freshly-stamped
+			// onboarded_at — clients use it to decide whether to leave
+			// /onboarding without a second round-trip.
+			if reread, err := h.Users.GetByID(r.Context(), sess.UserID); err == nil && reread != nil {
+				u = reread
+			}
+		}
 	}
 
 	// Replan reminders when any field that influences fire_at changed.

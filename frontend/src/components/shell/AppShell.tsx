@@ -172,6 +172,13 @@ export function AppShell() {
       />
     );
   }
+  // First-run gate: a freshly-verified user with no onboarded_at gets
+  // funneled to the walkthrough instead of /today. The /onboarding route
+  // owns the inverse gate (already-onboarded → /today), so a hard reload
+  // mid-flow keeps working.
+  if (!me.data.onboarded_at) {
+    return <Navigate to="/onboarding" replace />;
+  }
 
   return (
     <div className="flex min-h-svh bg-background text-foreground">

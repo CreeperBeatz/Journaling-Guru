@@ -16,6 +16,7 @@ type User struct {
 	ReminderEnabled    bool       `json:"reminder_enabled"`
 	DayStartMinutes    int        `json:"day_start_minutes"`
 	ReflectionWeekday  int        `json:"reflection_weekday"` // 0=Sun..6=Sat
+	OnboardedAt        *time.Time `json:"onboarded_at"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 	DeletedAt          *time.Time `json:"-"`

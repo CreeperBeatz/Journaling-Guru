@@ -9,6 +9,10 @@ export interface UpdateMePatch {
   reminder_enabled?: boolean;
   day_start_minutes?: number;
   reflection_weekday?: number; // 0=Sun..6=Sat
+  // mark_onboarded=true stamps users.onboarded_at server-side. Used by the
+  // /onboarding flow's final step to flip the gate; the actual timestamp
+  // can't be set from the client.
+  mark_onboarded?: boolean;
 }
 
 export function updateMe(patch: UpdateMePatch): Promise<User> {

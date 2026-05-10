@@ -21,7 +21,7 @@ func NewUserStore(db *pgxpool.Pool) *UserStore { return &UserStore{DB: db} }
 
 const userColumns = `id, email, email_verified, display_name, timezone, timezone_auto,
     to_char(reminder_time, 'HH24:MI:SS') AS reminder_time,
-    reminder_enabled, day_start_minutes, reflection_weekday,
+    reminder_enabled, day_start_minutes, reflection_weekday, onboarded_at,
     created_at, updated_at, deleted_at`
 
 func scanUser(row pgx.Row) (*domain.User, error) {
@@ -29,7 +29,7 @@ func scanUser(row pgx.Row) (*domain.User, error) {
 	if err := row.Scan(
 		&u.ID, &u.Email, &u.EmailVerified, &u.DisplayName, &u.Timezone, &u.TimezoneAuto,
 		&u.ReminderTime, &u.ReminderEnabled, &u.DayStartMinutes, &u.ReflectionWeekday,
-		&u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
+		&u.OnboardedAt, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -107,6 +107,19 @@ func (s *UserStore) UpdateSettings(ctx context.Context, id string, p SettingsPat
 		return nil, nil
 	}
 	return u, err
+}
+
+// MarkOnboarded stamps onboarded_at = now() on first call and is a no-op
+// on every call after that. Idempotent so the Settings → "Replay
+// walkthrough" link can finish the flow again without resetting state.
+func (s *UserStore) MarkOnboarded(ctx context.Context, id string) error {
+	const q = `UPDATE users SET onboarded_at = now(), updated_at = now()
+	            WHERE id = $1 AND deleted_at IS NULL AND onboarded_at IS NULL`
+	_, err := s.DB.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("mark onboarded: %w", err)
+	}
+	return nil
 }
 
 // MaybeAutoSyncTimezone updates users.timezone to browserTZ only when the

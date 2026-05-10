@@ -15,6 +15,9 @@ export interface User {
   reminder_enabled: boolean;
   day_start_minutes: number;
   reflection_weekday: number; // 0=Sun..6=Sat — day for the weekly reflection flow
+  // onboarded_at is null until the first-run walkthrough at /onboarding
+  // finishes (or is skipped). AppShell uses null to gate the redirect.
+  onboarded_at: string | null;
 
   created_at: string;
   updated_at: string;
