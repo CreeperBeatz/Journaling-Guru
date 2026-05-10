@@ -28,10 +28,11 @@ type SummaryScheduler interface {
 // EntryHandler hosts /api/entries. Today is computed server-side from the
 // user's stored timezone — never from a date the client sends.
 type EntryHandler struct {
-	Entries   *store.EntryStore
-	Users     *store.UserStore
-	Logger    *slog.Logger
-	Scheduler SummaryScheduler // nil-safe: phase-1 callers (tests) can omit
+	Entries           *store.EntryStore
+	Users             *store.UserStore
+	WeeklyReflections *store.WeeklyReflectionStore // optional; surfaces reflection week_ends in heatmap
+	Logger            *slog.Logger
+	Scheduler         SummaryScheduler // nil-safe: phase-1 callers (tests) can omit
 }
 
 const maxEntryBodyLen = 16_000
@@ -164,11 +165,35 @@ func (h *EntryHandler) Heatmap(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "heatmap failed")
 		return
 	}
+
+	// Mark which days have a *completed* weekly reflection so the FE
+	// can paint a small badge on the heatmap. We key on week_end (the
+	// day the user opened the reflection on) — that's the day clicking
+	// the heatmap takes them to. Past in-progress rows are omitted to
+	// avoid badging a half-finished reflection a user may have abandoned.
+	reflectionDates := []string{}
+	if h.WeeklyReflections != nil {
+		// week_start range covering [from-6, to] — a reflection whose
+		// week_end falls in [from, to] has week_start in [from-6, to-6],
+		// but we use a slightly wider window for simplicity.
+		wrs, _ := h.WeeklyReflections.ListInRange(r.Context(), sess.UserID,
+			from.AddDate(0, 0, -6), to)
+		for _, wr := range wrs {
+			if wr.CompletedAt == nil {
+				continue
+			}
+			if wr.WeekEnd >= timezone.FormatDate(from) && wr.WeekEnd <= timezone.FormatDate(to) {
+				reflectionDates = append(reflectionDates, wr.WeekEnd)
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"from":  timezone.FormatDate(from),
-		"to":    timezone.FormatDate(to),
-		"today": timezone.FormatDate(today),
-		"days":  rows,
+		"from":                     timezone.FormatDate(from),
+		"to":                       timezone.FormatDate(to),
+		"today":                    timezone.FormatDate(today),
+		"days":                     rows,
+		"weekly_reflection_dates":  reflectionDates,
 	})
 }
 

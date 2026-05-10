@@ -116,6 +116,26 @@ func (s *GoalStore) ListAll(ctx context.Context, userID string) ([]domain.Goal, 
 	return out, rows.Err()
 }
 
+// Extend pushes an active goal's end_date forward by `addDays` days.
+// Stays status='active'. Returns nil row if the goal isn't active or
+// belongs to another user. Used by the weekly reflection card —
+// callers compute `addDays` via timezone.NextReflectionWeekday so the
+// new end_date still lands on a reflection_weekday.
+func (s *GoalStore) Extend(
+	ctx context.Context, userID, id string, addDays int,
+) (*domain.Goal, error) {
+	const q = `
+		UPDATE goals
+		   SET end_date = end_date + make_interval(days => $3)
+		 WHERE id = $1 AND user_id = $2 AND status = 'active'
+		RETURNING ` + goalColumns
+	g, err := scanGoal(s.DB.QueryRow(ctx, q, id, userID, addDays))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return g, err
+}
+
 // EnumDueWrapUps returns every active goal whose end_date <= asOf — the
 // daily lifecycle worker uses this to surface wrap-up prompts. Each
 // returned goal is still status='active' (Complete/Abandon hasn't been

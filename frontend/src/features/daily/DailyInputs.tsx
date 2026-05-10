@@ -179,7 +179,7 @@ export function DailyInputs({ input, tags, onSave, isSaving, title }: Props) {
         />
         <FieldSection
           label="What drained you?"
-          help="In the user's words. ‘Nothing today’ is a valid answer."
+          help="In your words. ‘Nothing today’ is a valid answer."
         >
           <Textarea
             value={drainedText}
@@ -199,7 +199,7 @@ export function DailyInputs({ input, tags, onSave, isSaving, title }: Props) {
         </FieldSection>
         <FieldSection
           label="What charged you?"
-          help="In the user's words. ‘Nothing today’ is fine."
+          help="In your words. ‘Nothing today’ is fine."
         >
           <Textarea
             value={chargedText}

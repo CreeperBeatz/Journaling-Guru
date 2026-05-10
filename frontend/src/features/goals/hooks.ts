@@ -12,6 +12,7 @@ import {
   checkInGoal,
   completeGoal,
   createGoal,
+  extendGoal,
   listActiveGoals,
   listAllGoals,
 } from "./api";
@@ -91,6 +92,15 @@ export function useCompleteGoal() {
       completeGoal(id, outcome, conclusionText),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["goals"] }),
     onError: (err) => toast.error("Couldn't complete goal", { description: err.message }),
+  });
+}
+
+export function useExtendGoal() {
+  const qc = useQueryClient();
+  return useMutation<Goal, ApiError, { id: string; weeks: number }>({
+    mutationFn: ({ id, weeks }) => extendGoal(id, weeks),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["goals"] }),
+    onError: (err) => toast.error("Couldn't extend goal", { description: err.message }),
   });
 }
 

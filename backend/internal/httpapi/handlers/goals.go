@@ -23,12 +23,16 @@ import (
 // a pattern" and "tried to change something." Each active goal renders
 // a yes/no daily check-in on /today.
 type GoalHandler struct {
-	Goals     *store.GoalStore
-	CheckIns  *store.GoalCheckInStore
-	Users     *store.UserStore
-	ChatLLM   *llm.OpenRouter // shaper streams via the chat-tier client
-	ChatModel string
-	Logger    *slog.Logger
+	Goals          *store.GoalStore
+	CheckIns       *store.GoalCheckInStore
+	Users          *store.UserStore
+	DailyEntryTags *store.DailyEntryTagStore
+	DailyInputs    *store.DailyInputStore
+	ChatLLM        *llm.OpenRouter // shaper streams via the chat-tier client
+	ClassifyLLM    *llm.OpenRouter // suggest uses the cheap classify-tier client
+	ChatModel      string
+	ClassifyModel  string
+	Logger         *slog.Logger
 }
 
 const (
@@ -100,8 +104,9 @@ func (h *GoalHandler) List(w http.ResponseWriter, r *http.Request) {
 type createGoalRequest struct {
 	Title           string  `json:"title"`
 	CheckInQuestion string  `json:"check_in_question"`
-	EndDate         string  `json:"end_date"`   // YYYY-MM-DD
-	StartDate       *string `json:"start_date"` // optional; defaults to today
+	EndDate         string  `json:"end_date"`        // YYYY-MM-DD; used only when duration_weeks omitted
+	DurationWeeks   *int    `json:"duration_weeks"`  // 1..52; preferred — server snaps end to next reflection_weekday
+	StartDate       *string `json:"start_date"`      // optional; defaults to today
 }
 
 // Create makes a new active goal. The SMART shaper (Phase 5) will
@@ -128,13 +133,12 @@ func (h *GoalHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "check_in_question required (1-200 chars)")
 		return
 	}
-	endDate, err := time.Parse("2006-01-02", req.EndDate)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "end_date must be YYYY-MM-DD")
+	user, err := h.Users.GetByID(r.Context(), sess.UserID)
+	if err != nil || user == nil {
+		writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
 		return
 	}
-
-	today, err := h.resolveToday(r, sess.UserID)
+	today, err := timezone.LocalDate(time.Now(), user.Timezone, user.DayStartMinutes)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "could not resolve today")
 		return
@@ -147,6 +151,39 @@ func (h *GoalHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		startDate = parsed
+	}
+
+	// Goals always end on the user's reflection_weekday so every goal
+	// terminates inside a weekly reflection. Prefer duration_weeks
+	// (server-computed); fall back to snapping a caller-supplied
+	// end_date forward to the next reflection_weekday at-or-after.
+	var endDate time.Time
+	weekday := user.ReflectionWeekday
+	if req.DurationWeeks != nil {
+		n := *req.DurationWeeks
+		if n < 1 || n > 52 {
+			writeJSONError(w, http.StatusBadRequest, "duration_weeks must be 1..52")
+			return
+		}
+		endDate, err = timezone.NextReflectionWeekday(startDate, weekday, n)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else {
+		parsed, err := time.Parse("2006-01-02", req.EndDate)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "end_date must be YYYY-MM-DD or supply duration_weeks")
+			return
+		}
+		// Snap forward to the first reflection_weekday >= parsed.
+		// Equivalent to NextReflectionWeekday(parsed-1, weekday, 1).
+		anchor := parsed.AddDate(0, 0, -1)
+		endDate, err = timezone.NextReflectionWeekday(anchor, weekday, 1)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if endDate.Before(startDate) {
 		writeJSONError(w, http.StatusBadRequest, "end_date must be on or after start_date")
@@ -167,9 +204,10 @@ func (h *GoalHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateGoalRequest struct {
-	Action          string `json:"action"`           // "complete" | "abandon"
+	Action          string `json:"action"`           // "complete" | "abandon" | "extend"
 	Outcome         string `json:"outcome"`          // for complete: "kept" | "dropped" | "inconclusive"
 	ConclusionText  string `json:"conclusion_text"`
+	ExtendWeeks     int    `json:"extend_weeks"`     // for extend: 1..12 reflection_weekday hops
 }
 
 // Update handles PATCH /api/goals/:id — wraps up an active goal. Two
@@ -210,8 +248,39 @@ func (h *GoalHandler) Update(w http.ResponseWriter, r *http.Request) {
 		goal, err = h.Goals.Complete(r.Context(), sess.UserID, id, outcome, conclusion)
 	case "abandon":
 		goal, err = h.Goals.Abandon(r.Context(), sess.UserID, id, conclusion)
+	case "extend":
+		if req.ExtendWeeks < 1 || req.ExtendWeeks > 12 {
+			writeJSONError(w, http.StatusBadRequest, "extend_weeks must be 1..12")
+			return
+		}
+		// Look up the goal so we can advance its end_date by N
+		// reflection_weekday hops from the current end_date (not from
+		// today) — keeps the cadence aligned even if the user extends
+		// after the original end_date has passed.
+		existing, gerr := h.Goals.GetByID(r.Context(), sess.UserID, id)
+		if gerr != nil || existing == nil {
+			writeJSONError(w, http.StatusNotFound, "goal not found")
+			return
+		}
+		user, uerr := h.Users.GetByID(r.Context(), sess.UserID)
+		if uerr != nil || user == nil {
+			writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
+			return
+		}
+		curEnd, perr := time.Parse("2006-01-02", existing.EndDate)
+		if perr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "bad goal end_date")
+			return
+		}
+		newEnd, nerr := timezone.NextReflectionWeekday(curEnd, user.ReflectionWeekday, req.ExtendWeeks)
+		if nerr != nil {
+			writeJSONError(w, http.StatusBadRequest, nerr.Error())
+			return
+		}
+		addDays := int(newEnd.Sub(curEnd).Hours() / 24)
+		goal, err = h.Goals.Extend(r.Context(), sess.UserID, id, addDays)
 	default:
-		writeJSONError(w, http.StatusBadRequest, "action must be complete|abandon")
+		writeJSONError(w, http.StatusBadRequest, "action must be complete|abandon|extend")
 		return
 	}
 	if err != nil {
@@ -287,6 +356,72 @@ func (h *GoalHandler) CheckIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, c)
+}
+
+// ---------- /goals/suggest (chip suggestions for the weekly wizard) ----------
+
+// Suggest handles POST /api/goals/suggest. Returns up to 3 SMART
+// goal candidates derived from the user's recent week pattern. Used
+// by the weekly reflection wizard's Card 3 to pre-seed the shaper
+// conversation with chip options. Cheap classify-tier model.
+func (h *GoalHandler) Suggest(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if h.ClassifyLLM == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "suggest unavailable")
+		return
+	}
+	user, err := h.Users.GetByID(r.Context(), sess.UserID)
+	if err != nil || user == nil {
+		writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
+		return
+	}
+	today, err := timezone.LocalDate(time.Now(), user.Timezone, user.DayStartMinutes)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "could not resolve today")
+		return
+	}
+	const weekDays = 7
+	drainers, _ := h.DailyEntryTags.TopByValence(r.Context(), sess.UserID, domain.TagRoleDrainer, weekDays, 5)
+	chargers, _ := h.DailyEntryTags.TopByValence(r.Context(), sess.UserID, domain.TagRoleCharger, weekDays, 5)
+	agg, _ := h.DailyInputs.AggregateForRange(r.Context(), sess.UserID,
+		today.AddDate(0, 0, -(weekDays-1)), today)
+
+	in := goals.SuggestionInput{
+		WeekDays:    weekDays,
+		TopDrainers: tagAggregatesToPatterns(drainers),
+		TopChargers: tagAggregatesToPatterns(chargers),
+	}
+	if agg != nil {
+		in.MoodAvg = agg.MoodScore
+	}
+	rawGoals, _ := h.Goals.ListActive(r.Context(), sess.UserID, today)
+	for _, g := range rawGoals {
+		in.ActiveGoals = append(in.ActiveGoals, g.Title)
+	}
+
+	out, err := goals.Suggest(r.Context(), h.ClassifyLLM, h.ClassifyModel, in)
+	if err != nil {
+		h.Logger.Error("goal suggest", "err", err, "user_id", sess.UserID)
+		writeJSONError(w, http.StatusBadGateway, "suggest failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"suggestions": out})
+}
+
+func tagAggregatesToPatterns(rows []store.TagAggregate) []goals.TagPattern {
+	out := make([]goals.TagPattern, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, goals.TagPattern{
+			Label:       r.Label,
+			Appearances: r.Appearances,
+			AvgMood:     r.AvgMood,
+		})
+	}
+	return out
 }
 
 // ---------- /goals/draft (SMART shaper) ----------

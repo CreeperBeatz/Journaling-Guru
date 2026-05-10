@@ -46,6 +46,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	chatSessions := store.NewChatSessionStore(db)
 	chatMessages := store.NewChatMessageStore(db)
 	chatExtractionJobs := store.NewChatExtractionJobStore(db)
+	weeklyReflections := store.NewWeeklyReflectionStore(db)
 
 	magicSvc := auth.NewMagicLinkService(auth.MagicLinkConfig{
 		TTL:         cfg.MagicLinkTTL(),
@@ -118,10 +119,11 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	}
 	questionsH := &handlers.QuestionHandler{Questions: questions, Logger: logger}
 	entriesH := &handlers.EntryHandler{
-		Entries:   entries,
-		Users:     users,
-		Logger:    logger,
-		Scheduler: scheduler,
+		Entries:           entries,
+		Users:             users,
+		WeeklyReflections: weeklyReflections,
+		Logger:            logger,
+		Scheduler:         scheduler,
 	}
 	dailyInputsH := &handlers.DailyInputHandler{
 		Inputs:         dailyInputs,
@@ -133,22 +135,26 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	}
 	tagsH := &handlers.TagHandler{Tags: tags, Logger: logger}
 	goalsH := &handlers.GoalHandler{
-		Goals:     goals,
-		CheckIns:  goalCheckIns,
-		Users:     users,
-		Logger:    logger,
-		// ChatLLM + ChatModel filled in below alongside the chat handler
-		// — the shaper streams via the same chat-tier client.
-	}
-	summariesH := &handlers.SummaryHandler{
-		Summaries:      summaries,
-		Jobs:           summaryJobs,
-		Users:          users,
-		DailyInputs:    dailyInputs,
-		DailyEntryTags: dailyEntryTags,
 		Goals:          goals,
 		CheckIns:       goalCheckIns,
+		Users:          users,
+		DailyEntryTags: dailyEntryTags,
+		DailyInputs:    dailyInputs,
 		Logger:         logger,
+		// ChatLLM + ChatModel + ClassifyLLM/Model filled in below
+		// alongside the chat handler — the shaper streams via the same
+		// chat-tier client; suggest uses the cheap classify-tier client.
+	}
+	summariesH := &handlers.SummaryHandler{
+		Summaries:         summaries,
+		Jobs:              summaryJobs,
+		Users:             users,
+		DailyInputs:       dailyInputs,
+		DailyEntryTags:    dailyEntryTags,
+		Goals:             goals,
+		CheckIns:          goalCheckIns,
+		WeeklyReflections: weeklyReflections,
+		Logger:            logger,
 	}
 	pushH := &handlers.PushHandler{
 		Subs:        pushSubs,
@@ -198,6 +204,8 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	// later (per-user model preference is a v2.x feature).
 	goalsH.ChatLLM = chatLLM
 	goalsH.ChatModel = cfg.ChatModel
+	goalsH.ClassifyLLM = classifyLLM
+	goalsH.ClassifyModel = cfg.ClassifyModel
 
 	healthH := handlers.NewHealth(db)
 
@@ -277,6 +285,11 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 
 					r.Post("/summaries/regenerate", summariesH.Regenerate)
 
+					// Phase 7 — weekly reflection wizard mutators.
+					r.Post("/reflection/this-week/start", summariesH.StartReflection)
+					r.Patch("/reflection/this-week", summariesH.PatchReflection)
+					r.Post("/reflection/this-week/complete", summariesH.CompleteReflection)
+
 					r.Post("/push/subscribe", pushH.Subscribe)
 					r.Delete("/push/subscribe", pushH.Unsubscribe)
 					r.Post("/push/test", pushH.Test)
@@ -311,6 +324,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 
 				// Phase 7 — Weekly reflection pattern view.
 				r.Get("/reflection/this-week", summariesH.WeeklyReflection)
+				r.Get("/reflection/by-week/{week_start}", summariesH.ReflectionByWeek)
 
 				r.Get("/push/state", pushH.State)
 			})
@@ -338,6 +352,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 					r.Post("/", goalsH.Create)
 					r.Patch("/{id}", goalsH.Update)
 					r.Post("/{id}/check-ins", goalsH.CheckIn)
+					r.Post("/suggest", goalsH.Suggest)
 				})
 			})
 		})

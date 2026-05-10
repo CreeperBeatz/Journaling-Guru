@@ -46,10 +46,14 @@ export function listAllGoals(): Promise<AllGoalsResponse> {
   return api("/api/goals");
 }
 
+// CreateGoalBody — pass `duration_weeks` (preferred; server snaps the
+// end_date to the next reflection_weekday) OR `end_date` (legacy; server
+// snaps it forward to the next reflection_weekday at-or-after).
 export interface CreateGoalBody {
   title: string;
   check_in_question: string;
-  end_date: string;          // YYYY-MM-DD
+  end_date?: string;         // YYYY-MM-DD; ignored when duration_weeks set
+  duration_weeks?: number;   // 1..52
   start_date?: string;       // optional; server defaults to today
 }
 
@@ -73,6 +77,33 @@ export function abandonGoal(id: string, conclusionText: string): Promise<Goal> {
     method: "PATCH",
     body: { action: "abandon", conclusion_text: conclusionText },
   });
+}
+
+// extendGoal pushes an active goal's end_date forward by N
+// reflection-weekday hops. Server resolves the user's reflection_weekday
+// and computes the new end_date — the FE never has to know the weekday.
+export function extendGoal(id: string, extendWeeks: number): Promise<Goal> {
+  return api(`/api/goals/${id}`, {
+    method: "PATCH",
+    body: { action: "extend", extend_weeks: extendWeeks },
+  });
+}
+
+// GoalSuggestion — one chip from POST /api/goals/suggest. Fed into the
+// shaper as a pre-staged "what if you tried this?" candidate.
+export interface GoalSuggestion {
+  title: string;
+  check_in_question: string;
+  duration_weeks: number;
+  rationale: string;
+}
+
+export interface SuggestGoalsResponse {
+  suggestions: GoalSuggestion[];
+}
+
+export function suggestGoals(): Promise<SuggestGoalsResponse> {
+  return api("/api/goals/suggest", { method: "POST", body: {} });
 }
 
 export function checkInGoal(id: string, value: boolean): Promise<GoalCheckIn> {

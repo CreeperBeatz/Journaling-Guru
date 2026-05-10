@@ -43,6 +43,9 @@ export interface HeatmapResponse {
   to: string;
   today: string;
   days: HeatmapDay[];
+  // YYYY-MM-DD list of week_end dates with a *completed* weekly
+  // reflection — drives the heatmap badge that opens the Weekly tab.
+  weekly_reflection_dates: string[];
 }
 
 export function listQuestions(): Promise<{ questions: Question[] }> {

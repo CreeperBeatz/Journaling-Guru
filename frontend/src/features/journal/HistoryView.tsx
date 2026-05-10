@@ -14,9 +14,11 @@ import { PullToRefresh } from "@/components/shell/PullToRefresh";
 import { SwipeNavigator } from "@/components/shell/SwipeNavigator";
 import { cn } from "@/lib/utils";
 
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { listEntries, type DateSummary, type JournalEntry } from "./api";
+import { HistoryWeeklyReflection } from "./HistoryWeeklyReflection";
+import { useReflectionByWeek } from "./reflection-by-week";
 import {
   useEntries,
   useEntryDates,
@@ -126,7 +128,11 @@ function HistoryLanding() {
 
   const days = heatmap.data?.days ?? [];
   const today = heatmap.data?.today ?? new Date().toISOString().slice(0, 10);
-  const cells = useMemo(() => buildHeatCells(days), [days]);
+  const reflectionDates = heatmap.data?.weekly_reflection_dates ?? [];
+  const cells = useMemo(
+    () => buildHeatCells(days, reflectionDates),
+    [days, reflectionDates],
+  );
   const streak = useMemo(() => computeStreak(cells, today), [cells, today]);
 
   const onRefresh = async () => {
@@ -305,6 +311,8 @@ function HistoryDetail({ localDate }: { localDate: string }) {
   const detail = useEntries(localDate);
   const dates = useEntryDates(180);
   const questions = useQuestions();
+  const reflection = useReflectionByWeek(localDate);
+  const hasReflection = reflection.data?.started === true;
 
   const dateList = dates.data ?? [];
   const idx = dateList.findIndex((d) => d.local_date === localDate);
@@ -351,6 +359,34 @@ function HistoryDetail({ localDate }: { localDate: string }) {
             <p className="text-sm text-destructive">
               Couldn&apos;t load entries for {localDate}.
             </p>
+          ) : hasReflection ? (
+            <Tabs defaultValue="weekly" className="space-y-4">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="weekly">Weekly reflection</TabsTrigger>
+                <TabsTrigger value="checkin">Check-in</TabsTrigger>
+              </TabsList>
+              <TabsContent value="weekly" className="space-y-6">
+                <HistoryWeeklyReflection
+                  weekStart={reflection.data!.week_start}
+                />
+              </TabsContent>
+              <TabsContent value="checkin" className="space-y-6">
+                <HistoryDailyInputs localDate={detail.data!.local_date} />
+                <HistoryChatTranscript localDate={detail.data!.local_date} />
+                {detail.data!.entries.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No entries on this date.
+                  </p>
+                ) : (
+                  <HistoryPaperPage
+                    localDate={detail.data!.local_date}
+                    entries={detail.data!.entries}
+                    promptByQuestion={promptByQuestion}
+                    dateLabel={formatHumanDate(detail.data!.local_date)}
+                  />
+                )}
+              </TabsContent>
+            </Tabs>
           ) : (
             <div className="space-y-6">
               <HistoryDailyInputs localDate={detail.data!.local_date} />

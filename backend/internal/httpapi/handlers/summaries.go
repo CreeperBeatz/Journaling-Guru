@@ -27,14 +27,15 @@ import (
 // bars reflect whatever the user just typed, without waiting for the
 // next morning's daily summary to fire.
 type SummaryHandler struct {
-	Summaries      *store.SummaryStore
-	Jobs           *store.SummaryJobStore
-	Users          *store.UserStore
-	DailyInputs    *store.DailyInputStore
-	DailyEntryTags *store.DailyEntryTagStore
-	Goals          *store.GoalStore
-	CheckIns       *store.GoalCheckInStore
-	Logger         *slog.Logger
+	Summaries          *store.SummaryStore
+	Jobs               *store.SummaryJobStore
+	Users              *store.UserStore
+	DailyInputs        *store.DailyInputStore
+	DailyEntryTags     *store.DailyEntryTagStore
+	Goals              *store.GoalStore
+	CheckIns           *store.GoalCheckInStore
+	WeeklyReflections  *store.WeeklyReflectionStore
+	Logger             *slog.Logger
 }
 
 const (
@@ -506,7 +507,8 @@ func (h *SummaryHandler) Zone3(w http.ResponseWriter, r *http.Request) {
 
 // ReflectionResponse — the pattern view payload for the weekly
 // reflection flow. Drives the in-place /today swap when today is the
-// user's reflection_weekday.
+// user's reflection_weekday, plus the wizard state (started/step/done)
+// and the persisted surprise + per-mid-flight-goal notes.
 type ReflectionResponse struct {
 	WeekStart       string                  `json:"week_start"`
 	WeekEnd         string                  `json:"week_end"`
@@ -519,6 +521,15 @@ type ReflectionResponse struct {
 	Chargers        []ReflectionTagRow      `json:"chargers"`
 	GratitudeItems  []ReflectionGratitude   `json:"gratitude_items"`
 	ActiveGoals     []Zone1GoalStatus       `json:"active_goals"`
+
+	// Wizard state — only populated for the current week. Past weeks
+	// (history view) leave Started=false / Step=0 / CompletedAt=nil.
+	Started      bool              `json:"started"`
+	Step         int               `json:"step"`
+	SurpriseText string            `json:"surprise_text"`
+	GoalNotes    map[string]string `json:"goal_notes"`
+	NewGoalIDs   []string          `json:"new_goal_ids"`
+	CompletedAt  *time.Time        `json:"completed_at"`
 }
 
 // ReflectionTagRow extends TagAggregate with a delta against the prior
@@ -537,8 +548,8 @@ type ReflectionGratitude struct {
 }
 
 // WeeklyReflection handles GET /api/reflection/this-week. Read-only;
-// the surprise/action prompts are written via the existing daily-input
-// reflection_text field and goal-create endpoint respectively.
+// surface for the wizard. Surprise text + step + goal_notes come from
+// weekly_reflections; the rest is derived from daily_inputs + tags.
 func (h *SummaryHandler) WeeklyReflection(w http.ResponseWriter, r *http.Request) {
 	sess := middleware.SessionFromCtx(r.Context())
 	if sess == nil {
@@ -556,17 +567,69 @@ func (h *SummaryHandler) WeeklyReflection(w http.ResponseWriter, r *http.Request
 		return
 	}
 	weekStart := today.AddDate(0, 0, -6)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, today, true)
+	if err != nil {
+		h.Logger.Error("build reflection (this week)", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ReflectionByWeek handles GET /api/reflection/by-week/{week_start}.
+// Read-only past-week view used by History; loads the frozen
+// weekly_reflections row alongside the recomputed pattern view.
+func (h *SummaryHandler) ReflectionByWeek(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	weekStartStr := strings.TrimSpace(chi.URLParam(r, "week_start"))
+	weekStart, err := time.Parse("2006-01-02", weekStartStr)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid week_start")
+		return
+	}
+	weekEnd := weekStart.AddDate(0, 0, 6)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true)
+	if err != nil {
+		h.Logger.Error("build reflection (by week)", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// buildReflection computes the pattern view for [weekStart, weekEnd]
+// (inclusive). When `includeWizardState` is true, also loads the
+// weekly_reflections row for that week_start so the FE knows whether
+// the wizard has been started / completed and at which step.
+func (h *SummaryHandler) buildReflection(
+	ctx context.Context, userID string,
+	weekStart, weekEnd time.Time, includeWizardState bool,
+) (*ReflectionResponse, error) {
 	priorEnd := weekStart.AddDate(0, 0, -1)
 	priorStart := priorEnd.AddDate(0, 0, -6)
+	weekDays := int(weekEnd.Sub(weekStart).Hours()/24) + 1
+	if weekDays < 1 {
+		weekDays = 1
+	}
 
-	// Top drainers + chargers this week.
-	thisDrainers, _ := h.DailyEntryTags.TopByValence(r.Context(), sess.UserID, domain.TagRoleDrainer, 7, 8)
-	thisChargers, _ := h.DailyEntryTags.TopByValence(r.Context(), sess.UserID, domain.TagRoleCharger, 7, 8)
+	// We previously hard-coded a 7-day TopByValence call. For an
+	// arbitrary [weekStart, weekEnd] window we instead anchor to the
+	// past N days from weekEnd and rely on the FE seeing identical
+	// numbers when called for "this week" (today == weekEnd).
+	thisDrainers, _ := h.DailyEntryTags.TopByValence(ctx, userID, domain.TagRoleDrainer, weekDays, 8)
+	thisChargers, _ := h.DailyEntryTags.TopByValence(ctx, userID, domain.TagRoleCharger, weekDays, 8)
 
-	// Prior week — fetched via a 14-day window then we filter the
-	// older 7. Cheaper than two queries when the volumes are small.
-	priorDrainersAll, _ := h.DailyEntryTags.TopByValence(r.Context(), sess.UserID, domain.TagRoleDrainer, 14, 0)
-	priorChargersAll, _ := h.DailyEntryTags.TopByValence(r.Context(), sess.UserID, domain.TagRoleCharger, 14, 0)
+	// Prior-week tag deltas — only meaningful for "this week" (where
+	// weekEnd == today). For arbitrary historical weeks we still
+	// compute, but the deltas may be skewed because TopByValence
+	// counts back from today. The History "Weekly" tab tolerates
+	// this; nothing critical depends on the delta there.
+	priorDrainersAll, _ := h.DailyEntryTags.TopByValence(ctx, userID, domain.TagRoleDrainer, weekDays*2, 0)
+	priorChargersAll, _ := h.DailyEntryTags.TopByValence(ctx, userID, domain.TagRoleCharger, weekDays*2, 0)
 	priorDrainerCount := byTagID(subtractCurrentFromCombined(priorDrainersAll, thisDrainers))
 	priorChargerCount := byTagID(subtractCurrentFromCombined(priorChargersAll, thisChargers))
 
@@ -574,17 +637,12 @@ func (h *SummaryHandler) WeeklyReflection(w http.ResponseWriter, r *http.Request
 	chargers := mergeWithDelta(thisChargers, priorChargerCount)
 
 	// Mood averages.
-	thisAgg, _ := h.DailyInputs.AggregateForRange(r.Context(), sess.UserID, weekStart, today)
-	priorAgg, _ := h.DailyInputs.AggregateForRange(r.Context(), sess.UserID, priorStart, priorEnd)
+	thisAgg, _ := h.DailyInputs.AggregateForRange(ctx, userID, weekStart, weekEnd)
+	priorAgg, _ := h.DailyInputs.AggregateForRange(ctx, userID, priorStart, priorEnd)
 
-	// Gratitude items — pull every daily_inputs row in range with non-
-	// empty gratitude_text. The store doesn't have a "list rows in
-	// range" method yet; use what's there + filter, since the volume
-	// is bounded at 7. (This reaches into the store via GetByDate per
-	// day to keep the query layer simple.)
 	gratitudes := []ReflectionGratitude{}
-	for d := weekStart; !d.After(today); d = d.AddDate(0, 0, 1) {
-		row, err := h.DailyInputs.GetByDate(r.Context(), sess.UserID, d)
+	for d := weekStart; !d.After(weekEnd); d = d.AddDate(0, 0, 1) {
+		row, err := h.DailyInputs.GetByDate(ctx, userID, d)
 		if err != nil || row == nil {
 			continue
 		}
@@ -596,23 +654,32 @@ func (h *SummaryHandler) WeeklyReflection(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Active goals + kept counts (reuse Zone 1's helper shape).
-	rawGoals, _ := h.Goals.ListActive(r.Context(), sess.UserID, today)
+	// Active goals as of weekEnd. For "this week" this matches the
+	// previous behaviour (today as the asOf). For history, we list
+	// goals that were active at the time of that week so the snapshot
+	// is meaningful — `ListActive` already filters by end_date >=
+	// asOf, but goals created after weekEnd would also surface.
+	// Filter those out by checking start_date <= weekEnd.
+	rawGoals, err := h.Goals.ListActive(ctx, userID, weekEnd)
+	if err != nil {
+		return nil, err
+	}
 	goalStatus := make([]Zone1GoalStatus, 0, len(rawGoals))
 	for _, g := range rawGoals {
 		startDate, _ := time.Parse("2006-01-02", g.StartDate)
+		if startDate.After(weekEnd) {
+			continue
+		}
 		endDate, _ := time.Parse("2006-01-02", g.EndDate)
 		totalDays := int(endDate.Sub(startDate).Hours()/24) + 1
-		dayIndex := int(today.Sub(startDate).Hours()/24) + 1
+		dayIndex := int(weekEnd.Sub(startDate).Hours()/24) + 1
 		if dayIndex < 1 {
 			dayIndex = 1
 		}
 		if dayIndex > totalDays {
 			dayIndex = totalDays
 		}
-		// Kept count for THIS WEEK only — the spec's "5/7 days" tally
-		// is week-local, not goal-lifetime.
-		kept, total, _ := h.CheckIns.CountKept(r.Context(), g.ID, weekStart, today)
+		kept, total, _ := h.CheckIns.CountKept(ctx, g.ID, weekStart, weekEnd)
 		goalStatus = append(goalStatus, Zone1GoalStatus{
 			ID:            g.ID,
 			Title:         g.Title,
@@ -625,15 +692,17 @@ func (h *SummaryHandler) WeeklyReflection(w http.ResponseWriter, r *http.Request
 		})
 	}
 
-	resp := ReflectionResponse{
+	resp := &ReflectionResponse{
 		WeekStart:      timezone.FormatDate(weekStart),
-		WeekEnd:        timezone.FormatDate(today),
+		WeekEnd:        timezone.FormatDate(weekEnd),
 		PriorWeekStart: timezone.FormatDate(priorStart),
 		PriorWeekEnd:   timezone.FormatDate(priorEnd),
 		Drainers:       drainers,
 		Chargers:       chargers,
 		GratitudeItems: gratitudes,
 		ActiveGoals:    goalStatus,
+		GoalNotes:      map[string]string{},
+		NewGoalIDs:     []string{},
 	}
 	if thisAgg != nil {
 		resp.MoodAvg = thisAgg.MoodScore
@@ -642,7 +711,200 @@ func (h *SummaryHandler) WeeklyReflection(w http.ResponseWriter, r *http.Request
 	if priorAgg != nil {
 		resp.MoodAvgPrior = priorAgg.MoodScore
 	}
+
+	if includeWizardState && h.WeeklyReflections != nil {
+		wr, _ := h.WeeklyReflections.GetByWeekStart(ctx, userID, weekStart)
+		if wr != nil {
+			resp.Started = true
+			resp.Step = wr.Step
+			resp.SurpriseText = wr.SurpriseText
+			resp.GoalNotes = wr.GoalNotes
+			resp.NewGoalIDs = wr.NewGoalIDs
+			resp.CompletedAt = wr.CompletedAt
+		}
+	}
+	return resp, nil
+}
+
+// ----- Wizard mutating endpoints -----
+
+// StartReflection handles POST /api/reflection/this-week/start.
+// Idempotently creates the weekly_reflections row for the current week
+// and returns the full ReflectionResponse so the FE can render Card 1.
+func (h *SummaryHandler) StartReflection(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	weekStart, weekEnd, ok := h.resolveCurrentWeek(w, r, sess.UserID)
+	if !ok {
+		return
+	}
+	if _, err := h.WeeklyReflections.Start(r.Context(), sess.UserID, weekStart, weekEnd); err != nil {
+		h.Logger.Error("start reflection", "err", err, "user_id", sess.UserID)
+		writeJSONError(w, http.StatusInternalServerError, "start failed")
+		return
+	}
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true)
+	if err != nil {
+		h.Logger.Error("build reflection after start", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "load failed")
+		return
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type patchReflectionRequest struct {
+	SurpriseText *string `json:"surprise_text"`
+	Step         *int    `json:"step"`
+	// Optional: merge a single goal note. Empty string deletes the key.
+	GoalID   *string `json:"goal_id"`
+	GoalNote *string `json:"goal_note"`
+	// Optional: append a goal_id to new_goal_ids — used by Card 3 after
+	// a commit_goal save so the Done page can split active vs new.
+	NewGoalID *string `json:"new_goal_id"`
+}
+
+const maxSurpriseTextLen = 4000
+const maxGoalNoteLen = 4000
+
+// PatchReflection handles PATCH /api/reflection/this-week. Partial
+// update — any of {surprise_text, step, goal_id+goal_note} can be
+// supplied. Goal note is merged into goal_notes by goal_id; empty
+// text removes the key. Returns the updated ReflectionResponse.
+func (h *SummaryHandler) PatchReflection(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req patchReflectionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.SurpriseText != nil && len(*req.SurpriseText) > maxSurpriseTextLen {
+		writeJSONError(w, http.StatusBadRequest, "surprise_text too long")
+		return
+	}
+	if req.Step != nil && (*req.Step < 1 || *req.Step > 3) {
+		writeJSONError(w, http.StatusBadRequest, "step must be 1..3")
+		return
+	}
+	if req.GoalNote != nil && len(*req.GoalNote) > maxGoalNoteLen {
+		writeJSONError(w, http.StatusBadRequest, "goal_note too long")
+		return
+	}
+	if (req.GoalID == nil) != (req.GoalNote == nil) {
+		writeJSONError(w, http.StatusBadRequest, "goal_id and goal_note must be provided together")
+		return
+	}
+	weekStart, weekEnd, ok := h.resolveCurrentWeek(w, r, sess.UserID)
+	if !ok {
+		return
+	}
+	// Lazy-create the row in case the FE patches before /start fires.
+	if _, err := h.WeeklyReflections.Start(r.Context(), sess.UserID, weekStart, weekEnd); err != nil {
+		h.Logger.Error("ensure reflection row", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "patch failed")
+		return
+	}
+	if req.SurpriseText != nil || req.Step != nil {
+		if _, err := h.WeeklyReflections.Patch(
+			r.Context(), sess.UserID, weekStart,
+			store.WeeklyReflectionPatch{
+				SurpriseText: req.SurpriseText,
+				Step:         req.Step,
+			},
+		); err != nil {
+			h.Logger.Error("patch reflection", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "patch failed")
+			return
+		}
+	}
+	if req.GoalID != nil {
+		if _, err := h.WeeklyReflections.SetGoalNote(
+			r.Context(), sess.UserID, weekStart,
+			strings.TrimSpace(*req.GoalID),
+			strings.TrimSpace(*req.GoalNote),
+		); err != nil {
+			h.Logger.Error("set goal note", "err", err)
+			writeJSONError(w, http.StatusInternalServerError, "patch failed")
+			return
+		}
+	}
+	if req.NewGoalID != nil {
+		gid := strings.TrimSpace(*req.NewGoalID)
+		if gid != "" {
+			if _, err := h.WeeklyReflections.AddNewGoalID(
+				r.Context(), sess.UserID, weekStart, gid,
+			); err != nil {
+				h.Logger.Error("add new goal id", "err", err)
+				writeJSONError(w, http.StatusInternalServerError, "patch failed")
+				return
+			}
+		}
+	}
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true)
+	if err != nil {
+		h.Logger.Error("build reflection after patch", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// CompleteReflection handles POST /api/reflection/this-week/complete.
+// Sets completed_at = now() if not already set; idempotent. Returns
+// the final ReflectionResponse so the FE can swap into Done view.
+func (h *SummaryHandler) CompleteReflection(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	weekStart, weekEnd, ok := h.resolveCurrentWeek(w, r, sess.UserID)
+	if !ok {
+		return
+	}
+	// Lazy-create + mark complete.
+	if _, err := h.WeeklyReflections.Start(r.Context(), sess.UserID, weekStart, weekEnd); err != nil {
+		h.Logger.Error("ensure reflection row (complete)", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "complete failed")
+		return
+	}
+	if _, err := h.WeeklyReflections.MarkCompleted(r.Context(), sess.UserID, weekStart); err != nil {
+		h.Logger.Error("mark complete", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "complete failed")
+		return
+	}
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true)
+	if err != nil {
+		h.Logger.Error("build reflection after complete", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// resolveCurrentWeek loads the user, computes today + the
+// (weekStart, weekEnd) covering "the past 7 days ending today". Writes
+// an HTTP error and returns ok=false on failure.
+func (h *SummaryHandler) resolveCurrentWeek(
+	w http.ResponseWriter, r *http.Request, userID string,
+) (time.Time, time.Time, bool) {
+	user, err := h.Users.GetByID(r.Context(), userID)
+	if err != nil || user == nil {
+		writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
+		return time.Time{}, time.Time{}, false
+	}
+	today, err := timezone.LocalDate(time.Now(), user.Timezone, user.DayStartMinutes)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "could not resolve today")
+		return time.Time{}, time.Time{}, false
+	}
+	return today.AddDate(0, 0, -6), today, true
 }
 
 // subtractCurrentFromCombined returns just the prior-week portion of a
