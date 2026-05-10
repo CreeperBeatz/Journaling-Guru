@@ -269,10 +269,13 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
   }, [sessionId, state.status, consumeStream]);
 
   // triggerWrapUp fires the user-initiated closing pass. The server
-  // appends a system_event ("user_wrap_up"), advances phase to
-  // wrapping_up, and streams a single assistant turn that covers any
-  // remaining topics and proposes wrap-up. Same SSE consumer as a
-  // normal message.
+  // appends a system_event ("user_wrap_up") plus a real user message
+  // ("Let's wrap it up"), advances phase to wrapping_up, and streams
+  // a single assistant turn that covers any remaining topics and
+  // proposes wrap-up. Same SSE consumer as a normal message.
+  // Optimistically appends the user bubble client-side so it shows
+  // immediately, mirroring sendMessage; the persisted row replaces it
+  // on the post-stream session refetch.
   const triggerWrapUp = useCallback(async () => {
     if (!sessionId) return;
     if (state.status === "streaming") return;
@@ -280,6 +283,22 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
     const ac = new AbortController();
     abortRef.current = ac;
     setState({ ...initialStreamState, status: "streaming" });
+
+    qc.setQueryData<ChatSessionEnvelope>(chatSessionKey(), (old) => {
+      if (!old?.session) return old;
+      const optimisticMsg: ChatMessage = {
+        id: `optimistic-${Date.now()}`,
+        session_id: old.session.id,
+        seq: (old.messages[old.messages.length - 1]?.seq ?? 0) + 1,
+        role: "user",
+        content: "Let's wrap it up",
+        token_in: 0,
+        token_out: 0,
+        created_at: new Date().toISOString(),
+      };
+      return { ...old, messages: [...old.messages, optimisticMsg] };
+    });
+
     try {
       await consumeStream(streamWrapUp(sessionId, ac.signal));
     } catch (err) {

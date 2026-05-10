@@ -560,15 +560,19 @@ func (h *ChatHandler) Reset(w http.ResponseWriter, r *http.Request) {
 //   1. Persist a system_event chat_message ("user_wrap_up") so the
 //      LLM transcript includes the signal verbatim and the audit log
 //      shows what triggered the closing turn.
-//   2. Advance session phase to wrapping_up. The persona prompt's
+//   2. Persist a visible user chat_message ("Let's wrap it up") so the
+//      transcript reads as a real user-driven close — the assistant's
+//      reply is then a response to the user, not a self-initiated wrap.
+//   3. Advance session phase to wrapping_up. The persona prompt's
 //      wrapping_up branch instructs the model to ask one final
 //      optional question and call propose_wrap_up.
-//   3. Stream a single assistant turn via runStream. The FE consumes
+//   4. Stream a single assistant turn via runStream. The FE consumes
 //      it with the same SSE handler as a normal message turn.
 //
 // Idempotent against re-clicks: a second wrap-up just appends another
-// system_event (cheap), re-runs runStream, and the persona prompt is
-// already in wrapping_up so the bot's response is consistent.
+// system_event + user message (cheap), re-runs runStream, and the
+// persona prompt is already in wrapping_up so the bot's response is
+// consistent.
 func (h *ChatHandler) WrapUp(w http.ResponseWriter, r *http.Request) {
 	sess := middleware.SessionFromCtx(r.Context())
 	if sess == nil {
@@ -618,6 +622,16 @@ func (h *ChatHandler) WrapUp(w http.ResponseWriter, r *http.Request) {
 		Content:   "user_wrap_up",
 	}); err != nil {
 		h.Logger.Error("append wrap-up event", "err", err, "session_id", session.ID)
+		writeJSONError(w, http.StatusInternalServerError, "wrap-up failed")
+		return
+	}
+
+	if _, err := h.Messages.Append(r.Context(), store.AppendInput{
+		SessionID: session.ID,
+		Role:      domain.ChatRoleUser,
+		Content:   "Let's wrap it up",
+	}); err != nil {
+		h.Logger.Error("append wrap-up user message", "err", err, "session_id", session.ID)
 		writeJSONError(w, http.StatusInternalServerError, "wrap-up failed")
 		return
 	}
