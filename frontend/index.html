@@ -6,7 +6,7 @@
     <!-- Single theme-color meta; populated at runtime from the active palette's
          --theme-color CSS var. The anti-flash script below seeds it before
          hydration so iOS PWA chrome doesn't flash a wrong color. -->
-    <meta name="theme-color" content="#f5efe2" />
+    <meta name="theme-color" content="#f8f1ed" />
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <!-- Same-origin in dev (Vite proxies /api). In prod, /api is behind the
@@ -29,20 +29,11 @@
             : prefersDark ? "dark" : "light";
           if (mode === "dark") document.documentElement.classList.add("dark");
 
-          var palettes = ["paper", "ember", "forest", "ocean", "slate"];
-          var p = localStorage.getItem("journai.palette");
-          if (palettes.indexOf(p) === -1) p = "paper";
-          document.documentElement.setAttribute("data-palette", p);
+          document.documentElement.setAttribute("data-palette", "ember");
 
-          var seeds = {
-            paper:  { light: "#f5efe2", dark: "#100e0b" },
-            ember:  { light: "#f8f1ed", dark: "#14110f" },
-            forest: { light: "#ebf0de", dark: "#0e100c" },
-            ocean:  { light: "#e0ecf0", dark: "#0d1218" },
-            slate:  { light: "#f0f2f6", dark: "#0e1015" }
-          };
+          var seed = mode === "dark" ? "#14110f" : "#f8f1ed";
           var meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.setAttribute("content", seeds[p][mode]);
+          if (meta) meta.setAttribute("content", seed);
         } catch (e) {}
       })();
     </script>
