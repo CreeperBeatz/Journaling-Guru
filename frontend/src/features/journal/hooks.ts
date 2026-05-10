@@ -224,6 +224,7 @@ export function useSaveEntry() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: entriesKey() });
       qc.invalidateQueries({ queryKey: ENTRY_DATES_KEY });
+      qc.invalidateQueries({ queryKey: heatmapKey() });
     },
   });
 }
@@ -262,6 +263,7 @@ export function useUpdateEntry(localDate: string) {
       qc.invalidateQueries({ queryKey: entriesKey(localDate) });
       qc.invalidateQueries({ queryKey: entriesKey() });
       qc.invalidateQueries({ queryKey: ENTRY_DATES_KEY });
+      qc.invalidateQueries({ queryKey: heatmapKey() });
     },
   });
 }

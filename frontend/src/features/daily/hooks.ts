@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError } from "@/api/client";
 import { toast } from "@/components/ui/sonner";
+import { heatmapKey } from "@/features/journal/hooks";
 
 import {
   DailyInputResponse,
@@ -122,6 +123,7 @@ export function useSaveDailyInput() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: dailyInputKey() });
       qc.invalidateQueries({ queryKey: ["summaries", "stats"] });
+      qc.invalidateQueries({ queryKey: heatmapKey() });
     },
   });
 }
@@ -150,6 +152,7 @@ export function useUpdateDailyInput(localDate: string) {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: dailyInputKey(localDate) });
       qc.invalidateQueries({ queryKey: ["summaries", "stats"] });
+      qc.invalidateQueries({ queryKey: heatmapKey() });
     },
   });
 }
