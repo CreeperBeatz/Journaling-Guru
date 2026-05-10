@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
 import { toast } from "@/components/ui/sonner";
 import { dailyInputKey } from "@/features/daily/hooks";
-import { entriesKey } from "@/features/journal/hooks";
+import { ENTRY_DATES_KEY, entriesKey, heatmapKey } from "@/features/journal/hooks";
 
 import {
   type ChatMessage,
@@ -373,6 +373,8 @@ export function useExtractionStatus(sessionId: string | null, enabled: boolean) 
       qc.invalidateQueries({ queryKey: chatSessionKey() });
       qc.invalidateQueries({ queryKey: dailyInputKey() });
       qc.invalidateQueries({ queryKey: entriesKey() });
+      qc.invalidateQueries({ queryKey: ENTRY_DATES_KEY });
+      qc.invalidateQueries({ queryKey: heatmapKey() });
       qc.invalidateQueries({ queryKey: STATS_KEY(90) });
       qc.invalidateQueries({ queryKey: ["goals"] });
       toast.success("Check-in updated", {

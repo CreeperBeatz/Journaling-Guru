@@ -262,12 +262,15 @@ SELECT to_char(d.d, 'YYYY-MM-DD'),
 
 // HeatmapDay is one row in the History heatmap response. `Mood` is nil when
 // the user hasn't logged a mood for that day; `Answered` and `ChatTurns`
-// default to 0 (NULL is squashed in SQL via COALESCE).
+// default to 0 (NULL is squashed in SQL via COALESCE). `HasInputs` is true
+// when the user has any non-empty daily_inputs row for that date — that
+// alone is enough to count the day toward the streak in the FE.
 type HeatmapDay struct {
 	LocalDate string `json:"local_date"`
 	Answered  int    `json:"answered"`
 	ChatTurns int    `json:"chat_turns"`
 	Mood      *int   `json:"mood,omitempty"`
+	HasInputs bool   `json:"has_inputs"`
 }
 
 // HeatmapRange returns one row per day in [from, to] for which the user
@@ -314,7 +317,8 @@ inputs AS (
 SELECT to_char(d.d, 'YYYY-MM-DD'),
        COALESCE(e.answered, 0),
        COALESCE(t.chat_turns, 0),
-       i.mood
+       i.mood,
+       (i.d IS NOT NULL)
   FROM dates d
   LEFT JOIN entries e ON e.d = d.d
   LEFT JOIN turns   t ON t.d = d.d
@@ -328,7 +332,7 @@ SELECT to_char(d.d, 'YYYY-MM-DD'),
 	out := make([]HeatmapDay, 0)
 	for rows.Next() {
 		var hd HeatmapDay
-		if err := rows.Scan(&hd.LocalDate, &hd.Answered, &hd.ChatTurns, &hd.Mood); err != nil {
+		if err := rows.Scan(&hd.LocalDate, &hd.Answered, &hd.ChatTurns, &hd.Mood, &hd.HasInputs); err != nil {
 			return nil, err
 		}
 		out = append(out, hd)

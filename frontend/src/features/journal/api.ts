@@ -36,6 +36,7 @@ export interface HeatmapDay {
   answered: number;
   chat_turns: number;
   mood?: number | null;
+  has_inputs?: boolean;
 }
 
 export interface HeatmapResponse {
