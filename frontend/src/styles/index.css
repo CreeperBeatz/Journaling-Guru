@@ -314,6 +314,20 @@
 
   /* ---------- Shared (palette-independent) ---------- */
 
+  /* Default font stack — applied to every palette unless one overrides.
+     Tailwind's font-sans / font-serif / font-mono utilities read these vars
+     (see tailwind.config.js). Swap fonts per-palette by re-declaring inside
+     the palette block (see [data-palette="manuscript"] below). */
+  :root {
+    --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system,
+      "Segoe UI", Roboto, sans-serif;
+    --font-serif: "Instrument Serif", ui-serif, Georgia, Cambria,
+      "Times New Roman", serif;
+    --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular,
+      Menlo, Consolas, monospace;
+    --font-hand: "Caveat", "Segoe Script", cursive;
+  }
+
   :root {
     --radius: 0.75rem;
     --radius-sm: 0.375rem;

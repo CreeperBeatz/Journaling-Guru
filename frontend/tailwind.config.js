@@ -59,31 +59,16 @@ export default {
         lg: "var(--shadow-lg)",
       },
       fontFamily: {
-        sans: [
-          '"Geist Variable"',
-          "ui-sans-serif",
-          "system-ui",
-          "-apple-system",
-          "Segoe UI",
-          "Roboto",
-          "sans-serif",
-        ],
-        serif: [
-          '"Instrument Serif"',
-          "ui-serif",
-          "Georgia",
-          "Cambria",
-          "Times New Roman",
-          "serif",
-        ],
-        mono: [
-          '"JetBrains Mono Variable"',
-          "ui-monospace",
-          "SFMono-Regular",
-          "Menlo",
-          "Consolas",
-          "monospace",
-        ],
+        // Palette-scoped: each [data-palette] block in styles/index.css
+        // sets --font-sans / --font-serif / --font-mono. Switching palette
+        // in Settings swaps the entire type system live. The literal stacks
+        // are documented at the var definitions.
+        sans: ["var(--font-sans)"],
+        serif: ["var(--font-serif)"],
+        mono: ["var(--font-mono)"],
+        // Available as `font-hand` for handwritten flourishes when a palette
+        // opts in (currently only manuscript).
+        hand: ["var(--font-hand)"],
       },
       fontSize: {
         // [size, { lineHeight, letterSpacing }]
