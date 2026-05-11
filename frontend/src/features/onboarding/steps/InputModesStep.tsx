@@ -5,7 +5,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -54,13 +53,10 @@ export function InputModesStep({
         <CardTitle className="font-serif text-2xl">
           Type it, chat it, or just talk.
         </CardTitle>
-        <CardDescription>
-          Whichever feels lower-friction tonight. You can switch any time.
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <motion.div
-          className="grid gap-3 sm:grid-cols-3"
+        <motion.dl
+          className="grid grid-cols-[auto_auto_1fr] items-baseline gap-x-3 gap-y-4"
           variants={listContainer}
           initial={reduce ? false : "initial"}
           animate="animate"
@@ -69,18 +65,21 @@ export function InputModesStep({
             <motion.div
               key={label}
               variants={listItem}
-              className="rounded-md border border-border/60 bg-muted/30 p-4"
+              className="contents"
             >
-              <Icon className="size-5 text-muted-foreground" aria-hidden />
-              <p className="mt-3 text-sm font-medium text-foreground">
+              <Icon
+                className="size-5 self-center text-muted-foreground"
+                aria-hidden
+              />
+              <dt className="text-center text-sm font-semibold text-foreground">
                 {label}
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              </dt>
+              <dd className="text-xs leading-relaxed text-muted-foreground/70">
                 {hint}
-              </p>
+              </dd>
             </motion.div>
           ))}
-        </motion.div>
+        </motion.dl>
 
         <FooterNav onContinue={onContinue} onBack={onBack} />
       </CardContent>
