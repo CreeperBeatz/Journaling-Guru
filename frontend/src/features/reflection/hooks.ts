@@ -1,5 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
+import { heatmapKey } from "@/features/journal/hooks";
+
 import {
   PatchReflectionBody,
   ReflectionResponse,
@@ -43,6 +45,10 @@ export function useCompleteReflection() {
     mutationFn: completeReflection,
     onSuccess: (data) => {
       qc.setQueryData(REFLECTION_THIS_WEEK_KEY, data);
+      // Refresh the heatmap so the accent dot lands on the week_end cell
+      // — the response carries the new completed_at but the heatmap is
+      // a separate query keyed by date range.
+      qc.invalidateQueries({ queryKey: heatmapKey() });
     },
   });
 }

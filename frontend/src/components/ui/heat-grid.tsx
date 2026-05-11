@@ -360,10 +360,23 @@ export function buildHeatCells(
   reflectionDates?: string[],
 ): HeatCellData[] {
   const reflectionSet = new Set(reflectionDates ?? []);
-  return days.map((d) => ({
-    date: d.local_date,
-    level: d.answered > 0 || d.chat_turns >= 3 || !!d.has_inputs ? 1 : 0,
-    moodUp: (d.mood ?? 0) >= 3,
-    hasWeeklyReflection: reflectionSet.has(d.local_date),
-  }));
+  const seen = new Set<string>();
+  const cells: HeatCellData[] = days.map((d) => {
+    seen.add(d.local_date);
+    return {
+      date: d.local_date,
+      level: d.answered > 0 || d.chat_turns >= 3 || !!d.has_inputs ? 1 : 0,
+      moodUp: (d.mood ?? 0) >= 3,
+      hasWeeklyReflection: reflectionSet.has(d.local_date),
+    };
+  });
+  // A weekly reflection is its own signal — a user can complete the
+  // wizard without touching journal / daily inputs / chat that day, so
+  // the date won't appear in `days`. Emit a level-0 cell for those so
+  // the accent dot still lands on the heatmap.
+  for (const date of reflectionSet) {
+    if (seen.has(date)) continue;
+    cells.push({ date, level: 0, moodUp: false, hasWeeklyReflection: true });
+  }
+  return cells;
 }
