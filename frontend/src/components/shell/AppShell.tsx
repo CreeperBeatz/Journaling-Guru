@@ -28,6 +28,7 @@ import { chatSessionKey } from "@/features/chat/hooks";
 import { getTodaySession } from "@/features/chat/api";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Toaster } from "@/components/ui/sonner";
+import { BrandMark } from "@/components/brand/BrandMark";
 import {
   Sheet,
   SheetContent,
@@ -238,7 +239,12 @@ function MobileDrawerContent({ user, onSignOut, signingOut }: MobileDrawerConten
   return (
     <SheetContent side="left" className="p-0">
       <SheetHeader className="pt-5 pb-1">
-        <SheetTitle>Journaling Guru</SheetTitle>
+        <SheetTitle className="flex items-center gap-2 font-serif italic tracking-tight">
+          <BrandMark size={20} className="shrink-0" />
+          <span>
+            journaling<span className="mx-[1px] not-italic text-primary" aria-hidden="true">.</span>guru
+          </span>
+        </SheetTitle>
       </SheetHeader>
       <div className="px-4 pb-2">
         <JournalDateBlock journalDate={journalDate} />

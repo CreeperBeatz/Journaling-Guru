@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { useEntries } from "@/features/journal/hooks";
 
 import type { User } from "@/features/auth/api";
+import { BrandLockup } from "@/components/brand/BrandLockup";
 import { JournalDateBlock } from "./JournalDateBlock";
 import { NavMenu } from "./NavMenu";
 
@@ -21,8 +22,8 @@ export function Sidebar({ user, onSignOut, signingOut }: Props) {
 
   return (
     <aside className="hidden h-screen w-60 flex-col border-r border-border bg-card/40 p-4 md:flex md:sticky md:top-0">
-      <NavLink to="/" className="px-2 pt-3 font-serif italic text-xl tracking-tight leading-none">
-        Journaling Guru
+      <NavLink to="/" className="px-2 pt-3">
+        <BrandLockup />
       </NavLink>
       <JournalDateBlock journalDate={journalDate} />
       <div className="mt-2 flex flex-1 flex-col">

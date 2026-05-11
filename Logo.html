@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Journaling Guru — Logo exploration</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400;1,500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&family=Kalam:wght@300;400&display=swap" rel="stylesheet">
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<style>
+  :root {
+    --ink: #2a221c;
+    --ink-soft: #6b5f55;
+    --ink-faint: #b6aa9d;
+    --paper: #f4efe6;
+    --paper-soft: #ebe4d6;
+    --paper-bright: #fffaf2;
+    --accent: #b04a2c;
+  }
+  html, body { margin: 0; padding: 0; background: #e8e2d4; }
+  body, button, input { font-family: "DM Sans", system-ui, sans-serif; color: var(--ink); }
+
+  /* Reusable logo styles */
+  .lo-card {
+    width: 100%; height: 100%;
+    background: var(--paper);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    color: var(--ink);
+    position: relative;
+    overflow: hidden;
+  }
+  .lo-card.dark { background: var(--ink); color: var(--paper); }
+
+  .lo-meta {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 22px 28px 0;
+    font-family: "DM Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .lo-meta .num { color: var(--accent); }
+  .lo-meta .concept { color: var(--ink); font-weight: 500; }
+
+  .lo-stage {
+    display: flex; align-items: center; justify-content: center;
+    padding: 28px;
+    min-height: 0;
+  }
+
+  .lo-foot {
+    border-top: 1px solid rgba(42,34,28,0.10);
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    align-items: stretch;
+  }
+  .lo-foot > div {
+    padding: 22px 18px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px;
+    min-height: 110px;
+  }
+  .lo-foot > div + div { border-left: 1px solid rgba(42,34,28,0.10); }
+  .lo-foot .label {
+    font-family: "DM Mono", monospace;
+    font-size: 9px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+  .lo-foot .dark-cell { background: var(--ink); border-radius: 0; margin: 0; padding: 22px 18px; }
+  .lo-foot .dark-cell .label { color: rgba(244,239,230,0.45); }
+
+  /* ── Primitives shared by marks ─────────────────────────── */
+  .mark { display: inline-flex; align-items: center; justify-content: center; }
+  .lockup {
+    display: flex; align-items: center; gap: 18px;
+  }
+  .lockup.stack { flex-direction: column; gap: 14px; align-items: center; }
+
+  /* Tag / sub-line below wordmark */
+  .sub {
+    font-family: "DM Mono", monospace;
+    font-size: 10px; letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-top: 2px;
+  }
+  .dark .sub { color: rgba(244,239,230,0.55); }
+
+  /* ===========================================================
+     CONCEPT 1 — DAYBREAK
+     Half-disc rising over a horizon line. Sunrise + page edge.
+     =========================================================== */
+  .c1-mark { position: relative; }
+  .c1-mark .disc {
+    width: var(--s, 56px); height: calc(var(--s, 56px) / 2);
+    background: var(--accent);
+    border-radius: var(--s, 56px) var(--s, 56px) 0 0;
+  }
+  .c1-mark .horizon {
+    width: calc(var(--s, 56px) * 1.45); height: 2px;
+    background: currentColor;
+    margin-top: 4px;
+  }
+  .c1-word {
+    font-family: "Cormorant Garamond", serif;
+    font-weight: 400;
+    font-style: italic;
+    font-size: 44px;
+    letter-spacing: 0.005em;
+    line-height: 0.95;
+  }
+
+  /* ===========================================================
+     CONCEPT 2 — DOT & LINE
+     A single accent dot over a writing line. Punctuation = pause.
+     =========================================================== */
+  .c2-mark { position: relative; display: inline-flex; flex-direction: column; align-items: center; gap: 0; }
+  .c2-mark .dot {
+    width: var(--d, 14px); height: var(--d, 14px);
+    border-radius: 50%;
+    background: var(--accent);
+    margin-bottom: calc(var(--d, 14px) * 0.85);
+  }
+  .c2-mark .rule {
+    width: calc(var(--d, 14px) * 4.5); height: 2px;
+    background: currentColor;
+  }
+  .c2-word {
+    font-family: "DM Sans", sans-serif;
+    font-weight: 400;
+    font-size: 38px;
+    letter-spacing: -0.01em;
+    line-height: 0.95;
+  }
+  .c2-word .accent { color: var(--accent); }
+
+  /* ===========================================================
+     CONCEPT 3 — COIL
+     Notebook spiral binding rendered as nested arcs.
+     Drawn with concentric SVG arcs (single shape, one color).
+     =========================================================== */
+  .c3-word {
+    font-family: "Cormorant Garamond", serif;
+    font-weight: 500;
+    font-size: 42px;
+    letter-spacing: -0.005em;
+    line-height: 0.95;
+  }
+
+  /* ===========================================================
+     CONCEPT 4 — FOLD
+     Page with one corner turned. Square + triangle in accent.
+     =========================================================== */
+  .c4-mark {
+    position: relative;
+    width: var(--s, 60px); height: var(--s, 60px);
+    border: 2px solid currentColor;
+    border-radius: 3px;
+  }
+  .c4-mark .corner {
+    position: absolute;
+    top: -2px; right: -2px;
+    width: 38%; height: 38%;
+    background: var(--accent);
+    clip-path: polygon(100% 0, 100% 100%, 0 0);
+  }
+  .c4-mark .corner-fold {
+    position: absolute;
+    top: -2px; right: -2px;
+    width: 38%; height: 38%;
+    background: var(--paper);
+    clip-path: polygon(0 0, 100% 100%, 0 100%);
+  }
+  .dark .c4-mark .corner-fold { background: var(--ink); }
+  .c4-word {
+    font-family: "DM Sans", sans-serif;
+    font-weight: 500;
+    font-size: 36px;
+    letter-spacing: -0.015em;
+    line-height: 0.95;
+  }
+
+  /* ===========================================================
+     CONCEPT 5 — JG MONOGRAM
+     Lowercase j+g sharing a descender bowl, tittle in accent.
+     Built as styled type with positioned dot.
+     =========================================================== */
+  .c5-monogram {
+    position: relative;
+    font-family: "Cormorant Garamond", serif;
+    font-weight: 500;
+    font-style: italic;
+    line-height: 1;
+    color: currentColor;
+    display: inline-block;
+  }
+  .c5-monogram .glyph {
+    font-size: var(--m, 96px);
+    letter-spacing: -0.10em;
+    display: inline-block;
+  }
+  .c5-monogram .tittle {
+    position: absolute;
+    background: var(--accent);
+    border-radius: 50%;
+    width: calc(var(--m, 96px) * 0.11);
+    height: calc(var(--m, 96px) * 0.11);
+    top: calc(var(--m, 96px) * 0.05);
+    left: calc(var(--m, 96px) * 0.10);
+  }
+  .c5-word {
+    font-family: "Cormorant Garamond", serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: 28px;
+    letter-spacing: 0.005em;
+    line-height: 1;
+  }
+
+  /* ===========================================================
+     CONCEPT 6 — WORDMARK ONLY (Caveat, brand-native)
+     Pure wordmark, no icon. Period as the only flourish.
+     =========================================================== */
+  .c6-word {
+    font-family: "Caveat", cursive;
+    font-weight: 500;
+    font-size: 72px;
+    letter-spacing: -0.005em;
+    line-height: 0.9;
+  }
+  .c6-word .stop { color: var(--accent); }
+
+  /* favicon-scale demo */
+  .fav {
+    width: 36px; height: 36px;
+    background: var(--paper-bright);
+    border: 1px solid rgba(42,34,28,0.15);
+    border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .dark-cell .fav { background: rgba(244,239,230,0.06); border-color: rgba(244,239,230,0.18); }
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+
+<script type="text/babel">
+
+// =============================================================
+// Reusable logo "concept" component — wraps each card.
+// =============================================================
+const ConceptCard = ({ num, name, idea, children, footPrimary, footSecondary, footDark }) => (
+  <div className="lo-card">
+    <div className="lo-meta">
+      <div><span className="num">/{String(num).padStart(2, "0")}</span> &nbsp; <span className="concept">{name}</span></div>
+      <div>{idea}</div>
+    </div>
+    <div className="lo-stage">{children}</div>
+    <div className="lo-foot">
+      <div>
+        <div className="label">mark</div>
+        {footPrimary}
+      </div>
+      <div>
+        <div className="label">favicon · 36px</div>
+        <span className="fav">{footSecondary}</span>
+      </div>
+      <div className="dark-cell">
+        <div className="label">on ink</div>
+        {footDark}
+      </div>
+    </div>
+  </div>
+);
+
+// =============================================================
+// CONCEPT 1 — DAYBREAK (half-sun + horizon line)
+// =============================================================
+const Daybreak = ({ size = 56, dark }) => (
+  <span className="c1-mark mark" style={{ "--s": `${size}px`, color: dark ? "var(--paper)" : "var(--ink)" }}>
+    <span style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <span className="disc" />
+      <span className="horizon" />
+    </span>
+  </span>
+);
+const DaybreakCard = () => (
+  <ConceptCard
+    num={1}
+    name="Daybreak"
+    idea="sunrise · page edge"
+    footPrimary={<Daybreak size={48} />}
+    footSecondary={<Daybreak size={20} />}
+    footDark={<Daybreak size={48} dark />}
+  >
+    <div className="lockup">
+      <Daybreak size={70} />
+      <div>
+        <div className="c1-word">Journaling&nbsp;Guru</div>
+        <div className="sub">energy &nbsp;·&nbsp; patterns &nbsp;·&nbsp; ritual</div>
+      </div>
+    </div>
+  </ConceptCard>
+);
+
+// =============================================================
+// CONCEPT 2 — DOT & LINE (insight punctuation)
+// =============================================================
+const DotLine = ({ size = 14, dark }) => (
+  <span className="c2-mark mark" style={{ "--d": `${size}px`, color: dark ? "var(--paper)" : "var(--ink)" }}>
+    <span className="dot" />
+    <span className="rule" />
+  </span>
+);
+const DotLineCard = () => (
+  <ConceptCard
+    num={2}
+    name="Reflection"
+    idea="dot · pause · page"
+    footPrimary={<DotLine size={12} />}
+    footSecondary={<DotLine size={6} />}
+    footDark={<DotLine size={12} dark />}
+  >
+    <div className="lockup">
+      <DotLine size={16} />
+      <div>
+        <div className="c2-word">journaling guru<span className="accent">.</span></div>
+        <div className="sub">a daily energy audit</div>
+      </div>
+    </div>
+  </ConceptCard>
+);
+
+// =============================================================
+// CONCEPT 3 — COIL (notebook binding spiral)
+// SVG arcs — minimal geometric form
+// =============================================================
+const Coil = ({ size = 56, dark }) => {
+  const stroke = dark ? "#f4efe6" : "#2a221c";
+  const accent = "#b04a2c";
+  const s = size;
+  return (
+    <svg width={s} height={s} viewBox="0 0 56 56" className="mark" aria-label="coil mark">
+      {/* three concentric arcs that read as a spiral binding */}
+      <circle cx="28" cy="28" r="22" fill="none" stroke={stroke} strokeWidth="2.4" />
+      <circle cx="28" cy="28" r="14" fill="none" stroke={stroke} strokeWidth="2.4" />
+      <circle cx="28" cy="28" r="6"  fill={accent} />
+    </svg>
+  );
+};
+const CoilCard = () => (
+  <ConceptCard
+    num={3}
+    name="Coil"
+    idea="binding · inward · meditation"
+    footPrimary={<Coil size={48} />}
+    footSecondary={<Coil size={22} />}
+    footDark={<Coil size={48} dark />}
+  >
+    <div className="lockup">
+      <Coil size={76} />
+      <div>
+        <div className="c3-word">Journaling Guru</div>
+        <div className="sub">pattern &nbsp;·&nbsp; rhythm &nbsp;·&nbsp; insight</div>
+      </div>
+    </div>
+  </ConceptCard>
+);
+
+// =============================================================
+// CONCEPT 4 — FOLD (page corner)
+// =============================================================
+const Fold = ({ size = 56, dark }) => (
+  <span className="c4-mark mark" style={{ "--s": `${size}px`, color: dark ? "var(--paper)" : "var(--ink)" }}>
+    <span className="corner-fold" />
+    <span className="corner" />
+  </span>
+);
+const FoldCard = () => (
+  <ConceptCard
+    num={4}
+    name="Fold"
+    idea="page · dog-ear · returned to"
+    footPrimary={<Fold size={44} />}
+    footSecondary={<Fold size={18} />}
+    footDark={<Fold size={44} dark />}
+  >
+    <div className="lockup">
+      <Fold size={64} />
+      <div>
+        <div className="c4-word">Journaling&nbsp;Guru</div>
+        <div className="sub">notice &nbsp;·&nbsp; mark &nbsp;·&nbsp; return</div>
+      </div>
+    </div>
+  </ConceptCard>
+);
+
+// =============================================================
+// CONCEPT 5 — JG MONOGRAM
+// =============================================================
+const JGMark = ({ size = 96, dark }) => (
+  <span
+    className="c5-monogram mark"
+    style={{ "--m": `${size}px`, color: dark ? "var(--paper)" : "var(--ink)" }}
+  >
+    <span className="glyph">jg</span>
+    <span className="tittle" />
+  </span>
+);
+const JGCard = () => (
+  <ConceptCard
+    num={5}
+    name="Monogram"
+    idea="ligature · tittle as accent"
+    footPrimary={<JGMark size={56} />}
+    footSecondary={<JGMark size={26} />}
+    footDark={<JGMark size={56} dark />}
+  >
+    <div className="lockup stack">
+      <JGMark size={140} />
+      <div style={{ textAlign: "center" }}>
+        <div className="c5-word">Journaling Guru</div>
+      </div>
+    </div>
+  </ConceptCard>
+);
+
+// =============================================================
+// CONCEPT 6 — WORDMARK (Caveat, brand-native)
+// =============================================================
+const Wordmark = ({ size = 72, dark }) => (
+  <span
+    className="c6-word mark"
+    style={{ fontSize: size, color: dark ? "var(--paper)" : "var(--ink)" }}
+  >
+    journaling guru<span className="stop">.</span>
+  </span>
+);
+const WordmarkCard = () => (
+  <ConceptCard
+    num={6}
+    name="Wordmark"
+    idea="brand-native · handwritten"
+    footPrimary={<Wordmark size={28} />}
+    footSecondary={<span style={{ fontFamily: "Caveat", fontSize: 22, lineHeight: 1, fontWeight: 600 }}>j<span style={{ color: "var(--accent)" }}>.</span></span>}
+    footDark={<Wordmark size={28} dark />}
+  >
+    <div className="lockup">
+      <Wordmark size={86} />
+    </div>
+  </ConceptCard>
+);
+
+// =============================================================
+// Canvas
+// =============================================================
+const App = () => (
+  <DesignCanvas
+    title="Journaling Guru — logo exploration"
+    subtitle="six minimalistic directions · ink #2a221c · paper #f4efe6 · accent #b04a2c"
+    initialZoom={0.85}
+  >
+    <DCSection id="marks" title="six directions">
+      <DCArtboard id="c1" label="01 · Daybreak" width={760} height={460}>
+        <DaybreakCard />
+      </DCArtboard>
+      <DCArtboard id="c2" label="02 · Reflection" width={760} height={460}>
+        <DotLineCard />
+      </DCArtboard>
+      <DCArtboard id="c3" label="03 · Coil" width={760} height={460}>
+        <CoilCard />
+      </DCArtboard>
+      <DCArtboard id="c4" label="04 · Fold" width={760} height={460}>
+        <FoldCard />
+      </DCArtboard>
+      <DCArtboard id="c5" label="05 · Monogram" width={760} height={460}>
+        <JGCard />
+      </DCArtboard>
+      <DCArtboard id="c6" label="06 · Wordmark" width={760} height={460}>
+        <WordmarkCard />
+      </DCArtboard>
+    </DCSection>
+  </DesignCanvas>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+
+</body>
+</html>
