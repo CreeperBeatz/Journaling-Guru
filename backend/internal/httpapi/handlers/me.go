@@ -6,11 +6,36 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/cosmosthrace/journai/backend/internal/domain"
 	"github.com/cosmosthrace/journai/backend/internal/httpapi/middleware"
 	"github.com/cosmosthrace/journai/backend/internal/store"
 	"github.com/cosmosthrace/journai/backend/internal/timezone"
 )
+
+// meResponse flattens the persisted user with one derived field that the
+// frontend can't compute itself: which weekday "now" falls on under the
+// user's timezone + day_start_minutes cutoff. Used to gate the weekly
+// reflection nav button + route so the ritual only opens on the chosen day.
+type meResponse struct {
+	*domain.User
+	LocalWeekday *int `json:"local_weekday,omitempty"`
+}
+
+func wrapMe(u *domain.User) any {
+	if u == nil {
+		return nil
+	}
+	d, err := timezone.LocalDate(time.Now(), u.Timezone, u.DayStartMinutes)
+	if err != nil {
+		// Degrade open: a bad tz/offset shouldn't 500 a read. The gated
+		// UI will just fall back to "not reflection day" until fixed.
+		return u
+	}
+	wd := int(d.Weekday())
+	return meResponse{User: u, LocalWeekday: &wd}
+}
 
 // MeHandler exposes /api/me. The session middleware should sit in front:
 // RequireAuth for authenticated reads, OptionalAuth where {user: null} is
@@ -44,7 +69,7 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 					h.Logger.Warn("replan reminders after tz auto-sync", "err", err, "user_id", sess.UserID)
 				}
 			}
-			writeJSON(w, http.StatusOK, synced)
+			writeJSON(w, http.StatusOK, wrapMe(synced))
 			return
 		}
 	}
@@ -57,7 +82,7 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, u)
+	writeJSON(w, http.StatusOK, wrapMe(u))
 }
 
 type updateMeRequest struct {
@@ -172,5 +197,5 @@ func (h *MeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, u)
+	writeJSON(w, http.StatusOK, wrapMe(u))
 }

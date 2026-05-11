@@ -15,6 +15,11 @@ export interface User {
   reminder_enabled: boolean;
   day_start_minutes: number;
   reflection_weekday: number; // 0=Sun..6=Sat — day for the weekly reflection flow
+  // local_weekday is server-computed from timezone + day_start_minutes —
+  // gating the weekly-reflection UI against it (rather than `new Date()`)
+  // respects the late-night cutoff so a 1am session still reads as
+  // yesterday. Optional because a misconfigured tz falls back to omitting it.
+  local_weekday?: number; // 0=Sun..6=Sat
   // onboarded_at is null until the first-run walkthrough at /onboarding
   // finishes (or is skipped). AppShell uses null to gate the redirect.
   onboarded_at: string | null;

@@ -10,10 +10,11 @@ import {
 import { motion } from "motion/react";
 
 import { cn } from "@/lib/utils";
+import { useMe } from "@/features/auth/useAuth";
 
-const navItems = [
-  // Weekly sits above Today as the primary-tinted CTA. It always points
-  // at /weekly; the page itself handles "no reflection in flight" copy.
+const baseNavItems = [
+  // Weekly sits above Today as the primary-tinted CTA. It's only shown
+  // on the user's reflection weekday — see filter below.
   { to: "/weekly", end: false, label: "Weekly", icon: CalendarCheck, primary: true },
   { to: "/", end: true, label: "Today", icon: MessageSquare },
   { to: "/history", end: false, label: "History", icon: CalendarDays },
@@ -28,6 +29,15 @@ interface Props {
 }
 
 export function NavMenu({ layoutId, onNavigate }: Props) {
+  const me = useMe();
+  const isReflectionDay =
+    me.data != null &&
+    typeof me.data.local_weekday === "number" &&
+    me.data.local_weekday === me.data.reflection_weekday;
+  const navItems = isReflectionDay
+    ? baseNavItems
+    : baseNavItems.filter((item) => item.to !== "/weekly");
+
   return (
     <nav className="flex-1 space-y-0.5">
       {navItems.map((item) => (
