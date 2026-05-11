@@ -13,6 +13,7 @@ import { useMe } from "@/features/auth/useAuth";
 import {
   useBrowserSubscription,
   usePushState,
+  useReconcileSubscription,
   useSubscribePush,
   useTestPush,
   useUnsubscribePush,
@@ -35,6 +36,7 @@ export function RemindersCard() {
   const subscribe = useSubscribePush(() => browserSub.refresh());
   const unsubscribe = useUnsubscribePush(() => browserSub.refresh());
   const test = useTestPush();
+  useReconcileSubscription(browserSub.subscription, state.data?.count);
 
   const reminderTime = me.data?.reminder_time?.slice(0, 5) ?? "—";
 

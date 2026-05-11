@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError } from "@/api/client";
 import { toast } from "@/components/ui/sonner";
@@ -179,6 +179,52 @@ export function useUnsubscribePush(onChange?: () => void) {
       toast.error("Couldn't disable reminders", { description: err.message });
     },
   });
+}
+
+// useReconcileSubscription patches up SW-vs-server drift: if the
+// browser holds a PushSubscription but the server reports zero devices
+// for this user, silently re-POST the existing subscription. This
+// happens when the user subscribed against a previous origin/account
+// (old tunnel URL, different login) and then opens the installed PWA —
+// the SW carries the old sub forward but the server has no row, so
+// /api/push/test 400s with "no subscriptions to test".
+//
+// The server's Upsert is idempotent, so a stray reconcile POST is
+// cheap; we still gate with a ref so we don't loop on transient errors.
+export function useReconcileSubscription(
+  browserSub: PushSubscription | null,
+  serverCount: number | undefined,
+  onReconciled?: () => void,
+) {
+  const qc = useQueryClient();
+  const attemptedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!browserSub) return;
+    if (serverCount === undefined) return; // state still loading
+    if (serverCount > 0) return;
+    if (attemptedFor.current === browserSub.endpoint) return;
+    attemptedFor.current = browserSub.endpoint;
+
+    const json = browserSub.toJSON() as {
+      endpoint?: string;
+      keys?: { p256dh?: string; auth?: string };
+    };
+    if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return;
+
+    void subscribePush({
+      endpoint: json.endpoint,
+      keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+    })
+      .then(() => {
+        qc.invalidateQueries({ queryKey: PUSH_STATE_KEY });
+        onReconciled?.();
+      })
+      .catch(() => {
+        // Leave attemptedFor set so we don't hammer the endpoint; the
+        // user can still hit Disable/Enable manually to retry.
+      });
+  }, [browserSub, serverCount, qc, onReconciled]);
 }
 
 // useTestPush fires the debug endpoint and surfaces the delivery tally.
