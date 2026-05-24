@@ -69,6 +69,7 @@ func main() {
 	chatExtractionJobs := store.NewChatExtractionJobStore(db)
 	goalStore := store.NewGoalStore(db)
 	goalCheckIns := store.NewGoalCheckInStore(db)
+	weeklyReflections := store.NewWeeklyReflectionStore(db)
 
 	summaryLLM := llm.NewOpenRouter(
 		cfg.OpenRouterKey, cfg.SummaryModel,
@@ -87,15 +88,18 @@ func main() {
 	}
 
 	worker := &jobs.SummaryWorker{
-		Summaries:      summaries,
-		Jobs:           jobsStore,
-		Entries:        entries,
-		DailyInputs:    dailyInputs,
-		DailyEntryTags: dailyEntryTags,
-		Users:          users,
-		Scheduler:      scheduler,
-		LLM:            summaryLLM,
-		Logger:         logger,
+		Summaries:         summaries,
+		Jobs:              jobsStore,
+		Entries:           entries,
+		DailyInputs:       dailyInputs,
+		DailyEntryTags:    dailyEntryTags,
+		Tags:              tagStore,
+		Users:             users,
+		WeeklyReflections: weeklyReflections,
+		Scheduler:         scheduler,
+		LLM:               summaryLLM,
+		Logger:            logger,
+		ShotCount:         cfg.SummaryShotCount,
 	}
 	reminderScheduler := &jobs.ReminderScheduler{
 		Jobs:   reminderJobs,
@@ -176,6 +180,7 @@ func main() {
 		"dispatch_interval_seconds", cfg.SummaryDispatchInterval,
 		"inactivity_days", cfg.SummaryInactivityDays,
 		"summary_model", cfg.SummaryModel,
+		"summary_shot_count", cfg.SummaryShotCount,
 		"classify_model", cfg.ClassifyModel,
 		"openrouter_key_set", cfg.OpenRouterKey != "",
 		"push_sender_set", pushSender != nil,

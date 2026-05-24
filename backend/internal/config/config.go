@@ -57,12 +57,19 @@ type Config struct {
 	SummaryDispatchInterval int `env:"SUMMARY_DISPATCH_INTERVAL_SECONDS" envDefault:"60"`
 	SummaryInactivityDays   int `env:"SUMMARY_INACTIVITY_DAYS" envDefault:"30"`
 
+	// Number of parallel narrative shots in the weekly synthesis ensemble.
+	// 1 = single-shot (skips the combiner). When ≥2, the pipeline is
+	// 1 structured pass + N narrative shots + 1 combiner = N+2 calls per
+	// week. The narrative shots use identical prompts and rely on sampling
+	// diversity; the combiner merges the strongest insights from each.
+	SummaryShotCount int `env:"SUMMARY_SHOT_COUNT" envDefault:"4"`
+
 	OpenAIKey           string `env:"OPENAI_API_KEY"`
 	OpenAIRealtimeModel string `env:"OPENAI_REALTIME_MODEL" envDefault:"gpt-realtime"`
 
 	// Chat (Phase 6a). Model defaults live up top with the other
 	// tiers; the knobs below are session-shape, not model selection.
-	ChatIdleTimeoutMinutes int `env:"CHAT_IDLE_TIMEOUT_MIN" envDefault:"20"`
+	ChatIdleTimeoutMinutes int    `env:"CHAT_IDLE_TIMEOUT_MIN" envDefault:"20"`
 	ChatHardCapMinutes     int    `env:"CHAT_HARD_CAP_MIN" envDefault:"30"`
 	ChatMaxTurns           int    `env:"CHAT_MAX_TURNS" envDefault:"50"`
 	ChatTranscriptKeepLast int    `env:"CHAT_TRANSCRIPT_KEEP_LAST" envDefault:"30"`
@@ -81,6 +88,8 @@ func Load() (*Config, error) {
 	return c, nil
 }
 
-func (c *Config) IsDev() bool                 { return c.AppEnv == EnvDev }
-func (c *Config) SessionTTL() time.Duration   { return time.Duration(c.SessionTTLHours) * time.Hour }
-func (c *Config) MagicLinkTTL() time.Duration { return time.Duration(c.MagicLinkTTLMinutes) * time.Minute }
+func (c *Config) IsDev() bool               { return c.AppEnv == EnvDev }
+func (c *Config) SessionTTL() time.Duration { return time.Duration(c.SessionTTLHours) * time.Hour }
+func (c *Config) MagicLinkTTL() time.Duration {
+	return time.Duration(c.MagicLinkTTLMinutes) * time.Minute
+}
