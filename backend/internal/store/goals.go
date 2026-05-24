@@ -21,6 +21,7 @@ type GoalStore struct {
 func NewGoalStore(db *pgxpool.Pool) *GoalStore { return &GoalStore{DB: db} }
 
 const goalColumns = `id, user_id, title, check_in_question,
+    why_matters, if_followed, if_not_followed,
     to_char(start_date, 'YYYY-MM-DD') AS start_date,
     to_char(end_date,   'YYYY-MM-DD') AS end_date,
     status, outcome, conclusion_text, created_at, ended_at`
@@ -29,6 +30,7 @@ func scanGoal(row pgx.Row) (*domain.Goal, error) {
 	var g domain.Goal
 	if err := row.Scan(
 		&g.ID, &g.UserID, &g.Title, &g.CheckInQuestion,
+		&g.WhyMatters, &g.IfFollowed, &g.IfNotFollowed,
 		&g.StartDate, &g.EndDate,
 		&g.Status, &g.Outcome, &g.ConclusionText,
 		&g.CreatedAt, &g.EndedAt,
@@ -38,19 +40,37 @@ func scanGoal(row pgx.Row) (*domain.Goal, error) {
 	return &g, nil
 }
 
+// CreateGoalInput is the payload for GoalStore.Create. Splitting the
+// motivation fields out keeps the call site honest — the weekly
+// propose_goal flow populates them; manual creators pass empty strings.
+type CreateGoalInput struct {
+	UserID          string
+	Title           string
+	CheckInQuestion string
+	WhyMatters      string
+	IfFollowed      string
+	IfNotFollowed   string
+	StartDate       time.Time
+	EndDate         time.Time
+}
+
 // Create inserts a new active goal. The SMART shaper has already
 // produced a measurable check_in_question by the time this is called;
 // this method does not validate that further.
-func (s *GoalStore) Create(
-	ctx context.Context,
-	userID, title, checkInQuestion string,
-	startDate, endDate time.Time,
-) (*domain.Goal, error) {
+func (s *GoalStore) Create(ctx context.Context, in CreateGoalInput) (*domain.Goal, error) {
 	const q = `
-		INSERT INTO goals (user_id, title, check_in_question, start_date, end_date)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO goals (
+		    user_id, title, check_in_question,
+		    why_matters, if_followed, if_not_followed,
+		    start_date, end_date
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING ` + goalColumns
-	return scanGoal(s.DB.QueryRow(ctx, q, userID, title, checkInQuestion, startDate, endDate))
+	return scanGoal(s.DB.QueryRow(ctx, q,
+		in.UserID, in.Title, in.CheckInQuestion,
+		in.WhyMatters, in.IfFollowed, in.IfNotFollowed,
+		in.StartDate, in.EndDate,
+	))
 }
 
 // GetByID returns the goal scoped to userID, or nil if not found / wrong tenant.

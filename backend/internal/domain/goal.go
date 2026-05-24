@@ -12,6 +12,14 @@ type Goal struct {
 	UserID            string     `json:"-"`
 	Title             string     `json:"title"`
 	CheckInQuestion   string     `json:"check_in_question"`
+	// WhyMatters / IfFollowed / IfNotFollowed are the user's own words on
+	// the motivation behind the goal — captured by the weekly reflection
+	// companion before it calls propose_goal. Empty for goals created
+	// manually (Goals page) or via the SMART shaper. See migration
+	// 0022_goal_motivation.sql.
+	WhyMatters        string     `json:"why_matters"`
+	IfFollowed        string     `json:"if_followed"`
+	IfNotFollowed     string     `json:"if_not_followed"`
 	StartDate         string     `json:"start_date"`         // YYYY-MM-DD
 	EndDate           string     `json:"end_date"`           // YYYY-MM-DD
 	Status            string     `json:"status"`             // "active" | "completed" | "abandoned"

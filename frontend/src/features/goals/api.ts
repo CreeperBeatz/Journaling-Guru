@@ -8,6 +8,13 @@ export interface Goal {
   id: string;
   title: string;
   check_in_question: string;
+  // Motivation captured at creation time — the user's own words on why
+  // this goal matters and what happens if they do / don't follow it.
+  // Populated by the weekly reflection's propose_goal flow; empty for
+  // goals created manually or via the SMART shaper.
+  why_matters: string;
+  if_followed: string;
+  if_not_followed: string;
   start_date: string; // YYYY-MM-DD
   end_date: string;   // YYYY-MM-DD
   status: "active" | "completed" | "abandoned";
@@ -52,6 +59,9 @@ export function listAllGoals(): Promise<AllGoalsResponse> {
 export interface CreateGoalBody {
   title: string;
   check_in_question: string;
+  why_matters?: string;      // optional; ≤600 chars
+  if_followed?: string;      // optional; ≤600 chars
+  if_not_followed?: string;  // optional; ≤600 chars
   end_date?: string;         // YYYY-MM-DD; ignored when duration_weeks set
   duration_weeks?: number;   // 1..52
   start_date?: string;       // optional; server defaults to today

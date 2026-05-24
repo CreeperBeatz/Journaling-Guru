@@ -149,6 +149,7 @@ function ActiveGoalCard({
         <p className="text-xs text-muted-foreground">
           {goal.start_date} → {goal.end_date}
         </p>
+        <GoalMotivation goal={goal} />
 
         {dueForWrapUp ? (
           <div className="space-y-3 rounded-md border border-accent/40 bg-accent/5 p-3">
@@ -272,11 +273,46 @@ function HistoricalGoalCard({ goal }: { goal: Goal }) {
         <p className="text-xs text-muted-foreground">
           {goal.start_date} → {goal.end_date}
         </p>
+        <GoalMotivation goal={goal} />
         {goal.conclusion_text ? (
           <p className="text-sm text-muted-foreground">{goal.conclusion_text}</p>
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+// GoalMotivation renders the three "why" fields when any are populated.
+// Empty across all three → nothing rendered (so manually-created goals
+// stay tidy). Tight, muted styling — the title + check-in question are
+// the load-bearing parts of the card; motivation is supporting context.
+function GoalMotivation({ goal }: { goal: Goal }) {
+  const hasAny =
+    goal.why_matters.trim() !== "" ||
+    goal.if_followed.trim() !== "" ||
+    goal.if_not_followed.trim() !== "";
+  if (!hasAny) return null;
+  return (
+    <div className="space-y-1 rounded-md border border-border/60 bg-background/40 px-3 py-2 text-xs text-muted-foreground">
+      {goal.why_matters.trim() ? (
+        <p>
+          <span className="font-medium text-foreground/80">Why it matters: </span>
+          {goal.why_matters}
+        </p>
+      ) : null}
+      {goal.if_followed.trim() ? (
+        <p>
+          <span className="font-medium text-foreground/80">If I follow it: </span>
+          {goal.if_followed}
+        </p>
+      ) : null}
+      {goal.if_not_followed.trim() ? (
+        <p>
+          <span className="font-medium text-foreground/80">If I don&apos;t: </span>
+          {goal.if_not_followed}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

@@ -67,9 +67,17 @@ type ChatHandler struct {
 
 // chat-mode bounds — clipped pre-LLM so a runaway client can't pass
 // 1MB user prompts.
+//
+// chatAssistantMaxTokens has headroom over the 40-80-token plain-text
+// budget specifically for tool-call turns: propose_goal carries up to
+// three ~300-char verbatim quotes plus title/check-in/duration, easily
+// 350+ tokens of JSON. A tight cap here truncates the stream mid-JSON,
+// the parser falls back to {_raw,_parse_error}, and the inline card
+// renders empty/garbled. Keep this generous; the system prompt enforces
+// brevity for normal turns.
 const (
-	maxChatContentLen     = 4_000
-	chatAssistantMaxTokens = 240 // soft ceiling; system prompt targets 40-80
+	maxChatContentLen      = 4_000
+	chatAssistantMaxTokens = 700
 	chatOpenerMaxTokens    = 120 // greeting is shorter
 )
 

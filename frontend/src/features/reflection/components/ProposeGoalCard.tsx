@@ -47,11 +47,14 @@ interface Props {
   args: ProposeGoalArgs;
 }
 
+const MOTIVATION_MAX = 600;
+
 // ProposeGoalCard renders the inline confirmation card for a model-
-// proposed weekly goal. The "why" fields (why_matters / if_followed /
-// if_not_followed) are read-only context — they live in the chat
-// transcript, not in the goal row. Only title / check-in / duration
-// are editable + persisted via POST /api/goals.
+// proposed weekly goal. Every field — title, check-in, weeks, and the
+// three "why" fields — is editable and persisted on the goals row when
+// the user accepts. The model pre-fills the why fields with the user's
+// verbatim words from the chat; the user can polish or shorten them
+// before saving.
 //
 // Lifecycle:
 //   1. Initial: form prefilled with the model's proposal.
@@ -66,6 +69,9 @@ export function ProposeGoalCard({ sessionId, args }: Props) {
   const [title, setTitle] = useState(args.title ?? "");
   const [checkIn, setCheckIn] = useState(args.check_in_question ?? "");
   const [weeks, setWeeks] = useState(args.duration_weeks ?? 1);
+  const [whyMatters, setWhyMatters] = useState(args.why_matters ?? "");
+  const [ifFollowed, setIfFollowed] = useState(args.if_followed ?? "");
+  const [ifNotFollowed, setIfNotFollowed] = useState(args.if_not_followed ?? "");
   const [state, setState] = useState<"open" | "saving" | "saved" | "declined">("open");
 
   const createGoal = useCreateGoal();
@@ -84,6 +90,9 @@ export function ProposeGoalCard({ sessionId, args }: Props) {
         title: title.trim(),
         check_in_question: checkIn.trim(),
         duration_weeks: Math.max(1, Math.min(52, weeks)),
+        why_matters: whyMatters.trim(),
+        if_followed: ifFollowed.trim(),
+        if_not_followed: ifNotFollowed.trim(),
       });
       try {
         await patch.mutateAsync({ new_goal_id: goal.id });
@@ -117,11 +126,33 @@ export function ProposeGoalCard({ sessionId, args }: Props) {
   if (state === "saved") {
     return (
       <Card className="border-emerald-500/40 bg-emerald-500/5">
-        <CardContent className="px-4 py-3 text-sm">
+        <CardContent className="space-y-2 px-4 py-3 text-sm">
           <p className="font-medium">Goal saved: {title.trim()}</p>
-          <p className="mt-1 text-muted-foreground">
+          <p className="text-muted-foreground">
             Daily check-in: {checkIn.trim()}
           </p>
+          {(whyMatters.trim() || ifFollowed.trim() || ifNotFollowed.trim()) && (
+            <div className="space-y-1 pt-1 text-xs text-muted-foreground">
+              {whyMatters.trim() ? (
+                <p>
+                  <span className="font-medium text-foreground/80">Why it matters: </span>
+                  {whyMatters.trim()}
+                </p>
+              ) : null}
+              {ifFollowed.trim() ? (
+                <p>
+                  <span className="font-medium text-foreground/80">If I follow it: </span>
+                  {ifFollowed.trim()}
+                </p>
+              ) : null}
+              {ifNotFollowed.trim() ? (
+                <p>
+                  <span className="font-medium text-foreground/80">If I don&apos;t: </span>
+                  {ifNotFollowed.trim()}
+                </p>
+              ) : null}
+            </div>
+          )}
         </CardContent>
       </Card>
     );
@@ -182,30 +213,50 @@ export function ProposeGoalCard({ sessionId, args }: Props) {
           />
         </div>
 
-        {(args.why_matters || args.if_followed || args.if_not_followed) && (
-          <div className="space-y-2 rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
-            <p className="font-medium text-foreground">Why this matters (your words)</p>
-            {args.why_matters ? (
-              <Textarea
-                value={args.why_matters}
-                readOnly
-                className="min-h-[3rem] resize-none border-none bg-transparent text-xs"
-              />
-            ) : null}
-            {args.if_followed ? (
-              <p>
-                <span className="font-medium">If you follow it: </span>
-                {args.if_followed}
-              </p>
-            ) : null}
-            {args.if_not_followed ? (
-              <p>
-                <span className="font-medium">If you don't: </span>
-                {args.if_not_followed}
-              </p>
-            ) : null}
+        <div className="space-y-3 rounded-lg border border-border/60 bg-background/60 px-3 py-3">
+          <div className="space-y-1">
+            <Label htmlFor="goal-why" className="text-xs">
+              Why it matters to you
+            </Label>
+            <Textarea
+              id="goal-why"
+              value={whyMatters}
+              onChange={(e) => setWhyMatters(e.target.value)}
+              placeholder="In your own words…"
+              maxLength={MOTIVATION_MAX}
+              rows={2}
+              className="min-h-[3rem] text-sm"
+            />
           </div>
-        )}
+          <div className="space-y-1">
+            <Label htmlFor="goal-if-followed" className="text-xs">
+              What happens if you follow it
+            </Label>
+            <Textarea
+              id="goal-if-followed"
+              value={ifFollowed}
+              onChange={(e) => setIfFollowed(e.target.value)}
+              placeholder="The payoff you're aiming at…"
+              maxLength={MOTIVATION_MAX}
+              rows={2}
+              className="min-h-[3rem] text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="goal-if-not-followed" className="text-xs">
+              What happens if you don&apos;t
+            </Label>
+            <Textarea
+              id="goal-if-not-followed"
+              value={ifNotFollowed}
+              onChange={(e) => setIfNotFollowed(e.target.value)}
+              placeholder="The cost of skipping it…"
+              maxLength={MOTIVATION_MAX}
+              rows={2}
+              className="min-h-[3rem] text-sm"
+            />
+          </div>
+        </div>
 
         <div className="flex gap-2 pt-1">
           <Button size="sm" onClick={onAccept} disabled={pending}>

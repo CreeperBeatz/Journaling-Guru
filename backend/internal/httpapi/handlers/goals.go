@@ -104,10 +104,19 @@ func (h *GoalHandler) List(w http.ResponseWriter, r *http.Request) {
 type createGoalRequest struct {
 	Title           string  `json:"title"`
 	CheckInQuestion string  `json:"check_in_question"`
+	// WhyMatters / IfFollowed / IfNotFollowed are the user's own words on
+	// why they chose this goal. Populated by the weekly reflection
+	// companion via the propose_goal tool; manual creators pass empty
+	// strings and the server stores ''.
+	WhyMatters      string  `json:"why_matters"`
+	IfFollowed      string  `json:"if_followed"`
+	IfNotFollowed   string  `json:"if_not_followed"`
 	EndDate         string  `json:"end_date"`        // YYYY-MM-DD; used only when duration_weeks omitted
 	DurationWeeks   *int    `json:"duration_weeks"`  // 1..52; preferred — server snaps end to next reflection_weekday
 	StartDate       *string `json:"start_date"`      // optional; defaults to today
 }
+
+const maxGoalMotivationLen = 600
 
 // Create makes a new active goal. The SMART shaper (Phase 5) will
 // pre-validate measurability before calling this; for now it accepts a
@@ -131,6 +140,15 @@ func (h *GoalHandler) Create(w http.ResponseWriter, r *http.Request) {
 	question := strings.TrimSpace(req.CheckInQuestion)
 	if question == "" || len(question) > maxGoalCheckInQuestionLen {
 		writeJSONError(w, http.StatusBadRequest, "check_in_question required (1-200 chars)")
+		return
+	}
+	whyMatters := strings.TrimSpace(req.WhyMatters)
+	ifFollowed := strings.TrimSpace(req.IfFollowed)
+	ifNotFollowed := strings.TrimSpace(req.IfNotFollowed)
+	if len(whyMatters) > maxGoalMotivationLen ||
+		len(ifFollowed) > maxGoalMotivationLen ||
+		len(ifNotFollowed) > maxGoalMotivationLen {
+		writeJSONError(w, http.StatusBadRequest, "motivation fields capped at 600 chars")
 		return
 	}
 	user, err := h.Users.GetByID(r.Context(), sess.UserID)
@@ -194,7 +212,16 @@ func (h *GoalHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	goal, err := h.Goals.Create(r.Context(), sess.UserID, title, question, startDate, endDate)
+	goal, err := h.Goals.Create(r.Context(), store.CreateGoalInput{
+		UserID:          sess.UserID,
+		Title:           title,
+		CheckInQuestion: question,
+		WhyMatters:      whyMatters,
+		IfFollowed:      ifFollowed,
+		IfNotFollowed:   ifNotFollowed,
+		StartDate:       startDate,
+		EndDate:         endDate,
+	})
 	if err != nil {
 		h.Logger.Error("create goal", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "create failed")

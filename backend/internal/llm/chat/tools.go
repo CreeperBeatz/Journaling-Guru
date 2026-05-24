@@ -76,21 +76,21 @@ var WeeklyAssistantTools = []llm.ToolDef{
 				},
 				"why_matters": map[string]any{
 					"type":        "string",
-					"description": "Verbatim from user: why this matters to them.",
+					"description": "Verbatim from user: why this matters to them. Keep tight (≤300 chars) — quote the load-bearing phrase, not the whole turn.",
 					"minLength":   1,
-					"maxLength":   600,
+					"maxLength":   300,
 				},
 				"if_followed": map[string]any{
 					"type":        "string",
-					"description": "Verbatim from user: what they think happens if they follow it.",
+					"description": "Verbatim from user: what they think happens if they follow it. ≤300 chars.",
 					"minLength":   1,
-					"maxLength":   600,
+					"maxLength":   300,
 				},
 				"if_not_followed": map[string]any{
 					"type":        "string",
-					"description": "Verbatim from user: what happens if they don't.",
+					"description": "Verbatim from user: what happens if they don't. ≤300 chars.",
 					"minLength":   1,
-					"maxLength":   600,
+					"maxLength":   300,
 				},
 				"duration_weeks": map[string]any{
 					"type":        "integer",
