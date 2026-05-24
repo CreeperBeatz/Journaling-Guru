@@ -81,11 +81,17 @@ export function WeeklyChat({ onFinished }: Props = {}) {
   const stream = useStreamingChat(session?.id ?? null, weeklyChatKey);
 
   // Lazy-create the session on first mount when none exists.
+  //
+  // Gated on createOrResume.isIdle so a single 500 from the BE doesn't
+  // become a runaway loop: the mutation hook's identity changes every
+  // render, so without this guard each re-render re-runs the effect
+  // and re-POSTs. Once we leave idle the user must click "Try again"
+  // (rendered below) to retry.
   useEffect(() => {
     if (sessionQuery.isPending) return;
-    if (sessionQuery.data && !sessionQuery.data.session) {
-      createOrResume.mutate();
-    }
+    if (!sessionQuery.data || sessionQuery.data.session) return;
+    if (!createOrResume.isIdle) return;
+    createOrResume.mutate();
   }, [sessionQuery.isPending, sessionQuery.data, createOrResume]);
 
   // Auto-stream opener for fresh greeting-phase sessions.
@@ -249,6 +255,22 @@ export function WeeklyChat({ onFinished }: Props = {}) {
     return (
       <div className="px-6 py-8 text-sm text-destructive">
         Couldn&apos;t load chat: {sessionQuery.error.message}
+      </div>
+    );
+  }
+  if (createOrResume.isError) {
+    return (
+      <div className="space-y-3 px-6 py-8">
+        <p className="text-sm text-destructive">
+          Couldn&apos;t start your weekly reflection: {createOrResume.error.message}
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => createOrResume.mutate()}
+        >
+          Try again
+        </Button>
       </div>
     );
   }

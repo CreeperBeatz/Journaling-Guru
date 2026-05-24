@@ -81,11 +81,19 @@ export function ChatPanel({
 
   const stream = useStreamingChat(session?.id ?? null);
 
+  // Lazy-create the session on first mount when none exists.
+  //
+  // The auto-fire is gated on createOrResume.isIdle because the mutation
+  // hook returns a fresh object every render — without the guard, each
+  // re-render re-runs this effect and re-POSTs, so a single 500 from
+  // the BE turns into a runaway loop of failed creation attempts. Once
+  // the mutation moves out of idle, the user must click "Try again"
+  // (rendered below on isError) to retry.
   useEffect(() => {
     if (sessionQuery.isPending) return;
-    if (sessionQuery.data && !sessionQuery.data.session) {
-      createOrResume.mutate();
-    }
+    if (!sessionQuery.data || sessionQuery.data.session) return;
+    if (!createOrResume.isIdle) return;
+    createOrResume.mutate();
   }, [sessionQuery.isPending, sessionQuery.data, createOrResume]);
 
   // Auto-stream the opener whenever we land in greeting-phase with no
@@ -258,6 +266,24 @@ export function ChatPanel({
       <Card>
         <CardContent className="px-6 py-8 text-sm text-destructive">
           Couldn&apos;t load chat: {sessionQuery.error.message}
+        </CardContent>
+      </Card>
+    );
+  }
+  if (createOrResume.isError) {
+    return (
+      <Card>
+        <CardContent className="space-y-3 px-6 py-8">
+          <p className="text-sm text-destructive">
+            Couldn&apos;t start a conversation: {createOrResume.error.message}
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => createOrResume.mutate()}
+          >
+            Try again
+          </Button>
         </CardContent>
       </Card>
     );
