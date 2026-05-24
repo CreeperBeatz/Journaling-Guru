@@ -29,6 +29,11 @@ export interface Zone1GoalStatus {
   total_days: number;
   kept_count: number;
   answered_count: number;
+  // Motivation captured at goal creation — empty for goals that were
+  // created before propose_goal / the SMART shaper captured these.
+  why_matters: string;
+  if_followed: string;
+  if_not_followed: string;
 }
 
 export interface Zone1Response {

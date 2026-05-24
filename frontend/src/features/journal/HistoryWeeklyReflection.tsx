@@ -38,6 +38,7 @@ export function HistoryWeeklyReflection({ weekStart }: { weekStart: string }) {
         onPatch={(body) => patch.mutate(body)}
         patchPending={patch.isPending}
         showReplay={false}
+        showRegenerate={false}
         showHeader={false}
       />
       <HistoryWeeklyChatTranscript weekStart={weekStart} />

@@ -295,6 +295,11 @@ type Zone1GoalStatus struct {
 	TotalDays       int    `json:"total_days"`
 	KeptCount       int    `json:"kept_count"`
 	AnsweredCount   int    `json:"answered_count"`
+	// Motivation captured at creation — surfaced read-only on the weekly
+	// reflection so the user re-encounters their own "why" each week.
+	WhyMatters      string `json:"why_matters"`
+	IfFollowed      string `json:"if_followed"`
+	IfNotFollowed   string `json:"if_not_followed"`
 }
 
 // Zone1 handles GET /api/summary/zone1.
@@ -387,6 +392,9 @@ func (h *SummaryHandler) Zone1(w http.ResponseWriter, r *http.Request) {
 			TotalDays:     totalDays,
 			KeptCount:     kept,
 			AnsweredCount: total,
+			WhyMatters:    g.WhyMatters,
+			IfFollowed:    g.IfFollowed,
+			IfNotFollowed: g.IfNotFollowed,
 		})
 	}
 
@@ -719,6 +727,9 @@ func (h *SummaryHandler) buildReflection(
 			TotalDays:     totalDays,
 			KeptCount:     kept,
 			AnsweredCount: total,
+			WhyMatters:    g.WhyMatters,
+			IfFollowed:    g.IfFollowed,
+			IfNotFollowed: g.IfNotFollowed,
 		})
 	}
 

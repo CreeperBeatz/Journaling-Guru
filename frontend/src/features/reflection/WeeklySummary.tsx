@@ -29,6 +29,9 @@ interface Props {
   /** Hide the Replay button in History (replay only makes sense for
    * the current week). Defaults to true. */
   showReplay?: boolean;
+  /** Hide the Regenerate menu in History — legacy letters aren't
+   * regeneratable. Defaults to true. */
+  showRegenerate?: boolean;
   /** Hide the header — used when WeeklySummary is embedded under a
    * page that already has its own header (e.g. History). */
   showHeader?: boolean;
@@ -46,6 +49,7 @@ export function WeeklySummary({
   onPatch,
   patchPending,
   showReplay = true,
+  showRegenerate = true,
   showHeader = true,
 }: Props) {
   const completedWhen = data.completed_at ? new Date(data.completed_at) : null;
@@ -90,30 +94,17 @@ export function WeeklySummary({
 
       <WeeklySynthesisCard data={data} regenerating={regen.isPending} />
 
-      <EditableSurpriseCard
-        initialText={data.surprise_text}
-        onSave={(text) => patchFn({ surprise_text: text })}
-        saving={patching}
-      />
-
       {existingGoals.length > 0 ? (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="font-serif text-base">Active goals</CardTitle>
             <p className="text-xs italic text-muted-foreground">
-              Add a note for any goal you want to remember a thought about.
+              Why you set them — the words you'd want to re-hear.
             </p>
           </CardHeader>
           <CardContent className="space-y-2">
             {existingGoals.map((g) => (
-              <EditableGoalRow
-                key={g.id}
-                goal={g}
-                note={data.goal_notes[g.id] ?? ""}
-                onSaveNote={(text) =>
-                  patchFn({ goal_id: g.id, goal_note: text })
-                }
-              />
+              <GoalMotivationRow key={g.id} goal={g} />
             ))}
           </CardContent>
         </Card>
@@ -132,21 +123,19 @@ export function WeeklySummary({
           </CardHeader>
           <CardContent className="space-y-2">
             {freshGoals.map((g) => (
-              <EditableGoalRow
-                key={g.id}
-                goal={g}
-                note={data.goal_notes[g.id] ?? ""}
-                onSaveNote={(text) =>
-                  patchFn({ goal_id: g.id, goal_note: text })
-                }
-                fresh
-              />
+              <GoalMotivationRow key={g.id} goal={g} fresh />
             ))}
           </CardContent>
         </Card>
       ) : null}
 
-      {showReplay || hasAnyBody ? (
+      <EditableSurpriseCard
+        initialText={data.surprise_text}
+        onSave={(text) => patchFn({ surprise_text: text })}
+        saving={patching}
+      />
+
+      {showReplay || (showRegenerate && hasAnyBody) ? (
         <div className="flex items-center justify-center gap-1 pt-2">
           {showReplay ? (
             <Button
@@ -161,7 +150,7 @@ export function WeeklySummary({
               {replay.isPending ? "Replaying…" : "Replay weekly reflection"}
             </Button>
           ) : null}
-          {hasAnyBody ? (
+          {showRegenerate && hasAnyBody ? (
             <RegenerateMenu
               pending={regen.isPending}
               onRegenerate={() =>
@@ -307,34 +296,22 @@ function EditableSurpriseCard({
   );
 }
 
-// EditableGoalRow — same shape as the read-only GoalRow but with a
-// save-on-blur note textarea.
-function EditableGoalRow({
+// GoalMotivationRow — read-only goal card surfacing the user's own
+// reasons captured at creation (why_matters, if_followed,
+// if_not_followed). The note textarea was removed in favour of this
+// re-encounter view so the weekly reflection re-shows the user's
+// motivation instead of asking for fresh commentary.
+function GoalMotivationRow({
   goal: g,
-  note,
-  onSaveNote,
   fresh,
 }: {
   goal: Zone1GoalStatus;
-  note: string;
-  onSaveNote: (text: string) => void;
   fresh?: boolean;
 }) {
-  const [text, setText] = useState(note);
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => {
-    if (!dirty) setText(note);
-  }, [note, dirty]);
-
-  const handleBlur = () => {
-    if (!dirty) return;
-    if (text.trim() === note.trim()) {
-      setDirty(false);
-      return;
-    }
-    onSaveNote(text.trim());
-    setDirty(false);
-  };
+  const why = g.why_matters.trim();
+  const ifFollowed = g.if_followed.trim();
+  const ifNotFollowed = g.if_not_followed.trim();
+  const hasMotivation = why || ifFollowed || ifNotFollowed;
 
   return (
     <div
@@ -355,17 +332,34 @@ function EditableGoalRow({
           ? `Starts ${g.start_date} · ends ${g.end_date}`
           : `Day ${g.day_index} of ${g.total_days} · ends ${g.end_date}`}
       </p>
-      <Textarea
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value);
-          setDirty(true);
-        }}
-        onBlur={handleBlur}
-        placeholder="A note for this goal…"
-        maxLength={1000}
-        className="min-h-[2.25rem] text-xs"
-      />
+      {hasMotivation ? (
+        <dl className="space-y-1.5 pt-1 text-xs">
+          {why ? (
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+                Why it matters
+              </dt>
+              <dd className="text-foreground/90">{why}</dd>
+            </div>
+          ) : null}
+          {ifFollowed ? (
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+                If I follow it
+              </dt>
+              <dd className="text-foreground/90">{ifFollowed}</dd>
+            </div>
+          ) : null}
+          {ifNotFollowed ? (
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+                If I don't
+              </dt>
+              <dd className="text-foreground/90">{ifNotFollowed}</dd>
+            </div>
+          ) : null}
+        </dl>
+      ) : null}
     </div>
   );
 }
