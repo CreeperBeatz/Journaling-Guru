@@ -315,6 +315,81 @@ func (s *DailyInputStore) AggregateForRange(
 	return out, nil
 }
 
+// GratitudeRow is one (date, text) pair for a non-empty gratitude entry
+// in a date range. Used by the weekly synthesis worker to feed gratitude
+// items into the LLM prompt without round-tripping per-day.
+type GratitudeRow struct {
+	LocalDate string
+	Text      string
+}
+
+// ListGratitudeInRange returns gratitude_text entries in [since, until]
+// (inclusive) ordered by local_date ASC. Empty strings are filtered out
+// server-side.
+func (s *DailyInputStore) ListGratitudeInRange(
+	ctx context.Context, userID string, since, until time.Time,
+) ([]GratitudeRow, error) {
+	const q = `
+		SELECT to_char(local_date, 'YYYY-MM-DD'), gratitude_text
+		  FROM daily_inputs
+		 WHERE user_id = $1
+		   AND local_date BETWEEN $2 AND $3
+		   AND gratitude_text <> ''
+		 ORDER BY local_date ASC`
+	rows, err := s.DB.Query(ctx, q, userID, since, until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]GratitudeRow, 0)
+	for rows.Next() {
+		var g GratitudeRow
+		if err := rows.Scan(&g.LocalDate, &g.Text); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// DailyNoteRow is one (date, reflection_text) pair surfaced to the
+// weekly synthesis prompt. `reflection_text` is the renamed legacy
+// "notes" column — the free-text "additional notes" field on the
+// per-day check-in.
+type DailyNoteRow struct {
+	LocalDate string
+	Text      string
+}
+
+// ListNotesInRange returns non-empty reflection_text entries in
+// [since, until] (inclusive) ordered by local_date ASC. Empty strings
+// are filtered server-side.
+func (s *DailyInputStore) ListNotesInRange(
+	ctx context.Context, userID string, since, until time.Time,
+) ([]DailyNoteRow, error) {
+	const q = `
+		SELECT to_char(local_date, 'YYYY-MM-DD'), reflection_text
+		  FROM daily_inputs
+		 WHERE user_id = $1
+		   AND local_date BETWEEN $2 AND $3
+		   AND reflection_text <> ''
+		 ORDER BY local_date ASC`
+	rows, err := s.DB.Query(ctx, q, userID, since, until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]DailyNoteRow, 0)
+	for rows.Next() {
+		var n DailyNoteRow
+		if err := rows.Scan(&n.LocalDate, &n.Text); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // HasContentInRange reports whether the user has any non-empty
 // daily_inputs row in [since, until]. A "just mood" or "just gratitude"
 // day still counts.

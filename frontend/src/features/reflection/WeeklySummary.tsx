@@ -184,8 +184,7 @@ function EditableSurpriseCard({
           The thing to remember
         </CardTitle>
         <p className="text-xs italic text-muted-foreground">
-          One line for next week's letter. Edit freely — the chat distils
-          it for you on wrap-up, but you can rewrite it any time.
+          One paragraph to remember.
         </p>
       </CardHeader>
       <CardContent>

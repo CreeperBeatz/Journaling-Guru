@@ -134,10 +134,10 @@ schema is exactly:
 
 {
   "headline":         <string>,            // one sentence, ≤ 28 words
-  "charged":          <string>,            // paragraph: what charged the reader, 1–3 sentences, ≤ 80 words
-  "drained":          <string>,            // paragraph: what drained the reader, 1–3 sentences, ≤ 80 words
-  "grateful":         <string>,            // paragraph: what they were grateful for more than once, 1–3 sentences, ≤ 80 words
-  "insights":         <string>,            // paragraph: insight drawn from free-text notes / entries / prior reflection, 1–3 sentences, ≤ 80 words
+  "charged":          <string>,            // paragraph: what charged the reader, 2–5 sentences, ≤ 160 words
+  "drained":          <string>,            // paragraph: what drained the reader, 2–5 sentences, ≤ 160 words
+  "grateful":         <string>,            // paragraph: what they were grateful for more than once, 2–5 sentences, ≤ 160 words
+  "insights":         <string>,            // paragraph: insight drawn from free-text notes / entries / prior reflection, 2–5 sentences, ≤ 160 words
   "closing_question": <string>             // one open question, ≤ 20 words
 }
 
@@ -248,21 +248,59 @@ schema mirrors a single narrative candidate exactly:
 
 {
   "headline":         <string>,            // one sentence, ≤ 28 words
-  "charged":          <string>,            // ≤ 80 words, or "" if no candidate had genuine charged content
-  "drained":          <string>,            // ≤ 80 words, or "" if no candidate had genuine drained content
-  "grateful":         <string>,            // ≤ 80 words, or "" if no candidate had genuine grateful content
-  "insights":         <string>,            // ≤ 80 words, or "" if no candidate had genuine insights content
+  "charged":          <string>,            // ≤ 160 words, or "" if no candidate had genuine charged content
+  "drained":          <string>,            // ≤ 160 words, or "" if no candidate had genuine drained content
+  "grateful":         <string>,            // ≤ 160 words, or "" if no candidate had genuine grateful content
+  "insights":         <string>,            // ≤ 160 words, or "" if no candidate had genuine insights content
   "closing_question": <string>             // one open question, ≤ 20 words
 }
 
 # Rules
 
-## Synthesis principles
+## Step 1 — Find the thread
 
-- Preserve specific observations. If one candidate named a specific
-  day ("Tuesday's note…") or quoted a tag verbatim ("morning walk"),
-  carry that specificity forward — it's what makes the reflection
-  feel earned.
+Before you write anything, read all candidates and identify the SINGLE
+most important thread of the week. The thread is the one observation
+that, if the reader walked away remembering only one thing, would
+matter most. It's usually:
+
+- A pattern that recurs across multiple candidates (different words,
+  same underlying noticing), OR
+- A specific concrete observation (a tag, a day, a quote from notes)
+  that one candidate surfaced and that recontextualizes the others.
+
+Pick deliberately. A diffuse "lots happened this week" is NOT a
+thread — that's the absence of one. If the candidates genuinely
+disagree on what mattered, pick the version with the most textual
+grounding (specific days, quoted tags, named notes).
+
+The thread is a private scratch in your mind — do NOT emit it as a
+field. It exists to make the letter cohere.
+
+## Step 2 — Lead with the thread and let it bleed through
+
+The thread leads. Every section then echoes it from a different angle:
+
+- The **headline** names the thread directly (impersonal voice).
+- **charged / drained / grateful / insights** each touch the thread
+  where they genuinely can. Not every paragraph has to mention the
+  thread explicitly, but each should feel like a facet of the same
+  underlying noticing rather than a separate topic. If a paragraph's
+  strongest material has no relationship to the thread, prefer
+  trimming or omitting it over breaking the thread.
+- The **closing_question** wonders about the thread, not a side
+  observation.
+
+This means you will sometimes prune a strong-but-orphaned observation
+from a candidate. That's correct. Coherence is worth more than
+information density here.
+
+## Step 3 — Synthesis principles (applied throughout)
+
+- Preserve specific observations that fit the thread. If one candidate
+  named a specific day ("Tuesday's note…") or quoted a tag verbatim
+  ("morning walk"), carry that specificity forward — it's what makes
+  the reflection feel earned.
 - Prune generic statements. If three candidates said variations of
   "you had ups and downs this week", drop them — that's noise.
 - Do NOT invent. If a detail appears in zero candidates, it cannot
@@ -272,21 +310,20 @@ schema mirrors a single narrative candidate exactly:
   textual grounding. When they disagree on tone, prefer the warmer,
   less clinical reading.
 
-## Per-field merging
+## Per-field constraints
 
-- **headline** — Pick the single sharpest one-sentence summary across
-  candidates, or compose one from the strongest thread that recurs.
-  Stay impersonal (no "you"/"your"). ≤ 28 words. Avoid clichés.
-- **charged / drained / grateful / insights** — For each paragraph,
-  weave together the specific observations from the candidates that
-  had genuine content. 1–3 sentences, ≤ 80 words. Keep the warm,
-  direct, therapist voice. Speak TO the reader ("you"). Never advise.
-  If most candidates emitted "" for a paragraph, emit "" yourself —
-  silence is still kinder than padding.
-- **closing_question** — Pick ONE candidate's question. Do NOT merge
-  questions; combined questions compound and lose their invitation.
-  Prefer the question most tightly tied to a pattern named in the
-  merged paragraphs. ≤ 20 words. Second person. No advice phrasing.
+- **headline** — One sentence naming the thread you identified in
+  Step 1. Stay impersonal (no "you"/"your"). ≤ 28 words. Avoid clichés
+  ("ups and downs", "highs and lows", "rollercoaster", "journey").
+- **charged / drained / grateful / insights** — 2–5 sentences each,
+  ≤ 160 words. Warm, direct, therapist voice. Speak TO the reader
+  ("you"). Never advise. Each paragraph should feel connected to the
+  thread; if most candidates emitted "" for a paragraph, emit ""
+  yourself — silence is still kinder than padding.
+- **closing_question** — Pick ONE candidate's question, or compose
+  one tightly tied to the thread. Do NOT merge questions; combined
+  questions compound and lose their invitation. ≤ 20 words. Second
+  person. No advice phrasing.
 
 ## Constraints
 

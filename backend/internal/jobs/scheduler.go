@@ -39,7 +39,7 @@ func (s *Scheduler) LazySeed(ctx context.Context, userID string, at time.Time) e
 	if user == nil {
 		return errors.New("user not found")
 	}
-	periods, err := timezone.AllPeriods(at, user.Timezone, user.DayStartMinutes)
+	periods, err := timezone.AllPeriods(at, user.Timezone, user.DayStartMinutes, user.ReflectionWeekday)
 	if err != nil {
 		return err
 	}
@@ -92,13 +92,13 @@ func (s *Scheduler) ScheduleNext(ctx context.Context, job *domain.SummaryJob) er
 	// PeriodFromLocalStart preserves the stored date as canonical; see
 	// timezone/period.go for why PeriodContaining would shift it.
 	curr, err := timezone.PeriodFromLocalStart(
-		periodStart, user.Timezone, user.DayStartMinutes,
+		periodStart, user.Timezone, user.DayStartMinutes, user.ReflectionWeekday,
 		domain.SummaryPeriod(job.PeriodType),
 	)
 	if err != nil {
 		return err
 	}
-	next, err := timezone.NextPeriod(curr, user.Timezone, user.DayStartMinutes)
+	next, err := timezone.NextPeriod(curr, user.Timezone, user.DayStartMinutes, user.ReflectionWeekday)
 	if err != nil {
 		return err
 	}

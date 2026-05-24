@@ -39,15 +39,16 @@ export function PatternAndSurpriseCard({ data, onContinue, saving }: Props) {
     onContinue();
   };
 
+  const closingQuestion = data.closing_question?.trim() ?? "";
+  const promptTitle = closingQuestion || "Did anything surprise you this week?";
+
   return (
     <div className="space-y-6">
       <PatternCard data={data} />
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="font-serif text-base">
-            Did anything surprise you this week?
-          </CardTitle>
+          <CardTitle className="font-serif text-base">{promptTitle}</CardTitle>
           <p className="text-xs italic text-muted-foreground">
             Free text — optional. Saved to this week's reflection.
           </p>
@@ -59,7 +60,7 @@ export function PatternAndSurpriseCard({ data, onContinue, saving }: Props) {
             onBlur={flush}
             rows={3}
             maxLength={4000}
-            placeholder="Anything stood out — meetings showed up more than usual, sleep slipped, a small win you almost missed…"
+            placeholder="Take your time — there's no wrong answer."
             className="border-transparent bg-transparent px-0 leading-prose focus-visible:rounded-none focus-visible:border-b focus-visible:border-b-border focus-visible:ring-0 focus-visible:ring-offset-0"
           />
         </CardContent>

@@ -82,6 +82,50 @@ func (s *EntryStore) ListByDateWithPrompts(
 	return out, rows.Err()
 }
 
+// EntryWithPromptAndDate is one (date, question prompt, body) tuple for
+// the weekly synthesis prompt. Adds LocalDate to EntryWithPrompt so the
+// model can cite the day the entry was written for.
+type EntryWithPromptAndDate struct {
+	LocalDate  string `json:"local_date"`
+	QuestionID string `json:"question_id"`
+	Prompt     string `json:"prompt"`
+	Body       string `json:"body"`
+}
+
+// ListInRangeWithPrompts joins journal_entries to questions for a range
+// of dates [from, to] (inclusive) and returns every (date, prompt,
+// body) tuple. Used by the weekly synthesis worker to feed the LLM
+// every manual entry the user wrote that week so the "insights"
+// paragraph can reference them. Ordered by local_date ASC then question
+// position ASC.
+func (s *EntryStore) ListInRangeWithPrompts(
+	ctx context.Context, userID string, from, to time.Time,
+) ([]EntryWithPromptAndDate, error) {
+	const q = `
+		SELECT to_char(e.local_date, 'YYYY-MM-DD'),
+		       e.question_id, q.prompt, e.body
+		  FROM journal_entries e
+		  JOIN questions q ON q.id = e.question_id
+		 WHERE e.user_id = $1
+		   AND e.local_date BETWEEN $2 AND $3
+		   AND e.body <> ''
+		 ORDER BY e.local_date ASC, q.position ASC, q.created_at ASC`
+	rows, err := s.DB.Query(ctx, q, userID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]EntryWithPromptAndDate, 0)
+	for rows.Next() {
+		var e EntryWithPromptAndDate
+		if err := rows.Scan(&e.LocalDate, &e.QuestionID, &e.Prompt, &e.Body); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // GetByQuestionAndDate returns the entry for one (user, question, day),
 // or (nil, nil) when the user hasn't answered that question on that day.
 // Used by the chat extraction worker to decide between insert and merge.

@@ -23,8 +23,8 @@ import (
 // next-paragraph. Sized for the JSON envelope plus content. The original
 // combined cap was 1200; splitting lets each pass have a tighter ceiling.
 const (
-	weeklyStructuredMaxTokens = 600 // per_day_tags + themes
-	weeklyNarrativeMaxTokens  = 900 // headline + 4 paragraphs + closing question
+	weeklyStructuredMaxTokens = 600  // per_day_tags + themes
+	weeklyNarrativeMaxTokens  = 1500 // headline + 4 paragraphs + closing question
 )
 
 // SummaryWorker handles SummaryArgs jobs. Under the Energy Audit pivot

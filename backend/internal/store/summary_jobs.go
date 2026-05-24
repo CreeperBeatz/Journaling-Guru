@@ -40,6 +40,34 @@ func scanSummaryJob(row pgx.Row) (*domain.SummaryJob, error) {
 	return &j, nil
 }
 
+// ReArm flips a terminal summary_jobs row back to 'pending' so the
+// dispatcher will re-run it. Used by the reflection handler when a
+// historical week is opened without synthesis fields populated — we
+// want the worker to regenerate the row's summary on the next tick.
+//
+// No-ops (returns nil) when the row doesn't exist or isn't in a
+// terminal state, so callers don't need to introspect first. The
+// existing SummaryStore.Upsert() handles the eventual upsert; we don't
+// reset attempts here since a re-arm is an intentional retry.
+func (s *SummaryJobStore) ReArm(
+	ctx context.Context,
+	userID, periodType string,
+	periodStart, fireAt time.Time,
+) error {
+	const q = `
+		UPDATE summary_jobs
+		   SET status='pending',
+		       fire_at=$4,
+		       last_error=NULL,
+		       updated_at=now()
+		 WHERE user_id=$1
+		   AND period_type=$2
+		   AND period_start=$3
+		   AND status IN ('completed','skipped','failed')`
+	_, err := s.DB.Exec(ctx, q, userID, periodType, periodStart, fireAt)
+	return err
+}
+
 // Schedule inserts a summary_jobs row. ON CONFLICT DO NOTHING — repeated
 // lazy-seed calls or cross-tab races can't double-schedule the same
 // (user, period_type, period_start). Returns whether a new row was

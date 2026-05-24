@@ -2,12 +2,29 @@ import { api } from "@/api/client";
 
 export type PeriodType = "day" | "week" | "month" | "year";
 
+export interface SummaryTheme {
+  name: string;
+  tags: string[];
+  role: "drainer" | "charger" | "mixed";
+  days_appeared: number;
+  note: string;
+}
+
 export interface SummaryMetadata {
   emotions?: string[];
   mood_score?: number;
   mood_label?: string;
   topics?: string[];
   entry_count?: number;
+  // Weekly synthesis (Sonnet-tier prompt). `letter` is the legacy
+  // single-blob fallback; the four paragraphs are the structured shape.
+  letter?: string;
+  charged?: string;
+  drained?: string;
+  grateful?: string;
+  insights?: string;
+  themes?: SummaryTheme[];
+  closing_question?: string;
 }
 
 export interface Summary {

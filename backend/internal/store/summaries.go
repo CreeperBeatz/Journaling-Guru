@@ -119,6 +119,34 @@ func (s *SummaryStore) GetByPeriod(
 	return out, err
 }
 
+// LatestByPeriodTypeUpTo returns the most recent summary row for one
+// (user, period_type) with period_start <= asOf. Used by the reflection
+// handler's synthesis lookup as a fallback when GetByPeriod's exact
+// (user, period_type, period_start) match misses — e.g. legacy rows
+// from before the reflection_weekday anchoring change, or when a user
+// opens the wizard on a non-reflection day.
+//
+// Returns nil (not an error) when the user has no rows of this type
+// at-or-before asOf.
+func (s *SummaryStore) LatestByPeriodTypeUpTo(
+	ctx context.Context,
+	userID, periodType string,
+	asOf time.Time,
+) (*domain.Summary, error) {
+	const q = `SELECT ` + summaryColumns + ` FROM summaries
+	            WHERE user_id = $1
+	              AND period_type = $2
+	              AND period_start <= $3
+	            ORDER BY period_start DESC
+	            LIMIT 1`
+	row := s.DB.QueryRow(ctx, q, userID, periodType, asOf)
+	out, err := scanSummary(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return out, err
+}
+
 // ListByPeriodType returns the user's summaries of one period type,
 // newest first. Used by the SummariesPage tabs. Limit 0 = no cap.
 func (s *SummaryStore) ListByPeriodType(

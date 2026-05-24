@@ -29,11 +29,20 @@ type Period struct {
 // month if it crosses the boundary). LocalDate handles the shift; this fn
 // just consumes that anchor date and rounds to period bounds.
 //
-// Fire time: end-of-period + 1 day, at (day_start + 30 min) in user-tz,
-// converted to UTC. So daily(D)'s summary fires at the start of D+1's
-// "user day", same for weekly/monthly/yearly. 30 minutes past the cutoff
-// gives DST transitions and clock skew slack.
-func PeriodContaining(at time.Time, iana string, dayStartMinutes int, pt domain.SummaryPeriod) (Period, error) {
+// Weekly anchoring: the week ENDS on the user's reflection_weekday and
+// starts 6 days before it. This way the worker's stored period_start /
+// period_end match the wizard's "today - 6 days .. today" window the
+// FE renders on reflection day, and fire_at can land at the START of
+// reflection day so the letter is ready when the user opens the wizard.
+// reflectionWeekday is 0=Sun..6=Sat (matches Go's time.Weekday).
+//
+// Fire time:
+//   - weekly: period_end (= reflection_weekday) at day_start_minutes, in
+//     user-tz. The synthesis fires at the start of reflection day so
+//     it's ready when the user begins reflecting.
+//   - day/month/year (dead under Energy Audit): end+1 at day_start+30,
+//     preserved for back-compat in case those paths are ever revived.
+func PeriodContaining(at time.Time, iana string, dayStartMinutes, reflectionWeekday int, pt domain.SummaryPeriod) (Period, error) {
 	if !domain.IsValidPeriod(string(pt)) {
 		return Period{}, fmt.Errorf("invalid period type %q", pt)
 	}
@@ -43,6 +52,9 @@ func PeriodContaining(at time.Time, iana string, dayStartMinutes int, pt domain.
 	}
 	if dayStartMinutes < 0 || dayStartMinutes >= 1440 {
 		return Period{}, fmt.Errorf("day_start_minutes out of range: %d", dayStartMinutes)
+	}
+	if reflectionWeekday < 0 || reflectionWeekday > 6 {
+		return Period{}, fmt.Errorf("reflection_weekday out of range: %d", reflectionWeekday)
 	}
 	// Anchor: the calendar date `at` lives in for this user.
 	anchor, err := LocalDate(at, iana, dayStartMinutes)
@@ -56,14 +68,14 @@ func PeriodContaining(at time.Time, iana string, dayStartMinutes int, pt domain.
 		start = anchor
 		end = anchor
 	case domain.PeriodWeek:
-		// Monday-start (ISO 8601). time.Weekday(): Sunday=0, Monday=1, ..., Saturday=6.
-		// daysFromMonday: Mon=0, Tue=1, ..., Sun=6.
-		daysFromMonday := (int(anchor.Weekday()) + 6) % 7
-		start = anchor.AddDate(0, 0, -daysFromMonday)
-		end = start.AddDate(0, 0, 6)
+		// Week ends on the user's reflection_weekday. Find the most
+		// recent such weekday at-or-equal to `anchor`. daysSinceRefl:
+		// 0 if today IS reflection_weekday, 1..6 otherwise.
+		daysSinceRefl := (int(anchor.Weekday()) - reflectionWeekday + 7) % 7
+		end = anchor.AddDate(0, 0, -daysSinceRefl)
+		start = end.AddDate(0, 0, -6)
 	case domain.PeriodMonth:
 		start = time.Date(anchor.Year(), anchor.Month(), 1, 0, 0, 0, 0, loc)
-		// First of next month, then -1 day = last of current month.
 		nextMonth := time.Date(anchor.Year(), anchor.Month()+1, 1, 0, 0, 0, 0, loc)
 		end = nextMonth.AddDate(0, 0, -1)
 	case domain.PeriodYear:
@@ -71,20 +83,33 @@ func PeriodContaining(at time.Time, iana string, dayStartMinutes int, pt domain.
 		end = time.Date(anchor.Year(), time.December, 31, 0, 0, 0, 0, loc)
 	}
 
-	// fire_at: (end + 1 day) at (day_start + 30 min), in user-local time.
-	// time.Date normalizes overflow (Day() == lastDay+1 → next month).
+	return Period{
+		Type:      pt,
+		Start:     start,
+		End:       end,
+		FireAtUTC: computeFireAt(pt, end, dayStartMinutes, loc),
+	}, nil
+}
+
+// computeFireAt resolves the absolute UTC moment a job for `pt` ending on
+// `end` (user-tz local midnight, inclusive) should fire. Weekly fires at
+// the START of period_end (reflection_weekday at day_start) so the
+// synthesis is ready as the user begins their reflection day. Other
+// period types use end+1 at day_start+30 (legacy convention).
+func computeFireAt(pt domain.SummaryPeriod, end time.Time, dayStartMinutes int, loc *time.Location) time.Time {
+	if pt == domain.PeriodWeek {
+		fireLocal := time.Date(
+			end.Year(), end.Month(), end.Day(),
+			dayStartMinutes/60, dayStartMinutes%60, 0, 0, loc,
+		)
+		return fireLocal.UTC()
+	}
 	fireMinutes := dayStartMinutes + 30
 	fireLocal := time.Date(
 		end.Year(), end.Month(), end.Day()+1,
 		fireMinutes/60, fireMinutes%60, 0, 0, loc,
 	)
-
-	return Period{
-		Type:      pt,
-		Start:     start,
-		End:       end,
-		FireAtUTC: fireLocal.UTC(),
-	}, nil
+	return fireLocal.UTC()
 }
 
 // PeriodFromLocalStart computes period bounds + fire time for a date that
@@ -99,13 +124,16 @@ func PeriodContaining(at time.Time, iana string, dayStartMinutes int, pt domain.
 // at user-tz midnight) for PeriodDay; for week/month/year the bounds
 // are computed normally.
 func PeriodFromLocalStart(
-	localStart time.Time, iana string, dayStartMinutes int, pt domain.SummaryPeriod,
+	localStart time.Time, iana string, dayStartMinutes, reflectionWeekday int, pt domain.SummaryPeriod,
 ) (Period, error) {
 	if !domain.IsValidPeriod(string(pt)) {
 		return Period{}, fmt.Errorf("invalid period type %q", pt)
 	}
 	if dayStartMinutes < 0 || dayStartMinutes >= 1440 {
 		return Period{}, fmt.Errorf("day_start_minutes out of range: %d", dayStartMinutes)
+	}
+	if reflectionWeekday < 0 || reflectionWeekday > 6 {
+		return Period{}, fmt.Errorf("reflection_weekday out of range: %d", reflectionWeekday)
 	}
 	loc, err := time.LoadLocation(iana)
 	if err != nil {
@@ -122,8 +150,9 @@ func PeriodFromLocalStart(
 		start = anchor
 		end = anchor
 	case domain.PeriodWeek:
-		daysFromMonday := (int(anchor.Weekday()) + 6) % 7
-		start = anchor.AddDate(0, 0, -daysFromMonday)
+		// localStart IS the canonical period_start (= reflection_weekday - 6).
+		// End = start + 6 days = reflection_weekday.
+		start = anchor
 		end = start.AddDate(0, 0, 6)
 	case domain.PeriodMonth:
 		start = time.Date(anchor.Year(), anchor.Month(), 1, 0, 0, 0, 0, loc)
@@ -134,16 +163,11 @@ func PeriodFromLocalStart(
 		end = time.Date(anchor.Year(), time.December, 31, 0, 0, 0, 0, loc)
 	}
 
-	fireMinutes := dayStartMinutes + 30
-	fireLocal := time.Date(
-		end.Year(), end.Month(), end.Day()+1,
-		fireMinutes/60, fireMinutes%60, 0, 0, loc,
-	)
 	return Period{
 		Type:      pt,
 		Start:     start,
 		End:       end,
-		FireAtUTC: fireLocal.UTC(),
+		FireAtUTC: computeFireAt(pt, end, dayStartMinutes, loc),
 	}, nil
 }
 
@@ -155,20 +179,20 @@ func PeriodFromLocalStart(
 // running PeriodFromLocalStart. The "end + 1" is the canonical first
 // day of the next period for every period type (daily/weekly/monthly/
 // yearly), so it round-trips cleanly.
-func NextPeriod(p Period, iana string, dayStartMinutes int) (Period, error) {
+func NextPeriod(p Period, iana string, dayStartMinutes, reflectionWeekday int) (Period, error) {
 	nextDate := p.End.AddDate(0, 0, 1)
-	return PeriodFromLocalStart(nextDate, iana, dayStartMinutes, p.Type)
+	return PeriodFromLocalStart(nextDate, iana, dayStartMinutes, reflectionWeekday, p.Type)
 }
 
 // AllPeriods returns the surviving periods containing `at`. Under the
 // Energy Audit pivot only the weekly summary fires; the daily / monthly
 // / yearly LLM summaries are retired.
-func AllPeriods(at time.Time, iana string, dayStartMinutes int) ([]Period, error) {
+func AllPeriods(at time.Time, iana string, dayStartMinutes, reflectionWeekday int) ([]Period, error) {
 	out := make([]Period, 0, 1)
 	for _, pt := range []domain.SummaryPeriod{
 		domain.PeriodWeek,
 	} {
-		p, err := PeriodContaining(at, iana, dayStartMinutes, pt)
+		p, err := PeriodContaining(at, iana, dayStartMinutes, reflectionWeekday, pt)
 		if err != nil {
 			return nil, err
 		}

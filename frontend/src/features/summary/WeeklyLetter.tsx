@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { PaperPage, PaperPageProse } from "@/components/ui/paper-page";
 import { cn } from "@/lib/utils";
 
+import { useMe } from "@/features/auth/useAuth";
 import type { Summary } from "@/features/summaries/api";
 
 export interface WeeklyLetterProps {
@@ -51,11 +52,18 @@ function dayChipLabel(iso: string): string {
 
 /**
  * Hero of the Trends tab. Renders the most recent weekly summary as a
- * letter on a paper sheet ("Dear you / — guru" framing). Footer chips
- * deep-link to each day in the week. Read-aloud is reserved for Phase
- * 6b voice; renders disabled with a "soon" badge.
+ * letter on a paper sheet. The structured-prompt path (Sonnet) emits
+ * four paragraphs (charged/drained/grateful/insights) + a closing-
+ * question pull-quote; the legacy path falls back to the markdown body.
+ * Greeting uses the user's display_name when set ("Dear traveler,"
+ * otherwise). Footer chips deep-link to each day in the week.
+ * Read-aloud is reserved for Phase 6b voice; renders disabled.
  */
 export function WeeklyLetter({ summary, loading }: WeeklyLetterProps) {
+  const me = useMe();
+  const displayName = me.data?.display_name?.trim() ?? "";
+  const greetingName = displayName !== "" ? displayName : "traveler";
+
   if (loading) {
     return (
       <PaperPage
@@ -75,18 +83,27 @@ export function WeeklyLetter({ summary, loading }: WeeklyLetterProps) {
         title="No letter yet"
       >
         <PaperPageProse>
+          <p>Dear {greetingName},</p>
           <p>
             Your first letter arrives Sunday morning. Until then, keep showing
             up — the cards, the chat, even just the mood. The page fills
             itself.
           </p>
-          <p className="text-right">— guru</p>
+          <p className="text-right">— with care, your Journaling Guru</p>
         </PaperPageProse>
       </PaperPage>
     );
   }
 
   const days = isoRange(summary.period_start, summary.period_end);
+
+  const charged = summary.metadata?.charged?.trim() ?? "";
+  const drained = summary.metadata?.drained?.trim() ?? "";
+  const grateful = summary.metadata?.grateful?.trim() ?? "";
+  const insights = summary.metadata?.insights?.trim() ?? "";
+  const closingQuestion = summary.metadata?.closing_question?.trim() ?? "";
+  const hasStructured =
+    charged !== "" || drained !== "" || grateful !== "" || insights !== "";
 
   return (
     <PaperPage
@@ -111,9 +128,25 @@ export function WeeklyLetter({ summary, loading }: WeeklyLetterProps) {
       }
     >
       <PaperPageProse>
-        <p>Dear you,</p>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary.body}</ReactMarkdown>
-        <p className="text-right">— guru</p>
+        <p>Dear {greetingName},</p>
+
+        {hasStructured ? (
+          <>
+            {charged !== "" ? <p>{charged}</p> : null}
+            {drained !== "" ? <p>{drained}</p> : null}
+            {grateful !== "" ? <p>{grateful}</p> : null}
+            {insights !== "" ? <p>{insights}</p> : null}
+            {closingQuestion !== "" ? (
+              <p className="border-l-2 border-accent/40 pl-4 italic text-foreground/90">
+                {closingQuestion}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary.body}</ReactMarkdown>
+        )}
+
+        <p className="text-right">— with care,</p>
       </PaperPageProse>
 
       <footer className="mt-2 border-t border-border/60 pt-4">
