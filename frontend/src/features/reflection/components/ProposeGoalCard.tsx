@@ -101,7 +101,10 @@ export function ProposeGoalCard({ sessionId, args }: Props) {
         // link is best-effort.
       }
       try {
-        await postSystemEvent(sessionId, "user_accepted_goal");
+        await postSystemEvent(sessionId, "user_accepted_goal", {
+          goal_id: goal.id,
+          goal_title: title.trim(),
+        });
       } catch {
         /* best-effort */
       }
@@ -117,7 +120,11 @@ export function ProposeGoalCard({ sessionId, args }: Props) {
   const onDecline = async () => {
     setState("declined");
     try {
-      await postSystemEvent(sessionId, "user_declined_goal");
+      // No goal_id on decline — nothing was persisted — but a title
+      // keeps the LLM's event-line concrete on later turns.
+      const proposedTitle = (args.title ?? title).trim();
+      await postSystemEvent(sessionId, "user_declined_goal",
+        proposedTitle ? { goal_title: proposedTitle } : undefined);
     } catch {
       /* best-effort */
     }

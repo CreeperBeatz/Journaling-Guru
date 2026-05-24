@@ -66,7 +66,11 @@ export function ProposeCompleteGoalCard({ sessionId, args, goalTitle }: Props) {
         conclusionText: reason.trim(),
       });
       try {
-        await postSystemEvent(sessionId, "user_accepted_complete_goal");
+        await postSystemEvent(sessionId, "user_accepted_complete_goal", {
+          goal_id: goalID,
+          ...(goalTitle ? { goal_title: goalTitle } : {}),
+          outcome,
+        });
       } catch {
         /* best-effort */
       }
@@ -82,7 +86,10 @@ export function ProposeCompleteGoalCard({ sessionId, args, goalTitle }: Props) {
   const onDecline = async () => {
     setState("declined");
     try {
-      await postSystemEvent(sessionId, "user_declined_complete_goal");
+      await postSystemEvent(sessionId, "user_declined_complete_goal", {
+        goal_id: goalID,
+        ...(goalTitle ? { goal_title: goalTitle } : {}),
+      });
     } catch {
       /* best-effort */
     }

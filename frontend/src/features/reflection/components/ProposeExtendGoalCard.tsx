@@ -57,10 +57,15 @@ export function ProposeExtendGoalCard({ sessionId, args, goalTitle }: Props) {
       return;
     }
     setState("saving");
+    const clampedWeeks = Math.max(1, Math.min(12, weeks));
     try {
-      await extend.mutateAsync({ id: goalID, weeks: Math.max(1, Math.min(12, weeks)) });
+      await extend.mutateAsync({ id: goalID, weeks: clampedWeeks });
       try {
-        await postSystemEvent(sessionId, "user_accepted_extend_goal");
+        await postSystemEvent(sessionId, "user_accepted_extend_goal", {
+          goal_id: goalID,
+          ...(goalTitle ? { goal_title: goalTitle } : {}),
+          weeks: String(clampedWeeks),
+        });
       } catch {
         /* best-effort */
       }
@@ -76,7 +81,10 @@ export function ProposeExtendGoalCard({ sessionId, args, goalTitle }: Props) {
   const onDecline = async () => {
     setState("declined");
     try {
-      await postSystemEvent(sessionId, "user_declined_extend_goal");
+      await postSystemEvent(sessionId, "user_declined_extend_goal", {
+        goal_id: goalID,
+        ...(goalTitle ? { goal_title: goalTitle } : {}),
+      });
     } catch {
       /* best-effort */
     }

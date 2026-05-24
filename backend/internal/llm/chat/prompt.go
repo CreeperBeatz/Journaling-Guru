@@ -3,6 +3,7 @@ package chat
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -493,8 +494,35 @@ func MessagesForLLM(messages []domain.ChatMessage) []llm.Message {
 			out = append(out, llm.Message{Role: "assistant", Content: content})
 		case domain.ChatRoleSystemEvent:
 			// Inject as a system note in-line. Cheap; helps the model
-			// stay coherent across out-of-band events.
-			out = append(out, llm.Message{Role: "system", Content: "(event: " + m.Content + ")"})
+			// stay coherent across out-of-band events. Render attached
+			// meta (goal_id, goal_title, outcome, weeks) so the model
+			// can tell *which* goal a decision applied to on later
+			// turns — without it, a session that proposes multiple
+			// goals has no memory of which were accepted/declined.
+			body := "(event: " + m.Content
+			if len(m.ToolArgs) > 0 {
+				keys := make([]string, 0, len(m.ToolArgs))
+				for k := range m.ToolArgs {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				var pairs []string
+				for _, k := range keys {
+					switch v := m.ToolArgs[k].(type) {
+					case string:
+						if v != "" {
+							pairs = append(pairs, k+"="+v)
+						}
+					case float64:
+						pairs = append(pairs, fmt.Sprintf("%s=%g", k, v))
+					}
+				}
+				if len(pairs) > 0 {
+					body += " " + strings.Join(pairs, " ")
+				}
+			}
+			body += ")"
+			out = append(out, llm.Message{Role: "system", Content: body})
 		}
 		// tool rows are intentionally skipped — they're persisted for
 		// audit but are not part of the model-visible transcript.

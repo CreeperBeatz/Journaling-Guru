@@ -147,12 +147,26 @@ export type SystemEventContent =
   | "user_accepted_complete_goal"
   | "user_declined_complete_goal";
 
+// SystemEventMeta is the closed-key payload the FE may attach to a
+// system_event. Lets the assistant see which goal a decision applied
+// to on later turns — without this, a session that proposes multiple
+// goals has no memory of which were accepted/declined. Server
+// whitelists keys and caps each value at 200 chars; unknown keys are
+// dropped silently.
+export interface SystemEventMeta {
+  goal_id?: string;
+  goal_title?: string;
+  outcome?: "kept" | "dropped" | "inconclusive";
+  weeks?: string; // string for symmetry with the server's map[string]string
+}
+
 export function postSystemEvent(
   sessionId: string,
   content: SystemEventContent,
+  meta?: SystemEventMeta,
 ): Promise<{ message_id: string; seq: number }> {
   return api(`/api/chat/sessions/${sessionId}/system-event`, {
     method: "POST",
-    body: { content },
+    body: meta ? { content, meta } : { content },
   });
 }

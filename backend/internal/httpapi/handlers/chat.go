@@ -458,9 +458,13 @@ func (h *ChatHandler) ChatByWeek(w http.ResponseWriter, r *http.Request) {
 
 // systemEventRequest carries one of the whitelisted user-driven events
 // the FE injects so the assistant sees the user's interaction with an
-// inline UI surface on the next turn.
+// inline UI surface on the next turn. `meta` is an optional, key-
+// whitelisted map of compact strings (goal_id, goal_title, outcome,
+// weeks) — persisted on the system_event row's tool_args so the LLM
+// can read which goal a decision applied to on subsequent turns.
 type systemEventRequest struct {
-	Content string `json:"content"`
+	Content string            `json:"content"`
+	Meta    map[string]string `json:"meta,omitempty"`
 }
 
 // allowedSystemEvents is the closed set of content strings the FE may
@@ -474,6 +478,19 @@ var allowedSystemEvents = map[string]struct{}{
 	"user_accepted_complete_goal": {},
 	"user_declined_complete_goal": {},
 }
+
+// allowedSystemEventMetaKeys is the closed set of meta keys the FE may
+// attach to a system_event. Unknown keys are dropped silently so a
+// future FE bump doesn't 400 on older servers. Values are capped at
+// 200 chars to keep the LLM-visible event-line compact.
+var allowedSystemEventMetaKeys = map[string]struct{}{
+	"goal_id":    {},
+	"goal_title": {},
+	"outcome":    {},
+	"weeks":      {},
+}
+
+const maxSystemEventMetaValueLen = 200
 
 // AppendSystemEvent handles POST /api/chat/sessions/:id/system-event.
 // Appends a system_event chat_message with one of the whitelisted
@@ -510,10 +527,31 @@ func (h *ChatHandler) AppendSystemEvent(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusInternalServerError, "session lookup failed")
 		return
 	}
+	// Sanitize meta: whitelist keys, trim values, drop empties, cap length.
+	// Unknown keys are dropped silently so an older server doesn't reject
+	// a future FE addition.
+	var meta map[string]any
+	for k, v := range req.Meta {
+		if _, ok := allowedSystemEventMetaKeys[k]; !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if len(v) > maxSystemEventMetaValueLen {
+			v = v[:maxSystemEventMetaValueLen]
+		}
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		meta[k] = v
+	}
 	row, err := h.Messages.Append(r.Context(), store.AppendInput{
 		SessionID: sessionID,
 		Role:      domain.ChatRoleSystemEvent,
 		Content:   content,
+		ToolArgs:  meta,
 	})
 	if err != nil {
 		h.Logger.Error("append system_event", "err", err)
