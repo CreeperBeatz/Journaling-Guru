@@ -21,6 +21,7 @@ import {
   useTodayChatSession,
   visibleMessages,
 } from "./hooks";
+import { ChatFirstTimeHint } from "./components/ChatFirstTimeHint";
 import { ChatKebab, WrapUpButton } from "./components/ComposerActions";
 import { ComposerInput } from "./components/ComposerInput";
 import { CrisisCard } from "./components/CrisisCard";
@@ -345,6 +346,7 @@ export function ChatPanel({
           {/* Centered messages content. flex-1 so the column's free
            *  space is absorbed here, pushing the composer down. */}
           <div className="mx-auto w-full max-w-3xl flex-1 px-4 pt-2 pb-4 md:px-6">
+            <ChatFirstTimeHint />
             <MessageList
               messages={visibleMsgs}
               partial={stream.state.partial}
