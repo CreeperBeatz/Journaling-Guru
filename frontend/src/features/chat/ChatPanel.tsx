@@ -9,8 +9,10 @@ import {
   type ChatMessage,
   type ChatPhase,
   type ChatSession,
+  type ExtractionStatus,
 } from "./api";
 import {
+  isExtractionInFlight,
   useCancelWrapUp,
   useCreateOrResumeSession,
   useFinalizeChat,
@@ -54,7 +56,19 @@ const STALE_OPENER_MS = 4 * 60 * 60 * 1000;
 // composer's own height is part of the scrollable content, so
 // scrollHeight already accounts for it — auto-scroll-to-bottom lands
 // the messages at the visible region above the pinned composer.
-export function ChatPanel() {
+interface ChatPanelProps {
+  // Extraction status is owned by DailyEntry (single polling subscription,
+  // single toast). ChatPanel just reflects it inside the affordance card.
+  extractionStatus: ExtractionStatus;
+  extractionError: string | null;
+  onRetryFinalize: () => void;
+}
+
+export function ChatPanel({
+  extractionStatus,
+  extractionError,
+  onRetryFinalize,
+}: ChatPanelProps) {
   const sessionQuery = useTodayChatSession();
   const createOrResume = useCreateOrResumeSession();
   const finalize = useFinalizeChat();
@@ -343,11 +357,17 @@ export function ChatPanel() {
                 />
               </div>
             ) : null}
-            {modelProposedWrapUp && !stream.state.crisis ? (
+            {(modelProposedWrapUp ||
+              isExtractionInFlight(extractionStatus) ||
+              extractionStatus === "failed") &&
+            !stream.state.crisis ? (
               <div className="mt-4">
                 <WrapUpAffordance
                   onFinalize={handleFinalize}
                   pending={finalize.isPending}
+                  extractionStatus={extractionStatus}
+                  extractionError={extractionError}
+                  onRetry={onRetryFinalize}
                 />
               </div>
             ) : null}

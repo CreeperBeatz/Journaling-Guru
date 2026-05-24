@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Loader2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -95,12 +94,10 @@ export function DailyEntry() {
     [searchParams, setSearchParams],
   );
 
-  // Background "Update check-in" status. Lives in DailyEntry (not
-  // ChatPanel) so the sticky bar's "Updating…" pill is visible from
-  // any mode and the polling effect (toast on completed/failed) only
-  // fires from one place. ChatPanel's "Update check-in" button still
-  // triggers the finalize via its own mutation hook; both observers
-  // converge on the same react-query cache.
+  // Background "Update check-in" status. DailyEntry owns the polling +
+  // toast subscription (single fire across mode switches); ChatPanel
+  // renders the actual loader / retry surface inline in the affordance
+  // card. Both observers converge on the same react-query cache.
   const todayChat = useTodayChatSession();
   const chatSession = todayChat.data?.session ?? null;
   const finalizeRetry = useFinalizeChat();
@@ -112,11 +109,11 @@ export function DailyEntry() {
     extractionPolling.data?.status ?? chatSession?.extraction_status ?? "idle";
   const extractionError =
     extractionPolling.data?.error ?? chatSession?.extraction_error ?? null;
-  const handleRetryFinalize = () => {
+  const handleRetryFinalize = useCallback(() => {
     if (!chatSession) return;
     // Retry path stays manual-wins — same intent as the original click.
     finalizeRetry.mutate({ sessionId: chatSession.id });
-  };
+  }, [chatSession, finalizeRetry]);
 
   if (entries.isPending) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
@@ -168,33 +165,14 @@ export function DailyEntry() {
       </TabsContent>
 
       <TabsContent value="chat" className="mt-0">
-        <ChatPanel />
+        <ChatPanel
+          extractionStatus={extractionStatus}
+          extractionError={extractionError}
+          onRetryFinalize={handleRetryFinalize}
+        />
       </TabsContent>
     </>
   );
-
-  const statusPill =
-    extractionStatus === "pending" || extractionStatus === "running" ? (
-      <span
-        role="status"
-        aria-live="polite"
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-medium text-accent"
-      >
-        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-        Updating check-in…
-      </span>
-    ) : extractionStatus === "failed" ? (
-      <button
-        type="button"
-        onClick={handleRetryFinalize}
-        disabled={finalizeRetry.isPending}
-        title={extractionError ?? "Extraction failed — tap to retry"}
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-60"
-      >
-        <AlertCircle className="h-3 w-3" aria-hidden />
-        {finalizeRetry.isPending ? "Retrying…" : "Retry update"}
-      </button>
-    ) : null;
 
   return (
     <Tabs value={mode} onValueChange={handleModeChange}>
@@ -206,13 +184,10 @@ export function DailyEntry() {
         style={{ top: "var(--app-mobile-header-h, 0px)" }}
         className="sticky z-20 -mx-4 -mt-6 md:-mx-8 md:-mt-10 px-4 md:px-8 py-2 bg-background/85 backdrop-blur-md border-b border-border/60"
       >
-        <div className="flex flex-col gap-2">
-          {statusPill ? <div className="self-end">{statusPill}</div> : null}
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="manual">Manual</TabsTrigger>
-            <TabsTrigger value="chat">Chat</TabsTrigger>
-          </TabsList>
-        </div>
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="manual">Manual</TabsTrigger>
+          <TabsTrigger value="chat">Chat</TabsTrigger>
+        </TabsList>
       </div>
 
       <PullToRefresh onRefresh={onRefresh}>

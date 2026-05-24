@@ -87,7 +87,6 @@ export function ChatKebab({
   onCancelWrapUp,
 }: KebabProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [confirmFinish, setConfirmFinish] = useState(false);
   const [confirmRestart, setConfirmRestart] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -162,7 +161,7 @@ export function ChatKebab({
               disabled={finishDisabled || finishPending}
               onClick={() => {
                 setMenuOpen(false);
-                setConfirmFinish(true);
+                onFinish();
               }}
             />
             <MenuItem
@@ -184,30 +183,6 @@ export function ChatKebab({
           </div>
         ) : null}
       </div>
-
-      <AlertDialog open={confirmFinish} onOpenChange={setConfirmFinish}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Update your check-in from this chat?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Journaling Guru will read this conversation and fill in today&apos;s mood,
-              drainers, chargers, gratitude, and reflection from what was
-              discussed here.
-              <br />
-              <br />
-              <strong>Manual edits you&apos;ve already made survive</strong> —
-              extraction only fills empty slots. You can keep chatting after
-              this; re-running &quot;Finish check-in&quot; always re-extracts.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onFinish}>
-              Finish check-in
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={confirmRestart} onOpenChange={setConfirmRestart}>
         <AlertDialogContent>
