@@ -58,10 +58,18 @@ func scanChatSession(row pgx.Row) (*domain.ChatSession, error) {
 
 // CreateOrResume returns the (user, local_date) session, creating one if
 // none exists. Idempotent — concurrent calls converge on the same row
-// thanks to UNIQUE (user_id, local_date). chatModel / extractionModel
-// are persisted on insert only; if the row already existed we return
-// it untouched (model swaps mid-day apply to new sessions only, not
-// retroactively).
+// thanks to the partial unique index chat_sessions_user_date_daily_uniq
+// (which migration 0021 introduced when scope='weekly' rows started
+// sharing the table). The ON CONFLICT clause must repeat the partial
+// index's WHERE so Postgres can infer it; without that we get
+// "no unique or exclusion constraint matching the ON CONFLICT spec"
+// at execution time — which is why this used to silently 500 in prod
+// while older locals (still on the pre-0021 non-partial unique) kept
+// working.
+//
+// chatModel / extractionModel are persisted on insert only; if the row
+// already existed we return it untouched (model swaps mid-day apply to
+// new sessions only, not retroactively).
 //
 // Returns (session, created bool, error). `created=true` means the
 // caller is the first to open today's session — useful for "stream the
@@ -75,7 +83,7 @@ func (s *ChatSessionStore) CreateOrResume(
 	const q = `
 		INSERT INTO chat_sessions (user_id, local_date, chat_model, extraction_model)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (user_id, local_date) DO UPDATE
+		ON CONFLICT (user_id, local_date) WHERE scope = 'daily' DO UPDATE
 		   SET updated_at = chat_sessions.updated_at  -- no-op to RETURN existing row
 		RETURNING ` + chatSessionColumns + `,
 		         (xmax = 0) AS inserted`
