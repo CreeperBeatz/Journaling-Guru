@@ -201,14 +201,13 @@ func (s *SummaryJobStore) MarkFailed(ctx context.Context, id, lastError string) 
 }
 
 // ResetForRegeneration handles the "Regenerate" button: insert a fresh
-// pending row, or revive a terminal one (completed/skipped/failed) by
-// resetting status, fire_at, and attempts. Rows already in flight
-// (pending/claimed) are left untouched — clicking Regenerate twice in
-// the same minute should not multiply runs.
-//
-// Returns whether the operation produced an effective regeneration
-// trigger (true) or a no-op because something was already running
-// (false).
+// pending row, or revive any existing one by resetting status, fire_at,
+// and attempts. The previous gate excluded rows already 'pending' or
+// 'claimed', but that left genuinely stuck rows (worker crashed mid-
+// flight, River job lost across a deploy) unrecoverable from the UI.
+// Now the reset is unconditional — double-clicks are absorbed by the
+// idempotent UPDATE, and the dispatcher's atomic claim guards against
+// double-processing.
 func (s *SummaryJobStore) ResetForRegeneration(
 	ctx context.Context,
 	userID, periodType string,
@@ -223,7 +222,6 @@ func (s *SummaryJobStore) ResetForRegeneration(
 		       attempts   = 0,
 		       last_error = NULL,
 		       updated_at = now()
-		 WHERE summary_jobs.status NOT IN ('pending','claimed')
 		RETURNING id`
 	var id string
 	err := s.DB.QueryRow(ctx, q, userID, periodType, periodStart, fireAt).Scan(&id)
@@ -234,6 +232,40 @@ func (s *SummaryJobStore) ResetForRegeneration(
 		return false, err
 	}
 	return true, nil
+}
+
+// ReclaimStale flips 'claimed' rows whose worker side appears stuck —
+// updated_at older than staleAfter — back to 'pending' so the
+// dispatcher will pick them up on the next tick. Used to recover from
+// worker crashes or lost River jobs after a deploy: the dispatcher
+// previously claimed the row (status→claimed, updated_at=now()) and
+// then handed off to River, which then failed to actually run the job,
+// leaving the summary_jobs row orphaned.
+//
+// Bounded by attempts < maxAttempts so a job that consistently stalls
+// past several reclaims is left alone — the existing River retry path
+// will eventually MarkFailed it via the worker.
+//
+// Returns the number of rows reclaimed.
+func (s *SummaryJobStore) ReclaimStale(
+	ctx context.Context, staleAfter time.Duration, maxAttempts int,
+) (int, error) {
+	secs := int(staleAfter.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	const q = `
+		UPDATE summary_jobs
+		   SET status='pending',
+		       updated_at=now()
+		 WHERE status='claimed'
+		   AND updated_at < now() - make_interval(secs => $1)
+		   AND attempts < $2`
+	tag, err := s.DB.Exec(ctx, q, secs, maxAttempts)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // LatestForPeriod returns the summary_jobs row for (user, period_type,

@@ -97,7 +97,14 @@ export function WeeklySynthesisCard({
       <PaperPageProse>
         <p>Dear {greetingName},</p>
 
-        {inFlight && !showBody ? <PendingPlaceholder /> : null}
+        {inFlight && !showBody ? (
+          <PendingPlaceholder
+            status={status}
+            updatedAt={jobStatus.data?.updated_at}
+            regenerating={regenerating}
+            onRestart={onRegenerate}
+          />
+        ) : null}
         {showEmpty && onRegenerate ? (
           <EmptyPlaceholder
             status={status}
@@ -145,15 +152,56 @@ function LetterParagraph({ children }: { children: ReactNode }) {
   return <p>{text}</p>;
 }
 
-function PendingPlaceholder() {
+function PendingPlaceholder({
+  status,
+  updatedAt,
+  regenerating,
+  onRestart,
+}: {
+  status: SummaryJobStatus | undefined;
+  updatedAt: string | undefined;
+  regenerating: boolean;
+  onRestart?: () => void;
+}) {
+  // "Stuck-feeling" threshold: a normal weekly synthesis finishes
+  // within a minute or two. If the row has been pending/claimed for
+  // longer than that, surface a clearer message so the user knows the
+  // restart link below isn't superstition.
+  const stuckMs = 90_000;
+  const ageMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : 0;
+  const looksStuck = ageMs > stuckMs;
+
+  let message: string;
+  if (looksStuck && status === "claimed") {
+    message =
+      "Synthesis started but seems stalled — the worker may have lost the job.";
+  } else if (looksStuck) {
+    message =
+      "Synthesis pending longer than usual — the worker may not have picked it up.";
+  } else {
+    message =
+      "Synthesis arriving — usually within a minute of the week closing. Pull to refresh.";
+  }
   return (
-    <p className="inline-flex items-center gap-2 text-sm not-italic text-muted-foreground">
-      <Sparkles className="h-4 w-4 text-accent/70" />
-      <span className="italic">
-        Synthesis arriving — usually within a minute of the week closing.
-        Pull to refresh.
-      </span>
-    </p>
+    <div className="space-y-2 not-italic">
+      <p className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+        <Sparkles className="h-4 w-4 text-accent/70" />
+        <span className="italic">{message}</span>
+      </p>
+      {onRestart ? (
+        <button
+          type="button"
+          onClick={onRestart}
+          disabled={regenerating}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+        >
+          <RefreshCw
+            className={cn("h-3 w-3", regenerating && "animate-spin")}
+          />
+          {regenerating ? "Restarting…" : "Restart synthesis"}
+        </button>
+      ) : null}
+    </div>
   );
 }
 

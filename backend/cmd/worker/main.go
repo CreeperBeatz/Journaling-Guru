@@ -245,6 +245,18 @@ func tick(
 ) {
 	const batch = 100
 
+	// Reclaim orphan 'claimed' rows before draining new ones. The
+	// dispatcher's ClaimDue only picks up status='pending', so any row
+	// that was claimed pre-deploy (or whose River job got lost) would
+	// stay stuck forever otherwise. 15-minute stale threshold is well
+	// over the longest weekly synthesis run; attempts<5 caps reclaim
+	// loops on genuinely failing jobs.
+	if reclaimed, err := jobsStore.ReclaimStale(ctx, 15*time.Minute, 5); err != nil {
+		logger.Warn("reclaim stale summary jobs", "err", err)
+	} else if reclaimed > 0 {
+		logger.Info("reclaimed stale summary jobs", "count", reclaimed)
+	}
+
 	claimed, err := jobsStore.ClaimDue(ctx, batch)
 	if err != nil {
 		logger.Warn("claim due summaries", "err", err)
