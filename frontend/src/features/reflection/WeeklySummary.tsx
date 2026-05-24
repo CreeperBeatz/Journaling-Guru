@@ -1,11 +1,19 @@
-import { useEffect, useState } from "react";
-import { CheckCircle2, RotateCcw, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  CheckCircle2,
+  MoreHorizontal,
+  RefreshCw,
+  RotateCcw,
+  Sparkles,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 import type { Zone1GoalStatus } from "@/features/summary/api";
+import { useRegenerateSummary } from "@/features/summaries/hooks";
 
 import { PatchReflectionBody, ReflectionResponse } from "./api";
 import { WeeklySynthesisCard } from "./cards/WeeklySynthesisCard";
@@ -47,8 +55,18 @@ export function WeeklySummary({
 
   const thisWeekPatch = usePatchReflection();
   const replay = useReplayReflection();
+  const regen = useRegenerateSummary();
   const patchFn = onPatch ?? ((body: PatchReflectionBody) => thisWeekPatch.mutate(body));
   const patching = onPatch ? !!patchPending : thisWeekPatch.isPending;
+
+  // Mirror WeeklySynthesisCard's body-presence check so the regenerate
+  // menu only surfaces when there's an existing letter to redo.
+  const hasAnyBody =
+    (data.charged?.trim() ?? "") !== "" ||
+    (data.drained?.trim() ?? "") !== "" ||
+    (data.grateful?.trim() ?? "") !== "" ||
+    (data.insights?.trim() ?? "") !== "" ||
+    (data.letter?.trim() ?? "") !== "";
 
   return (
     <div className="space-y-6">
@@ -70,7 +88,7 @@ export function WeeklySummary({
         </header>
       ) : null}
 
-      <WeeklySynthesisCard data={data} />
+      <WeeklySynthesisCard data={data} regenerating={regen.isPending} />
 
       <EditableSurpriseCard
         initialText={data.surprise_text}
@@ -128,19 +146,103 @@ export function WeeklySummary({
         </Card>
       ) : null}
 
-      {showReplay ? (
-        <div className="flex justify-center pt-2">
-          <Button
+      {showReplay || hasAnyBody ? (
+        <div className="flex items-center justify-center gap-1 pt-2">
+          {showReplay ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => replay.mutate()}
+              disabled={replay.isPending}
+              className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {replay.isPending ? "Replaying…" : "Replay weekly reflection"}
+            </Button>
+          ) : null}
+          {hasAnyBody ? (
+            <RegenerateMenu
+              pending={regen.isPending}
+              onRegenerate={() =>
+                regen.mutate({
+                  period_type: "week",
+                  period_start: data.week_start,
+                })
+              }
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// RegenerateMenu — three-dot kebab with a single "Regenerate weekly
+// message" item. Lives at the bottom of WeeklySummary so the destructive-
+// looking option doesn't crowd the letter itself.
+function RegenerateMenu({
+  pending,
+  onRegenerate,
+}: {
+  pending: boolean;
+  onRegenerate: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="More actions"
+        className="h-auto px-2 py-1.5 text-muted-foreground hover:text-foreground"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </Button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute bottom-full right-0 z-20 mb-1 min-w-[14rem] overflow-hidden rounded-md border border-border bg-popover py-1 text-sm shadow-md"
+        >
+          <button
             type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => replay.mutate()}
-            disabled={replay.isPending}
-            className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onRegenerate();
+            }}
+            disabled={pending}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
           >
-            <RotateCcw className="h-3.5 w-3.5" />
-            {replay.isPending ? "Replaying…" : "Replay weekly reflection"}
-          </Button>
+            <RefreshCw
+              className={cn("h-3.5 w-3.5", pending && "animate-spin")}
+            />
+            {pending ? "Regenerating…" : "Regenerate weekly message"}
+          </button>
         </div>
       ) : null}
     </div>
@@ -195,9 +297,9 @@ function EditableSurpriseCard({
             setDirty(true);
           }}
           onBlur={handleBlur}
-          placeholder="One line you want next week to remember…"
-          maxLength={500}
-          className="min-h-[3rem]"
+          placeholder="What you want next week to remember…"
+          maxLength={1500}
+          className="min-h-[14rem]"
           disabled={saving}
         />
       </CardContent>

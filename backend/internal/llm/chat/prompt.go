@@ -402,30 +402,44 @@ func BuildWeeklySystemPrompt(p BuildWeeklySystemPromptParams) (string, error) {
 }
 
 // weeklySurpriseExtractSystemPrompt drives the post-wrap-up extract call
-// that distills the chat transcript into one sentence the synthesis
-// worker can thread into next week's letter prompt. Empty output is a
-// valid result (meaning "no continuity hook this week").
-const weeklySurpriseExtractSystemPrompt = `You read a short weekly-reflection conversation between a user and a
-companion and return ONE JSON object — no prose, no fences — capturing
-the single thing from this conversation that next week's letter should
-remember.
+// that distills the chat transcript into a short paragraph the user re-
+// reads on the Summary tab (and that next week's synthesis worker
+// threads back in as continuity). Written in second person — the user
+// is the audience, not a downstream model summarizing them. Empty
+// output is a valid result (meaning "nothing worth carrying forward").
+const weeklySurpriseExtractSystemPrompt = `You read a short weekly-reflection conversation between a person and
+a companion. Return ONE JSON object — no prose, no fences — containing
+a short paragraph the person can re-read next week to remember what
+this conversation surfaced.
 
 Schema:
 
 {
-  "surprise": <string ≤ 200 chars>
+  "surprise": <string ≤ 1200 chars>
 }
 
-# Rules
+# Audience and voice
 
-- Use the user's voice and their own words where possible. Don't quote
-  the companion. Don't invent.
+- The person who had this conversation is the reader. Address them
+  directly as "you". Never write "the user" or refer to them in the
+  third person — they are in the room.
+- Mirror their own words and phrasings where they were specific. Don't
+  quote the companion. Don't invent details that weren't said.
+- Warm, plain, grounded. No therapist-speak, no platitudes, no pep
+  talk. If something was hard, name it as hard.
+
+# Shape
+
+- 3–6 sentences forming a single paragraph. Specific over abstract:
+  reference the actual things they named (a person, a project, a
+  feeling, a choice they're sitting with) rather than generic themes.
+- Lead with what was most alive in the conversation — the moment they
+  slowed down on, the thing they kept circling, or the resolution
+  they reached. Then thread one or two supporting specifics. Close
+  with what they said they want to carry into next week, if anything
+  like that came up.
 - Empty string is correct when the conversation didn't surface
-  anything worth remembering. Don't pad.
-- One sentence, ≤ 200 chars. No leading "I" or "The user" framing —
-  write it as a quiet third-person observation ("Felt drained by back-
-  to-back meetings; wants Friday breathing room") so the synthesis
-  prompt can drop it in cleanly.`
+  anything worth carrying forward. Don't pad to fill space.`
 
 // TranscriptLine is a row in the extraction prompt transcript view.
 // Role is rendered as-is; the extraction prompt keeps user/assistant

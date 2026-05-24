@@ -74,18 +74,19 @@ func mergedField(
 type ChatExtractionWorker struct {
 	river.WorkerDefaults[ChatExtractionArgs]
 
-	Sessions       *store.ChatSessionStore
-	Messages       *store.ChatMessageStore
-	Jobs           *store.ChatExtractionJobStore
-	Entries        *store.EntryStore
-	DailyInputs    *store.DailyInputStore
-	Tags           *store.TagStore
-	DailyEntryTags *store.DailyEntryTagStore
-	Questions      *store.QuestionStore
-	Goals          *store.GoalStore
-	GoalCheckIns   *store.GoalCheckInStore
-	Users          *store.UserStore
-	Scheduler      *Scheduler // re-seeds summaries after extraction lands
+	Sessions          *store.ChatSessionStore
+	Messages          *store.ChatMessageStore
+	Jobs              *store.ChatExtractionJobStore
+	Entries           *store.EntryStore
+	DailyInputs       *store.DailyInputStore
+	Tags              *store.TagStore
+	DailyEntryTags    *store.DailyEntryTagStore
+	Questions         *store.QuestionStore
+	Goals             *store.GoalStore
+	GoalCheckIns      *store.GoalCheckInStore
+	Users             *store.UserStore
+	WeeklyReflections *store.WeeklyReflectionStore // weekly-scope finalize path
+	Scheduler         *Scheduler                   // re-seeds summaries after extraction lands
 	// LLM is the classify-tier client (CLASSIFY_MODEL default). Per-call
 	// model override comes from the session pin only — no env-level
 	// override beyond what the client constructor pinned.
@@ -121,14 +122,32 @@ func (w *ChatExtractionWorker) Work(ctx context.Context, rj *river.Job[ChatExtra
 		}
 		return err
 	}
-	// Defensive scope guard: weekly chats use a different finalize path
-	// (no daily_inputs merge, no goal_check_ins). If a job somehow got
-	// queued for a weekly session — should be impossible since the
-	// idle sweeper skips weekly and the Finalize handler short-circuits
-	// before scheduling — mark skipped and exit.
+	// Weekly chats use a separate finalize path: distil one continuity
+	// paragraph from the transcript, stamp weekly_reflections, mark the
+	// reflection completed. No daily_inputs merge, no goal_check_ins.
+	// Triggered by the idle sweeper when the user walks away from a
+	// weekly chat without clicking Finish — the explicit-Finish handler
+	// runs the same logic synchronously, so the user-driven path stays
+	// snappy and this worker path covers the abandoned-chat case.
 	if session.Scope == domain.ChatScopeWeekly {
-		_ = w.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionCompleted, nil)
-		return w.Jobs.MarkSkipped(ctx, job.ID)
+		if err := w.processWeekly(ctx, job, session); err != nil {
+			isFinal := rj.Attempt >= rj.MaxAttempts
+			w.Logger.Warn("weekly chat finalize error",
+				"err", err,
+				"job_id", job.ID,
+				"session_id", session.ID,
+				"attempt", rj.Attempt,
+				"max", rj.MaxAttempts,
+			)
+			if isFinal {
+				_ = w.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionFailed, ptrString(err.Error()))
+				_ = w.Jobs.MarkFailed(ctx, job.ID, err.Error())
+				return nil
+			}
+			_ = w.Jobs.ReleaseForRetry(ctx, job.ID, err.Error())
+			return err
+		}
+		return nil
 	}
 	// Idempotency comes from the chat_extraction_jobs row's status
 	// (terminal statuses early-return at the top of Work). The session
@@ -245,6 +264,67 @@ func (w *ChatExtractionWorker) process(
 		return err
 	}
 
+	return w.Jobs.MarkCompleted(ctx, job.ID)
+}
+
+// processWeekly is the weekly-scope analogue of process: distil the
+// chat transcript into the continuity paragraph (surprise_text), stamp
+// the weekly_reflections row completed, and mark the session finalized.
+// Mirrors the synchronous block in handlers/chat.go's Finalize for
+// weekly scope — keep them in lockstep when changing one.
+func (w *ChatExtractionWorker) processWeekly(
+	ctx context.Context,
+	job *domain.ChatExtractionJob,
+	session *domain.ChatSession,
+) error {
+	if err := w.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionRunning, nil); err != nil {
+		w.Logger.Warn("set extraction running (weekly)", "err", err, "session_id", session.ID)
+	}
+
+	messages, err := w.Messages.ListBySession(ctx, session.ID)
+	if err != nil {
+		return fmt.Errorf("load messages: %w", err)
+	}
+	// Empty / opener-only transcript → nothing to distil. Still complete
+	// the reflection so the row stops appearing in the idle sweeper and
+	// the user sees Done state on next /weekly load.
+	if !hasUsableTranscript(messages) {
+		if w.WeeklyReflections != nil {
+			if _, merr := w.WeeklyReflections.MarkCompletedBySession(ctx, session.ID); merr != nil {
+				w.Logger.Warn("mark reflection completed (weekly, empty)", "err", merr, "session_id", session.ID)
+			}
+		}
+		_ = w.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionCompleted, nil)
+		_, _ = w.Sessions.AdvancePhase(ctx, session.ID, domain.ChatPhaseFinalized)
+		_ = w.Sessions.MarkFinalized(ctx, session.ID)
+		return w.Jobs.MarkSkipped(ctx, job.ID)
+	}
+
+	if _, err := w.Sessions.AdvancePhase(ctx, session.ID, domain.ChatPhaseFinalized); err != nil &&
+		!errors.Is(err, store.ErrChatSessionInvalidPhase) {
+		w.Logger.Warn("advance weekly phase finalized", "err", err, "session_id", session.ID)
+	}
+
+	// Per-session pin wins over the LLM client default. Empty → CLASSIFY_MODEL.
+	surpriseText, err := chat.ExtractWeeklySurprise(ctx, w.LLM, chat.ExtractWeeklySurpriseParams{
+		Model:    session.ExtractionModel,
+		Messages: messages,
+	})
+	if err != nil {
+		return fmt.Errorf("weekly surprise extract: %w", err)
+	}
+	if w.WeeklyReflections != nil && session.PeriodStart != nil {
+		if ws, perr := time.Parse("2006-01-02", *session.PeriodStart); perr == nil {
+			if _, serr := w.WeeklyReflections.SetSurpriseText(ctx, session.UserID, ws, surpriseText); serr != nil {
+				w.Logger.Warn("set surprise text", "err", serr, "session_id", session.ID)
+			}
+		}
+		if _, merr := w.WeeklyReflections.MarkCompletedBySession(ctx, session.ID); merr != nil {
+			w.Logger.Warn("mark reflection completed (weekly)", "err", merr, "session_id", session.ID)
+		}
+	}
+	_ = w.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionCompleted, nil)
+	_ = w.Sessions.MarkFinalized(ctx, session.ID)
 	return w.Jobs.MarkCompleted(ctx, job.ID)
 }
 

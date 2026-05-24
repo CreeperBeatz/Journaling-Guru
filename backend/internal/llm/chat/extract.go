@@ -248,9 +248,9 @@ func truncate(s string, max int) string {
 	return s[:max] + "…"
 }
 
-// weeklySurpriseMaxChars caps the distilled continuity string. Matches
-// the JSON schema in weeklySurpriseExtractSystemPrompt.
-const weeklySurpriseMaxChars = 200
+// weeklySurpriseMaxChars caps the distilled continuity paragraph.
+// Matches the JSON schema in weeklySurpriseExtractSystemPrompt.
+const weeklySurpriseMaxChars = 1200
 
 // ExtractWeeklySurpriseParams bundles the inputs for the post-wrap-up
 // continuity extract. Model defaults to the OpenRouter client's default
@@ -286,7 +286,7 @@ func ExtractWeeklySurprise(
 		Model:     params.Model,
 		System:    weeklySurpriseExtractSystemPrompt,
 		User:      sb.String(),
-		MaxTokens: 200,
+		MaxTokens: 700,
 		JSONMode:  true,
 	})
 	if err != nil {

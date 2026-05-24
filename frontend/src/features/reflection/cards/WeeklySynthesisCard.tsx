@@ -1,16 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { PaperPage, PaperPageProse } from "@/components/ui/paper-page";
 import { cn } from "@/lib/utils";
 
 import { useMe } from "@/features/auth/useAuth";
-import {
-  useRegenerateSummary,
-  useSummaryJobStatus,
-} from "@/features/summaries/hooks";
+import { useSummaryJobStatus } from "@/features/summaries/hooks";
 
 import { ReflectionResponse, ReflectionTheme } from "../api";
 import { REFLECTION_THIS_WEEK_KEY } from "../hooks";
@@ -30,7 +26,15 @@ import { REFLECTION_THIS_WEEK_KEY } from "../hooks";
 // Renders nothing for legacy weeks that never got synthesis fields
 // populated and aren't being backfilled — better silence than empty
 // scaffolding.
-export function WeeklySynthesisCard({ data }: { data: ReflectionResponse }) {
+export function WeeklySynthesisCard({
+  data,
+  regenerating = false,
+}: {
+  data: ReflectionResponse;
+  /** True while the parent's regenerate mutation is in flight — used to
+   * hide the stale body before the job row flips to pending. */
+  regenerating?: boolean;
+}) {
   const me = useMe();
   const displayName = me.data?.display_name?.trim() ?? "";
   const greetingName = displayName !== "" ? displayName : "traveler";
@@ -47,7 +51,6 @@ export function WeeklySynthesisCard({ data }: { data: ReflectionResponse }) {
   const hasAnyBody = hasStructured || legacyLetter !== "";
 
   const qc = useQueryClient();
-  const regen = useRegenerateSummary();
   const jobStatus = useSummaryJobStatus("week", data.week_start);
   const jobInFlight =
     jobStatus.data?.status === "pending" || jobStatus.data?.status === "claimed";
@@ -71,33 +74,11 @@ export function WeeklySynthesisCard({ data }: { data: ReflectionResponse }) {
     return null;
   }
 
-  const pending = data.synthesis_pending || jobInFlight || regen.isPending;
-  const showBody = hasAnyBody && !regen.isPending;
+  const pending = data.synthesis_pending || jobInFlight || regenerating;
+  const showBody = hasAnyBody && !regenerating;
 
   return (
     <PaperPage>
-      {hasAnyBody ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={pending}
-          onClick={() =>
-            regen.mutate({
-              period_type: "week",
-              period_start: data.week_start,
-            })
-          }
-          aria-label={pending ? "Regenerating letter" : "Regenerate letter"}
-          className="absolute right-3 top-3 z-10 h-auto gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground sm:right-5 sm:top-5"
-        >
-          <RefreshCw
-            className={cn("h-3.5 w-3.5", pending && "animate-spin")}
-          />
-          {pending ? "Regenerating…" : "Regenerate"}
-        </Button>
-      ) : null}
-
       <PaperPageProse>
         <p>Dear {greetingName},</p>
 
@@ -127,7 +108,7 @@ export function WeeklySynthesisCard({ data }: { data: ReflectionResponse }) {
         ) : null}
       </PaperPageProse>
 
-      {themes.length > 0 && !regen.isPending ? (
+      {themes.length > 0 && !regenerating ? (
         <div className="border-t border-border/40 pt-6">
           <ThemeChips themes={themes} />
         </div>

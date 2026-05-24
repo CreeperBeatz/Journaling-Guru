@@ -132,20 +132,21 @@ func main() {
 	}
 
 	chatExtractWorker := &jobs.ChatExtractionWorker{
-		Sessions:       chatSessions,
-		Messages:       chatMessages,
-		Jobs:           chatExtractionJobs,
-		Entries:        entries,
-		DailyInputs:    dailyInputs,
-		Tags:           tagStore,
-		DailyEntryTags: dailyEntryTags,
-		Questions:      questions,
-		Goals:          goalStore,
-		GoalCheckIns:   goalCheckIns,
-		Users:          users,
-		Scheduler:      scheduler,
-		LLM:            classifyLLM,
-		Logger:         logger,
+		Sessions:          chatSessions,
+		Messages:          chatMessages,
+		Jobs:              chatExtractionJobs,
+		Entries:           entries,
+		DailyInputs:       dailyInputs,
+		Tags:              tagStore,
+		DailyEntryTags:    dailyEntryTags,
+		Questions:         questions,
+		Goals:             goalStore,
+		GoalCheckIns:      goalCheckIns,
+		Users:             users,
+		WeeklyReflections: weeklyReflections,
+		Scheduler:         scheduler,
+		LLM:               classifyLLM,
+		Logger:            logger,
 	}
 
 	chatIdleSweeper := &jobs.ChatIdleSweeper{
