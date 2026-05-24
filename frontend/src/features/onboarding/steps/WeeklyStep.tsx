@@ -118,7 +118,7 @@ export function WeeklyStep({ draft, setDraft, onSubmit, onBack }: Props) {
             <span />
           )}
           <Button onClick={handleContinue} disabled={pending}>
-            {pending ? "Saving…" : "Continue"}
+            {pending ? "Saving…" : "Finish"}
           </Button>
         </div>
       </CardContent>

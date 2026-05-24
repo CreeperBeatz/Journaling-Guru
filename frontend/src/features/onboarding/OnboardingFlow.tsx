@@ -15,13 +15,14 @@ import { easeStandard, easeExit } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 import { WelcomeStep } from "./steps/WelcomeStep";
+import { NameStep } from "./steps/NameStep";
 import { InputModesStep } from "./steps/InputModesStep";
 import { ReminderStep } from "./steps/ReminderStep";
 import { DayStartStep } from "./steps/DayStartStep";
 import { WeeklyStep } from "./steps/WeeklyStep";
-import { GoalsStep } from "./steps/GoalsStep";
 
 export interface OnboardingDraft {
+  displayName: string;
   reminderTime: string; // "HH:MM"
   reminderEnabled: boolean;
   // dayStart is the late-night cutoff (HH:MM). 06:00 default — anything
@@ -33,10 +34,10 @@ export interface OnboardingDraft {
 const STEP_KEYS = [
   "welcome",
   "modes",
+  "name",
   "reminder",
   "dayStart",
   "weekly",
-  "goals",
 ] as const;
 type StepKey = (typeof STEP_KEYS)[number];
 
@@ -57,6 +58,7 @@ export function OnboardingFlow({ user, replay }: Props) {
   // defaults-anymore-but-real-prefs, so we still want them as starting
   // points — the user can re-confirm or change.
   const [draft, setDraft] = useState<OnboardingDraft>(() => ({
+    displayName: user.display_name ?? "",
     reminderTime: user.reminder_time?.slice(0, 5) || "20:00",
     reminderEnabled: user.reminder_enabled,
     dayStart: minutesToHHMM(user.day_start_minutes ?? 360),
@@ -72,23 +74,14 @@ export function OnboardingFlow({ user, replay }: Props) {
   const goNext = () => setStepIdx((i) => Math.min(i + 1, STEP_KEYS.length - 1));
   const goBack = () => setStepIdx((i) => Math.max(i - 1, 0));
 
-  // finish marks onboarded server-side and lands the user on /today.
-  // Replay uses the same path — MarkOnboarded is idempotent server-side
-  // (WHERE onboarded_at IS NULL), so re-finishing doesn't backdate.
-  const finish = async () => {
-    try {
-      await patchMe.mutateAsync({ mark_onboarded: true });
-    } catch {
-      // toast already surfaced; still land them — onboarded_at being
-      // unset just means the flow plays again next time, not a hard fail.
-    }
-    navigate("/", { replace: true });
-  };
-
   const skip = async () => {
     // Persist whatever they may have already touched, then mark onboarded.
     // Skip from step 1 won't have a draft diff so this is a no-op patch.
     const patch: UpdateMePatch = { mark_onboarded: true };
+    const trimmedName = draft.displayName.trim();
+    if (trimmedName !== (user.display_name ?? "")) {
+      patch.display_name = trimmedName;
+    }
     if (draft.reminderTime !== user.reminder_time?.slice(0, 5)) {
       patch.reminder_time = draft.reminderTime;
     }
@@ -152,7 +145,13 @@ export function OnboardingFlow({ user, replay }: Props) {
               stepKey={stepKey}
               draft={draft}
               setDraft={setDraft}
-              isFinishing={patchMe.isPending && stepIdx === STEP_KEYS.length - 1}
+              onSubmitName={async (displayName) => {
+                setDraft((d) => ({ ...d, displayName }));
+                if (displayName !== (user.display_name ?? "")) {
+                  await patchMe.mutateAsync({ display_name: displayName });
+                }
+                goNext();
+              }}
               onSubmitReminder={async (next) => {
                 setDraft((d) => ({
                   ...d,
@@ -175,12 +174,18 @@ export function OnboardingFlow({ user, replay }: Props) {
               }}
               onSubmitWeekly={async (weekday) => {
                 setDraft((d) => ({ ...d, reflectionWeekday: weekday }));
-                await patchMe.mutateAsync({ reflection_weekday: weekday });
-                goNext();
+                try {
+                  await patchMe.mutateAsync({
+                    reflection_weekday: weekday,
+                    mark_onboarded: true,
+                  });
+                } catch {
+                  /* toast surfaced; still land them on /today */
+                }
+                navigate("/", { replace: true });
               }}
               onContinue={goNext}
               onBack={stepIdx > 0 ? goBack : undefined}
-              onFinish={finish}
             />
           </motion.div>
         </AnimatePresence>
@@ -247,7 +252,7 @@ interface StepBodyProps {
   stepKey: StepKey;
   draft: OnboardingDraft;
   setDraft: React.Dispatch<React.SetStateAction<OnboardingDraft>>;
-  isFinishing: boolean;
+  onSubmitName: (displayName: string) => Promise<void>;
   onSubmitReminder: (next: {
     reminderTime: string;
     reminderEnabled: boolean;
@@ -256,24 +261,31 @@ interface StepBodyProps {
   onSubmitWeekly: (weekday: number) => Promise<void>;
   onContinue: () => void;
   onBack?: () => void;
-  onFinish: () => void;
 }
 
 function StepBody({
   stepKey,
   draft,
   setDraft,
-  isFinishing,
+  onSubmitName,
   onSubmitReminder,
   onSubmitDayStart,
   onSubmitWeekly,
   onContinue,
   onBack,
-  onFinish,
 }: StepBodyProps) {
   switch (stepKey) {
     case "welcome":
       return <WelcomeStep onContinue={onContinue} />;
+    case "name":
+      return (
+        <NameStep
+          draft={draft}
+          setDraft={setDraft}
+          onSubmit={onSubmitName}
+          onBack={onBack}
+        />
+      );
     case "modes":
       return <InputModesStep onContinue={onContinue} onBack={onBack} />;
     case "reminder":
@@ -300,14 +312,6 @@ function StepBody({
           draft={draft}
           setDraft={setDraft}
           onSubmit={onSubmitWeekly}
-          onBack={onBack}
-        />
-      );
-    case "goals":
-      return (
-        <GoalsStep
-          isFinishing={isFinishing}
-          onFinish={onFinish}
           onBack={onBack}
         />
       );
