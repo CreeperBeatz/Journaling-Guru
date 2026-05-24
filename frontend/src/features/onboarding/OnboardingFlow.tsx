@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { WelcomeStep } from "./steps/WelcomeStep";
 import { InputModesStep } from "./steps/InputModesStep";
 import { ReminderStep } from "./steps/ReminderStep";
+import { DayStartStep } from "./steps/DayStartStep";
 import { WeeklyStep } from "./steps/WeeklyStep";
 import { GoalsStep } from "./steps/GoalsStep";
 
@@ -33,6 +34,7 @@ const STEP_KEYS = [
   "welcome",
   "modes",
   "reminder",
+  "dayStart",
   "weekly",
   "goals",
 ] as const;
@@ -156,15 +158,19 @@ export function OnboardingFlow({ user, replay }: Props) {
                   ...d,
                   reminderTime: next.reminderTime,
                   reminderEnabled: next.reminderEnabled,
-                  dayStart: next.dayStart,
                 }));
-                const patch: UpdateMePatch = {
+                await patchMe.mutateAsync({
                   reminder_time: next.reminderTime,
                   reminder_enabled: next.reminderEnabled,
-                };
-                const dsm = hhmmToMinutes(next.dayStart);
-                if (dsm !== null) patch.day_start_minutes = dsm;
-                await patchMe.mutateAsync(patch);
+                });
+                goNext();
+              }}
+              onSubmitDayStart={async (dayStart) => {
+                setDraft((d) => ({ ...d, dayStart }));
+                const dsm = hhmmToMinutes(dayStart);
+                if (dsm !== null) {
+                  await patchMe.mutateAsync({ day_start_minutes: dsm });
+                }
                 goNext();
               }}
               onSubmitWeekly={async (weekday) => {
@@ -245,8 +251,8 @@ interface StepBodyProps {
   onSubmitReminder: (next: {
     reminderTime: string;
     reminderEnabled: boolean;
-    dayStart: string;
   }) => Promise<void>;
+  onSubmitDayStart: (dayStart: string) => Promise<void>;
   onSubmitWeekly: (weekday: number) => Promise<void>;
   onContinue: () => void;
   onBack?: () => void;
@@ -259,6 +265,7 @@ function StepBody({
   setDraft,
   isFinishing,
   onSubmitReminder,
+  onSubmitDayStart,
   onSubmitWeekly,
   onContinue,
   onBack,
@@ -275,6 +282,15 @@ function StepBody({
           draft={draft}
           setDraft={setDraft}
           onSubmit={onSubmitReminder}
+          onBack={onBack}
+        />
+      );
+    case "dayStart":
+      return (
+        <DayStartStep
+          draft={draft}
+          setDraft={setDraft}
+          onSubmit={onSubmitDayStart}
           onBack={onBack}
         />
       );

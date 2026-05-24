@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import {
   useBrowserSubscription,
@@ -27,7 +26,6 @@ interface Props {
   onSubmit: (next: {
     reminderTime: string;
     reminderEnabled: boolean;
-    dayStart: string;
   }) => Promise<void>;
   onBack?: () => void;
 }
@@ -53,7 +51,6 @@ export function ReminderStep({ draft, setDraft, onSubmit, onBack }: Props) {
       await onSubmit({
         reminderTime: draft.reminderTime,
         reminderEnabled: draft.reminderEnabled,
-        dayStart: draft.dayStart,
       });
       // Push subscribe is best-effort: if the user tapped "Enable push"
       // we fire it, but a denied permission won't block the flow.
@@ -86,7 +83,8 @@ export function ReminderStep({ draft, setDraft, onSubmit, onBack }: Props) {
         </CardTitle>
         <CardDescription>
           People usually fill in their journal at the end of the day, once
-          everything has happened. Pick the time that fits yours.
+          everything has happened. Pick the time that fits yours — we'll
+          nudge you then.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -167,28 +165,6 @@ export function ReminderStep({ draft, setDraft, onSubmit, onBack }: Props) {
             We'll ask your browser for permission when you continue.
           </p>
         ) : null}
-
-        <Separator />
-
-        <div className="space-y-2 text-sm leading-relaxed">
-          <p className="text-foreground">
-            Anything before{" "}
-            <Input
-              id="onb-day-start"
-              type="time"
-              value={draft.dayStart}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, dayStart: e.target.value }))
-              }
-              className="inline-block h-8 w-auto align-middle"
-              aria-label="Day reset time"
-            />{" "}
-            o'clock counts as the previous day.
-          </p>
-          <p className="text-muted-foreground">
-            So you can fill in your journal in bed without worry, even if you go to sleep after midnight.
-          </p>
-        </div>
 
         <div className="flex items-center justify-between gap-3">
           {onBack ? (
