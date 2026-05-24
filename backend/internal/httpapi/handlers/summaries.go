@@ -791,16 +791,12 @@ func (h *SummaryHandler) buildReflection(
 	if summary == nil || !summary.Metadata.HasLetterSynthesis() {
 		// Synthesis missing — pre-feature row, never ran, or in-flight.
 		// Decide whether to surface "arriving soon" + nudge a backfill.
+		// SynthesisPending now reflects actual queue state: only true
+		// when an in-flight job exists. Otherwise the FE shows an
+		// actionable empty state instead of a misleading "arriving"
+		// banner that never resolves.
 		if triggerBackfill {
-			// summary != nil here means there's a row at this period_start
-			// but it lacks any letter content; re-arm it instead of
-			// scheduling a duplicate.
-			exactMatchExists := false
-			if exact, _ := h.Summaries.GetByPeriod(ctx, userID, string(domain.PeriodWeek), weekStart); exact != nil {
-				exactMatchExists = true
-			}
-			h.enqueueSynthesisBackfill(ctx, userID, weekStart, exactMatchExists)
-			resp.SynthesisPending = true
+			resp.SynthesisPending = h.enqueueSynthesisBackfill(ctx, userID, weekStart)
 		} else if summary == nil {
 			// Current-week with no summary row yet — the lazy-seed
 			// will have queued a job for the week-end; mark pending
@@ -811,47 +807,52 @@ func (h *SummaryHandler) buildReflection(
 	return resp, nil
 }
 
-// enqueueSynthesisBackfill nudges the worker to (re)run the weekly
-// synthesis for `weekStart` immediately. Idempotent across calls:
+// enqueueSynthesisBackfill ensures a pending summary_jobs row exists for
+// (userID, weekStart) and returns whether an in-flight (pending/claimed)
+// job will actually run for it. The previous shape pre-checked whether
+// the summary row existed and used that as a proxy for "ReArm vs Schedule",
+// but ReArm silently affected zero rows when no job existed at the exact
+// period_start the FE was using (today-6, which doesn't match the
+// canonical reflection_weekday-anchored period_start for non-reflection
+// days) — leaving the FE stuck showing "Synthesis arriving" while no
+// job was actually queued.
 //
-//   - If the summary row exists but lacks synthesis: re-arm the
-//     terminal job (no-op if it's still pending/claimed).
-//   - If no job row exists: schedule a fresh one with fire_at=now.
-//   - If a job row exists in pending/claimed: leave it alone — the
-//     dispatcher will pick it up on the next tick anyway.
+// Lifecycle, in order:
+//   - ReArm a terminal row if one exists at this period_start → in flight.
+//   - Look up the row directly. Pending/claimed → already in flight.
+//   - No row at all → Schedule a fresh one with fire_at=now.
 //
-// Errors are logged but not surfaced — backfill is best-effort.
+// On any DB error past ReArm we return false so the caller does not
+// promise the FE a job that may not be running.
 func (h *SummaryHandler) enqueueSynthesisBackfill(
-	ctx context.Context, userID string, weekStart time.Time, summaryExists bool,
-) {
+	ctx context.Context, userID string, weekStart time.Time,
+) bool {
 	now := time.Now().UTC()
-	if summaryExists {
-		if err := h.Jobs.ReArm(ctx, userID, string(domain.PeriodWeek), weekStart, now); err != nil {
-			h.Logger.Warn("synthesis backfill re-arm failed",
-				"err", err, "user_id", userID, "week_start", weekStart)
-		}
-		return
+	rearmed, err := h.Jobs.ReArm(ctx, userID, string(domain.PeriodWeek), weekStart, now)
+	if err != nil {
+		h.Logger.Warn("synthesis backfill re-arm failed",
+			"err", err, "user_id", userID, "week_start", weekStart)
+	}
+	if rearmed {
+		return true
 	}
 	existing, err := h.Jobs.LatestForPeriod(ctx, userID, string(domain.PeriodWeek), weekStart)
 	if err != nil && !errors.Is(err, store.ErrSummaryJobNotFound) {
 		h.Logger.Warn("synthesis backfill lookup failed",
 			"err", err, "user_id", userID, "week_start", weekStart)
-		return
+		return false
 	}
-	if existing == nil {
-		if _, err := h.Jobs.Schedule(ctx, userID, string(domain.PeriodWeek), weekStart, now); err != nil {
-			h.Logger.Warn("synthesis backfill schedule failed",
-				"err", err, "user_id", userID, "week_start", weekStart)
-		}
-		return
+	if existing != nil {
+		// ReArm above already handled terminal states; whatever
+		// survives is pending or claimed — already in flight.
+		return existing.Status == "pending" || existing.Status == "claimed"
 	}
-	switch existing.Status {
-	case "completed", "skipped", "failed":
-		if err := h.Jobs.ReArm(ctx, userID, string(domain.PeriodWeek), weekStart, now); err != nil {
-			h.Logger.Warn("synthesis backfill re-arm failed",
-				"err", err, "user_id", userID, "week_start", weekStart)
-		}
+	if _, err := h.Jobs.Schedule(ctx, userID, string(domain.PeriodWeek), weekStart, now); err != nil {
+		h.Logger.Warn("synthesis backfill schedule failed",
+			"err", err, "user_id", userID, "week_start", weekStart)
+		return false
 	}
+	return true
 }
 
 // ----- Wizard mutating endpoints -----

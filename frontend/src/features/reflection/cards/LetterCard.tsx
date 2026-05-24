@@ -1,5 +1,7 @@
 import { Button } from "@/components/ui/button";
 
+import { useRegenerateSummary } from "@/features/summaries/hooks";
+
 import { ReflectionResponse } from "../api";
 import { WeeklySynthesisCard } from "./WeeklySynthesisCard";
 
@@ -15,6 +17,7 @@ interface Props {
 // to /weekly/chat where the model responds to the letter together with
 // the user.
 export function LetterCard({ data, onContinue, saving }: Props) {
+  const regen = useRegenerateSummary();
   const letterReady =
     data.letter.trim() !== "" ||
     data.charged.trim() !== "" ||
@@ -24,7 +27,16 @@ export function LetterCard({ data, onContinue, saving }: Props) {
 
   return (
     <div className="space-y-6">
-      <WeeklySynthesisCard data={data} />
+      <WeeklySynthesisCard
+        data={data}
+        regenerating={regen.isPending}
+        onRegenerate={() =>
+          regen.mutate({
+            period_type: "week",
+            period_start: data.week_start,
+          })
+        }
+      />
 
       <div className="flex justify-end">
         <Button onClick={onContinue} disabled={saving || !letterReady}>

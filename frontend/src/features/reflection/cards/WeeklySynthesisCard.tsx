@@ -1,11 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Sparkles } from "lucide-react";
+import { RefreshCw, Sparkles } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { PaperPage, PaperPageProse } from "@/components/ui/paper-page";
 import { cn } from "@/lib/utils";
 
 import { useMe } from "@/features/auth/useAuth";
+import { SummaryJobStatus } from "@/features/summaries/api";
 import { useSummaryJobStatus } from "@/features/summaries/hooks";
 
 import { ReflectionResponse, ReflectionTheme } from "../api";
@@ -29,11 +31,16 @@ import { REFLECTION_THIS_WEEK_KEY } from "../hooks";
 export function WeeklySynthesisCard({
   data,
   regenerating = false,
+  onRegenerate,
 }: {
   data: ReflectionResponse;
   /** True while the parent's regenerate mutation is in flight — used to
    * hide the stale body before the job row flips to pending. */
   regenerating?: boolean;
+  /** When provided, the empty/terminal state surfaces a "Generate now"
+   * action that triggers a fresh job. Omitted by History (past weeks
+   * are locked) and LetterCard (wizard just waits). */
+  onRegenerate?: () => void;
 }) {
   const me = useMe();
   const displayName = me.data?.display_name?.trim() ?? "";
@@ -52,8 +59,8 @@ export function WeeklySynthesisCard({
 
   const qc = useQueryClient();
   const jobStatus = useSummaryJobStatus("week", data.week_start);
-  const jobInFlight =
-    jobStatus.data?.status === "pending" || jobStatus.data?.status === "claimed";
+  const status = jobStatus.data?.status;
+  const jobInFlight = status === "pending" || status === "claimed";
 
   // When the job finishes, pull the fresh reflection so the new letter
   // and theme chips render without the user having to refresh. We watch
@@ -70,19 +77,34 @@ export function WeeklySynthesisCard({
     }
   }, [jobInFlight, wasInFlight, qc]);
 
-  if (!hasAnyBody && !data.synthesis_pending && !jobInFlight) {
+  const showBody = hasAnyBody && !regenerating;
+  const inFlight = data.synthesis_pending || jobInFlight || regenerating;
+  // Empty/terminal state: synthesis is missing AND nothing is on the
+  // way. Surfacing this state lets us tell the user *why* (skipped /
+  // failed / never queued) instead of lying with "arriving soon".
+  const showEmpty = !showBody && !inFlight;
+
+  // Render nothing only when there is genuinely nothing to say AND
+  // nowhere for the user to act — i.e. history view on a legacy week
+  // with no synthesis. With onRegenerate present, the empty state
+  // includes a recovery affordance, so the card stays.
+  if (!showBody && !inFlight && !onRegenerate) {
     return null;
   }
-
-  const pending = data.synthesis_pending || jobInFlight || regenerating;
-  const showBody = hasAnyBody && !regenerating;
 
   return (
     <PaperPage>
       <PaperPageProse>
         <p>Dear {greetingName},</p>
 
-        {pending && !showBody ? <PendingPlaceholder /> : null}
+        {inFlight && !showBody ? <PendingPlaceholder /> : null}
+        {showEmpty && onRegenerate ? (
+          <EmptyPlaceholder
+            status={status}
+            regenerating={regenerating}
+            onRegenerate={onRegenerate}
+          />
+        ) : null}
 
         {showBody && hasStructured ? (
           <>
@@ -132,6 +154,57 @@ function PendingPlaceholder() {
         Pull to refresh.
       </span>
     </p>
+  );
+}
+
+// EmptyPlaceholder — shown when synthesis is missing AND no in-flight
+// job exists to produce one. The copy is keyed off the last job's
+// terminal status so users see *why* (skipped vs failed vs never queued)
+// instead of a stale "arriving soon" banner.
+function EmptyPlaceholder({
+  status,
+  regenerating,
+  onRegenerate,
+}: {
+  status: SummaryJobStatus | undefined;
+  regenerating: boolean;
+  onRegenerate: () => void;
+}) {
+  let copy: string;
+  let cta: string;
+  if (status === "failed") {
+    copy = "We couldn't compose this week's synthesis on the last attempt.";
+    cta = "Try again";
+  } else if (status === "skipped") {
+    copy = "Not enough content this week for a synthesis.";
+    cta = "Compose anyway";
+  } else if (status === "completed") {
+    copy = "The last run finished without writing a synthesis.";
+    cta = "Try again";
+  } else {
+    copy = "No synthesis has been composed for this week yet.";
+    cta = "Compose now";
+  }
+  return (
+    <div className="space-y-3 not-italic">
+      <p className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+        <Sparkles className="h-4 w-4 text-accent/70" />
+        <span>{copy}</span>
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={onRegenerate}
+        disabled={regenerating}
+        className="gap-1.5"
+      >
+        <RefreshCw
+          className={cn("h-3.5 w-3.5", regenerating && "animate-spin")}
+        />
+        {regenerating ? "Composing…" : cta}
+      </Button>
+    </div>
   );
 }
 

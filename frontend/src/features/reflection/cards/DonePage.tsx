@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+import { useRegenerateSummary } from "@/features/summaries/hooks";
 import type { Zone1GoalStatus } from "@/features/summary/api";
 
 import { ReflectionResponse } from "../api";
@@ -26,6 +27,7 @@ export function DonePage({
 }) {
   const completedWhen = completedAt ? new Date(completedAt) : null;
   const replay = useReplayReflection();
+  const regen = useRegenerateSummary();
   const navigate = useNavigate();
 
   return (
@@ -64,7 +66,19 @@ export function DonePage({
         </Card>
       ) : null}
 
-      <WeeklySynthesisCard data={data} />
+      <WeeklySynthesisCard
+        data={data}
+        regenerating={regen.isPending}
+        onRegenerate={
+          allowReplay
+            ? () =>
+                regen.mutate({
+                  period_type: "week",
+                  period_start: data.week_start,
+                })
+            : undefined
+        }
+      />
 
       {data.surprise_text.trim().length > 0 ? (
         <Card>

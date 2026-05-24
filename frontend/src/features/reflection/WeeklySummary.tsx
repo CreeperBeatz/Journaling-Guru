@@ -92,7 +92,19 @@ export function WeeklySummary({
         </header>
       ) : null}
 
-      <WeeklySynthesisCard data={data} regenerating={regen.isPending} />
+      <WeeklySynthesisCard
+        data={data}
+        regenerating={regen.isPending}
+        onRegenerate={
+          showRegenerate
+            ? () =>
+                regen.mutate({
+                  period_type: "week",
+                  period_start: data.week_start,
+                })
+            : undefined
+        }
+      />
 
       {existingGoals.length > 0 ? (
         <Card>

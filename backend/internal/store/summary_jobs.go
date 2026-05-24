@@ -45,15 +45,15 @@ func scanSummaryJob(row pgx.Row) (*domain.SummaryJob, error) {
 // historical week is opened without synthesis fields populated — we
 // want the worker to regenerate the row's summary on the next tick.
 //
-// No-ops (returns nil) when the row doesn't exist or isn't in a
-// terminal state, so callers don't need to introspect first. The
-// existing SummaryStore.Upsert() handles the eventual upsert; we don't
-// reset attempts here since a re-arm is an intentional retry.
+// Returns whether a row was actually re-armed. false means no matching
+// (user, period_type, period_start) row exists or its status isn't
+// terminal — callers use this to decide whether to fall through to
+// Schedule a fresh row instead of silently no-op'ing.
 func (s *SummaryJobStore) ReArm(
 	ctx context.Context,
 	userID, periodType string,
 	periodStart, fireAt time.Time,
-) error {
+) (bool, error) {
 	const q = `
 		UPDATE summary_jobs
 		   SET status='pending',
@@ -63,9 +63,17 @@ func (s *SummaryJobStore) ReArm(
 		 WHERE user_id=$1
 		   AND period_type=$2
 		   AND period_start=$3
-		   AND status IN ('completed','skipped','failed')`
-	_, err := s.DB.Exec(ctx, q, userID, periodType, periodStart, fireAt)
-	return err
+		   AND status IN ('completed','skipped','failed')
+		RETURNING id`
+	var id string
+	err := s.DB.QueryRow(ctx, q, userID, periodType, periodStart, fireAt).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Schedule inserts a summary_jobs row. ON CONFLICT DO NOTHING — repeated
