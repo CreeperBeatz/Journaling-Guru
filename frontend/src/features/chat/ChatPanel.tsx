@@ -301,10 +301,10 @@ export function ChatPanel({
   const hasUserTurns = userTurnCount > 0;
 
   // Coverage classifier is disabled — the model itself decides what's
-  // missing on the wrap-up turn. So the button is shown whenever the
-  // user has spoken at all, and the wrappedUp state just toggles its
-  // disabled "Wrapping up" presentation.
-  const showWrapUp = hasUserTurns;
+  // missing on the wrap-up turn. The button is always rendered so the
+  // affordance is discoverable from the first turn; it stays disabled
+  // until the user has actually said something. wrappedUp toggles the
+  // non-interactive "Wrapping up" pill state.
   const wrappedUp = phase === "wrapping_up";
 
   return (
@@ -421,14 +421,12 @@ export function ChatPanel({
                     </div>
                   }
                   bottomRight={
-                    showWrapUp ? (
-                      <WrapUpButton
-                        pending={wrapUpClicked}
-                        disabled={composerDisabled}
-                        wrappedUp={wrappedUp}
-                        onWrapUp={handleWrapUp}
-                      />
-                    ) : null
+                    <WrapUpButton
+                      pending={wrapUpClicked}
+                      disabled={composerDisabled || !hasUserTurns}
+                      wrappedUp={wrappedUp}
+                      onWrapUp={handleWrapUp}
+                    />
                   }
                 />
                 {stream.state.lastError ? (

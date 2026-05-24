@@ -51,21 +51,23 @@ export function ChatFirstTimeHint() {
             />
             <div className="space-y-1.5">
               <p className="font-medium text-foreground">A quick heads-up</p>
-              <ul className="space-y-1 leading-relaxed text-foreground/80">
+              <ul className="space-y-1.5 leading-relaxed text-foreground/80">
                 <li>
-                  No need to fill the manual mode separately — chat captures
-                  it.
-                </li>
-                <li>
-                  Say{" "}
+                  No need to fill the manual mode separately. Say{" "}
                   <span className="font-medium text-foreground">
                     "let's wrap up"
                   </span>{" "}
                   or tap{" "}
-                  <span className="font-medium text-foreground">Wrap up</span>{" "}
-                  when you're done.
+                  <span className="font-medium text-foreground">
+                    "Wrap up"
+                  </span>{" "}
+                  when you want to finish your reflection for the day.
                 </li>
-                <li>I'll also suggest a good moment to close.</li>
+                <li>
+                  I'll adapt to your day. We can sweep
+                  through the questions, or reflect on for hours - 
+                  just say how you want to proceed.
+                </li>
               </ul>
             </div>
           </div>

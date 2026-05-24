@@ -27,9 +27,6 @@ export function SummaryPage() {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-          Summary
-        </p>
         <h1 className="font-serif text-h1">Patterns</h1>
       </header>
 

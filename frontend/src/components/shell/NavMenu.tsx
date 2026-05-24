@@ -19,7 +19,7 @@ const baseNavItems = [
   { to: "/", end: true, label: "Today", icon: MessageSquare },
   { to: "/history", end: false, label: "History", icon: CalendarDays },
   { to: "/goals", end: false, label: "Goals", icon: Target },
-  { to: "/summary", end: false, label: "Summary", icon: Sparkles },
+  { to: "/patterns", end: false, label: "Patterns", icon: Sparkles },
   { to: "/settings", end: false, label: "Settings", icon: SettingsIcon },
 ];
 

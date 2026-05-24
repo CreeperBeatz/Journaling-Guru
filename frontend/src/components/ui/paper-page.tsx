@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
 export interface PaperPageProps {
   /** Small uppercase label above the date (e.g. "Today", "A letter from your guru"). */
   eyebrow?: string;
-  /** Display title on the sheet — typically the human-readable date. */
-  title: ReactNode;
+  /** Display title on the sheet — typically the human-readable date. Omit to render a headerless sheet. */
+  title?: ReactNode;
   /** Optional sub-line below the title (clock, timezone, etc.). */
   meta?: ReactNode;
   /** Slot rendered next to the title — status pill, action buttons, etc. */
@@ -35,30 +35,43 @@ export function PaperPage({
   children,
   className,
 }: PaperPageProps) {
+  const hasHeader =
+    eyebrow !== undefined ||
+    title !== undefined ||
+    meta !== undefined ||
+    headerSlot !== undefined;
+  const hasTitleBlock =
+    eyebrow !== undefined || title !== undefined || meta !== undefined;
   return (
     <article
       className={cn(
-        "mx-auto w-full max-w-3xl rounded-2xl bg-paper-sheet shadow-md ring-1 ring-border/50",
+        "relative mx-auto w-full max-w-3xl rounded-2xl bg-paper-sheet shadow-md ring-1 ring-border/50",
         "px-6 py-8 sm:px-12 sm:py-12",
         className,
       )}
     >
-      <header className="mb-8 flex flex-col items-start gap-3 border-l-4 border-accent pl-4">
-        {headerSlot ? <div className="self-end">{headerSlot}</div> : null}
-        <div className="min-w-0 space-y-1">
-          {eyebrow ? (
-            <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-              {eyebrow}
-            </p>
+      {hasHeader ? (
+        <header className="mb-8 flex flex-col items-start gap-3 border-l-4 border-accent pl-4">
+          {headerSlot ? <div className="self-end">{headerSlot}</div> : null}
+          {hasTitleBlock ? (
+            <div className="min-w-0 space-y-1">
+              {eyebrow ? (
+                <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                  {eyebrow}
+                </p>
+              ) : null}
+              {title ? (
+                <h1 className="font-serif text-h1 leading-tight">{title}</h1>
+              ) : null}
+              {meta ? (
+                <p className="font-mono text-xs tabular-nums text-muted-foreground">
+                  {meta}
+                </p>
+              ) : null}
+            </div>
           ) : null}
-          <h1 className="font-serif text-h1 leading-tight">{title}</h1>
-          {meta ? (
-            <p className="font-mono text-xs tabular-nums text-muted-foreground">
-              {meta}
-            </p>
-          ) : null}
-        </div>
-      </header>
+        </header>
+      ) : null}
 
       <div className="space-y-8">{children}</div>
     </article>
