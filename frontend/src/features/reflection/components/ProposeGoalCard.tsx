@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/sonner";
 import { useCreateGoal } from "@/features/goals/hooks";
+
+import { weeklyChatKey } from "../hooks";
+import type { ProposalDecision } from "../proposalDecisions";
 
 // Local <Label> shim — the project doesn't ship a shadcn label
 // primitive, so use the native element with a stable class.
@@ -45,6 +49,10 @@ export interface ProposeGoalArgs {
 interface Props {
   sessionId: string;
   args: ProposeGoalArgs;
+  /** Persisted decision derived from the transcript by
+   *  resolveProposalDecisions. Drives the card's initial state so it
+   *  survives a page refresh. Undefined ≡ open. */
+  decision?: ProposalDecision;
 }
 
 const MOTIVATION_MAX = 600;
@@ -65,17 +73,29 @@ const MOTIVATION_MAX = 600;
 //
 // Decision is one-shot per card render. A future turn proposing a
 // different goal will mount a fresh card.
-export function ProposeGoalCard({ sessionId, args }: Props) {
-  const [title, setTitle] = useState(args.title ?? "");
+export function ProposeGoalCard({ sessionId, args, decision }: Props) {
+  // Prefer the persisted decision title — it's what the user actually
+  // saved (post-edit), versus args.title which is the model's proposal.
+  const persistedTitle =
+    decision && decision.state !== "open" ? decision.goalTitle : undefined;
+  const initialTitle = persistedTitle ?? args.title ?? "";
+  const [title, setTitle] = useState(initialTitle);
   const [checkIn, setCheckIn] = useState(args.check_in_question ?? "");
   const [weeks, setWeeks] = useState(args.duration_weeks ?? 1);
   const [whyMatters, setWhyMatters] = useState(args.why_matters ?? "");
   const [ifFollowed, setIfFollowed] = useState(args.if_followed ?? "");
   const [ifNotFollowed, setIfNotFollowed] = useState(args.if_not_followed ?? "");
-  const [state, setState] = useState<"open" | "saving" | "saved" | "declined">("open");
+  const initialState: "open" | "saved" | "declined" =
+    decision?.state === "accepted"
+      ? "saved"
+      : decision?.state === "declined"
+        ? "declined"
+        : "open";
+  const [state, setState] = useState<"open" | "saving" | "saved" | "declined">(initialState);
 
   const createGoal = useCreateGoal();
   const patch = usePatchReflection();
+  const qc = useQueryClient();
 
   const pending = state === "saving" || createGoal.isPending;
 
@@ -108,6 +128,11 @@ export function ProposeGoalCard({ sessionId, args }: Props) {
       } catch {
         /* best-effort */
       }
+      // Refetch the chat session so the new system_event lands in the
+      // messages array — resolveProposalDecisions will then derive the
+      // saved state from the transcript on subsequent renders /
+      // navigations.
+      qc.invalidateQueries({ queryKey: weeklyChatKey });
       setState("saved");
     } catch (err) {
       setState("open");
@@ -128,6 +153,7 @@ export function ProposeGoalCard({ sessionId, args }: Props) {
     } catch {
       /* best-effort */
     }
+    qc.invalidateQueries({ queryKey: weeklyChatKey });
   };
 
   if (state === "saved") {

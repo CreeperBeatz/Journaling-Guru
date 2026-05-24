@@ -1,10 +1,14 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/sonner";
 import { useCompleteGoal } from "@/features/goals/hooks";
+
+import { weeklyChatKey } from "../hooks";
+import type { ProposalDecision } from "../proposalDecisions";
 
 function Label({
   htmlFor,
@@ -37,18 +41,35 @@ interface Props {
   sessionId: string;
   args: ProposeCompleteGoalArgs;
   goalTitle?: string;
+  /** Persisted decision derived from the transcript. Drives the
+   *  initial state so the card survives a page refresh. */
+  decision?: ProposalDecision;
 }
 
 // ProposeCompleteGoalCard: inline confirmation for marking an ending
 // goal complete. The model proposes an outcome + reason from the user's
 // own words; the user can edit before saving.
-export function ProposeCompleteGoalCard({ sessionId, args, goalTitle }: Props) {
+export function ProposeCompleteGoalCard({ sessionId, args, goalTitle, decision }: Props) {
+  // Prefer the persisted outcome over the model's proposal — the user
+  // may have flipped it before saving.
+  const persistedOutcome =
+    decision?.state === "accepted" &&
+    (decision.outcome === "kept" || decision.outcome === "dropped" || decision.outcome === "inconclusive")
+      ? decision.outcome
+      : null;
   const [outcome, setOutcome] = useState<"kept" | "dropped" | "inconclusive">(
-    args.outcome ?? "kept",
+    persistedOutcome ?? args.outcome ?? "kept",
   );
   const [reason, setReason] = useState(args.reason ?? "");
-  const [state, setState] = useState<"open" | "saving" | "saved" | "declined">("open");
+  const initialState: "open" | "saved" | "declined" =
+    decision?.state === "accepted"
+      ? "saved"
+      : decision?.state === "declined"
+        ? "declined"
+        : "open";
+  const [state, setState] = useState<"open" | "saving" | "saved" | "declined">(initialState);
   const complete = useCompleteGoal();
+  const qc = useQueryClient();
 
   const pending = state === "saving" || complete.isPending;
   const goalID = args.goal_id ?? "";
@@ -74,6 +95,7 @@ export function ProposeCompleteGoalCard({ sessionId, args, goalTitle }: Props) {
       } catch {
         /* best-effort */
       }
+      qc.invalidateQueries({ queryKey: weeklyChatKey });
       setState("saved");
     } catch (err) {
       setState("open");
@@ -93,6 +115,7 @@ export function ProposeCompleteGoalCard({ sessionId, args, goalTitle }: Props) {
     } catch {
       /* best-effort */
     }
+    qc.invalidateQueries({ queryKey: weeklyChatKey });
   };
 
   if (state === "saved") {

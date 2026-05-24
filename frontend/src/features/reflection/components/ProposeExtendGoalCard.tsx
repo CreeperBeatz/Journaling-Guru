@@ -1,10 +1,14 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/sonner";
 import { useExtendGoal } from "@/features/goals/hooks";
+
+import { weeklyChatKey } from "../hooks";
+import type { ProposalDecision } from "../proposalDecisions";
 
 function Label({
   htmlFor,
@@ -38,15 +42,30 @@ interface Props {
   // Looked-up active goal so we can render its title; nullable in case
   // the goal list was stale.
   goalTitle?: string;
+  /** Persisted decision derived from the transcript. Drives the
+   *  initial state so the card survives a page refresh. */
+  decision?: ProposalDecision;
 }
 
 // ProposeExtendGoalCard: inline confirmation for extending an ending
 // goal. Accept hits the existing extendGoal endpoint (PATCH /api/goals/
 // :id with action=extend, extend_weeks=N).
-export function ProposeExtendGoalCard({ sessionId, args, goalTitle }: Props) {
-  const [weeks, setWeeks] = useState(args.weeks ?? 1);
-  const [state, setState] = useState<"open" | "saving" | "saved" | "declined">("open");
+export function ProposeExtendGoalCard({ sessionId, args, goalTitle, decision }: Props) {
+  const persistedWeeks =
+    decision?.state === "accepted" && decision.weeks ? Number(decision.weeks) : NaN;
+  const initialWeeks = Number.isFinite(persistedWeeks) && persistedWeeks > 0
+    ? persistedWeeks
+    : args.weeks ?? 1;
+  const [weeks, setWeeks] = useState(initialWeeks);
+  const initialState: "open" | "saved" | "declined" =
+    decision?.state === "accepted"
+      ? "saved"
+      : decision?.state === "declined"
+        ? "declined"
+        : "open";
+  const [state, setState] = useState<"open" | "saving" | "saved" | "declined">(initialState);
   const extend = useExtendGoal();
+  const qc = useQueryClient();
 
   const pending = state === "saving" || extend.isPending;
   const goalID = args.goal_id ?? "";
@@ -69,6 +88,7 @@ export function ProposeExtendGoalCard({ sessionId, args, goalTitle }: Props) {
       } catch {
         /* best-effort */
       }
+      qc.invalidateQueries({ queryKey: weeklyChatKey });
       setState("saved");
     } catch (err) {
       setState("open");
@@ -88,6 +108,7 @@ export function ProposeExtendGoalCard({ sessionId, args, goalTitle }: Props) {
     } catch {
       /* best-effort */
     }
+    qc.invalidateQueries({ queryKey: weeklyChatKey });
   };
 
   if (state === "saved") {

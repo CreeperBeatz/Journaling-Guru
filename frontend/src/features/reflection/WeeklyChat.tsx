@@ -35,6 +35,7 @@ import {
   useWeeklyChatSession,
   weeklyChatKey,
 } from "./hooks";
+import { resolveProposalDecisions } from "./proposalDecisions";
 
 const AT_BOTTOM_PX = 80;
 
@@ -188,17 +189,24 @@ export function WeeklyChat({ onFinished }: Props = {}) {
     return m;
   }, [reflectionQuery.data?.active_goals]);
 
+  // Decisions are derived from the transcript so propose_* cards
+  // survive a page refresh in their saved/declined state. Pure
+  // function over the visible message list.
+  const decisions = useMemo(() => resolveProposalDecisions(messages), [messages]);
+
   const renderToolCard = useCallback(
     (msg: ChatMessage) => {
       if (!session) return null;
       if (msg.role !== "assistant" || !msg.tool_name || !msg.tool_args) return null;
       const args = msg.tool_args as Record<string, unknown>;
+      const decision = decisions.get(msg.id);
       switch (msg.tool_name) {
         case "propose_goal":
           return (
             <ProposeGoalCard
               sessionId={session.id}
               args={args as ProposeGoalArgs}
+              decision={decision}
             />
           );
         case "propose_extend_goal": {
@@ -208,6 +216,7 @@ export function WeeklyChat({ onFinished }: Props = {}) {
               sessionId={session.id}
               args={extendArgs}
               goalTitle={extendArgs.goal_id ? goalTitleByID.get(extendArgs.goal_id) : undefined}
+              decision={decision}
             />
           );
         }
@@ -218,6 +227,7 @@ export function WeeklyChat({ onFinished }: Props = {}) {
               sessionId={session.id}
               args={completeArgs}
               goalTitle={completeArgs.goal_id ? goalTitleByID.get(completeArgs.goal_id) : undefined}
+              decision={decision}
             />
           );
         }
@@ -225,7 +235,7 @@ export function WeeklyChat({ onFinished }: Props = {}) {
           return null;
       }
     },
-    [session, goalTitleByID],
+    [session, goalTitleByID, decisions],
   );
 
   if (sessionQuery.isPending) {
