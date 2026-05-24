@@ -35,6 +35,10 @@ type SummaryHandler struct {
 	Goals              *store.GoalStore
 	CheckIns           *store.GoalCheckInStore
 	WeeklyReflections  *store.WeeklyReflectionStore
+	// ChatSessions is optional: when set, ReplayReflection rewinds the
+	// linked weekly chat session's phase from finalized → exploring so
+	// the user can keep talking after a replay. Nil-tolerant.
+	ChatSessions       *store.ChatSessionStore
 	Logger             *slog.Logger
 }
 
@@ -149,7 +153,7 @@ func (h *SummaryHandler) Regenerate(w http.ResponseWriter, r *http.Request) {
 	// PeriodFromLocalStart: stored period_starts are already canonical;
 	// PeriodContaining would re-apply the day_start shift.
 	period, err := timezone.PeriodFromLocalStart(
-		periodStart, user.Timezone, user.DayStartMinutes,
+		periodStart, user.Timezone, user.DayStartMinutes, user.ReflectionWeekday,
 		domain.SummaryPeriod(req.PeriodType),
 	)
 	if err != nil {
@@ -206,7 +210,7 @@ func (h *SummaryHandler) JobStatus(w http.ResponseWriter, r *http.Request) {
 	// callers can pass a stored period_start without worrying about
 	// day_start drift.
 	period, err := timezone.PeriodFromLocalStart(
-		periodStart, user.Timezone, user.DayStartMinutes,
+		periodStart, user.Timezone, user.DayStartMinutes, user.ReflectionWeekday,
 		domain.SummaryPeriod(periodType),
 	)
 	if err != nil {
@@ -522,6 +526,24 @@ type ReflectionResponse struct {
 	GratitudeItems  []ReflectionGratitude   `json:"gratitude_items"`
 	ActiveGoals     []Zone1GoalStatus       `json:"active_goals"`
 
+	// Weekly synthesis — populated from the `summaries` row for this
+	// week if one exists with the new metadata fields. When the row is
+	// missing (or pre-dates the synthesis feature) SynthesisPending is
+	// true and the handler may have just enqueued a backfill job.
+	//
+	// Charged/Drained/Grateful/Insights are the four paragraphs of the
+	// structured letter (Sonnet-tier prompt). Letter is the legacy
+	// single-blob fallback for rows synthesised before the structured
+	// shape landed — the FE renders one or the other.
+	Letter           string                `json:"letter"`
+	Charged          string                `json:"charged"`
+	Drained          string                `json:"drained"`
+	Grateful         string                `json:"grateful"`
+	Insights         string                `json:"insights"`
+	Themes           []domain.SummaryTheme `json:"themes"`
+	ClosingQuestion  string                `json:"closing_question"`
+	SynthesisPending bool                  `json:"synthesis_pending"`
+
 	// Wizard state — only populated for the current week. Past weeks
 	// (history view) leave Started=false / Step=0 / CompletedAt=nil.
 	Started      bool              `json:"started"`
@@ -567,7 +589,7 @@ func (h *SummaryHandler) WeeklyReflection(w http.ResponseWriter, r *http.Request
 		return
 	}
 	weekStart := today.AddDate(0, 0, -6)
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, today, true)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, today, true, true)
 	if err != nil {
 		h.Logger.Error("build reflection (this week)", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
@@ -592,7 +614,7 @@ func (h *SummaryHandler) ReflectionByWeek(w http.ResponseWriter, r *http.Request
 		return
 	}
 	weekEnd := weekStart.AddDate(0, 0, 6)
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, true)
 	if err != nil {
 		h.Logger.Error("build reflection (by week)", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
@@ -605,9 +627,17 @@ func (h *SummaryHandler) ReflectionByWeek(w http.ResponseWriter, r *http.Request
 // (inclusive). When `includeWizardState` is true, also loads the
 // weekly_reflections row for that week_start so the FE knows whether
 // the wizard has been started / completed and at which step.
+//
+// When `triggerBackfill` is true, missing or pre-feature synthesis on
+// the `summaries` row triggers an on-demand re-run of the weekly job
+// (used by the historical /by-week endpoint). The "this week" callers
+// pass false so the natural lifecycle handles things — re-arming an
+// in-flight current-week job would force the LLM to synthesize mid-
+// week.
 func (h *SummaryHandler) buildReflection(
 	ctx context.Context, userID string,
-	weekStart, weekEnd time.Time, includeWizardState bool,
+	weekStart, weekEnd time.Time,
+	includeWizardState, triggerBackfill bool,
 ) (*ReflectionResponse, error) {
 	priorEnd := weekStart.AddDate(0, 0, -1)
 	priorStart := priorEnd.AddDate(0, 0, -6)
@@ -723,7 +753,94 @@ func (h *SummaryHandler) buildReflection(
 			resp.CompletedAt = wr.CompletedAt
 		}
 	}
+
+	resp.Themes = []domain.SummaryTheme{}
+	summary, _ := h.Summaries.GetByPeriod(ctx, userID, string(domain.PeriodWeek), weekStart)
+	if summary == nil || !summary.Metadata.HasLetterSynthesis() {
+		// Exact-match miss or pre-synthesis row. Fall back to the most
+		// recent weekly summary at-or-before weekEnd so off-day opens
+		// and legacy-ISO-anchored rows still surface something.
+		if latest, _ := h.Summaries.LatestByPeriodTypeUpTo(
+			ctx, userID, string(domain.PeriodWeek), weekEnd,
+		); latest != nil && latest.Metadata.HasLetterSynthesis() {
+			summary = latest
+		}
+	}
+	if summary != nil {
+		resp.Letter = summary.Metadata.Letter
+		resp.Charged = summary.Metadata.Charged
+		resp.Drained = summary.Metadata.Drained
+		resp.Grateful = summary.Metadata.Grateful
+		resp.Insights = summary.Metadata.Insights
+		if len(summary.Metadata.Themes) > 0 {
+			resp.Themes = summary.Metadata.Themes
+		}
+		resp.ClosingQuestion = summary.Metadata.ClosingQuestion
+	}
+	if summary == nil || !summary.Metadata.HasLetterSynthesis() {
+		// Synthesis missing — pre-feature row, never ran, or in-flight.
+		// Decide whether to surface "arriving soon" + nudge a backfill.
+		if triggerBackfill {
+			// summary != nil here means there's a row at this period_start
+			// but it lacks any letter content; re-arm it instead of
+			// scheduling a duplicate.
+			exactMatchExists := false
+			if exact, _ := h.Summaries.GetByPeriod(ctx, userID, string(domain.PeriodWeek), weekStart); exact != nil {
+				exactMatchExists = true
+			}
+			h.enqueueSynthesisBackfill(ctx, userID, weekStart, exactMatchExists)
+			resp.SynthesisPending = true
+		} else if summary == nil {
+			// Current-week with no summary row yet — the lazy-seed
+			// will have queued a job for the week-end; mark pending
+			// so the FE shows the arrival affordance.
+			resp.SynthesisPending = true
+		}
+	}
 	return resp, nil
+}
+
+// enqueueSynthesisBackfill nudges the worker to (re)run the weekly
+// synthesis for `weekStart` immediately. Idempotent across calls:
+//
+//   - If the summary row exists but lacks synthesis: re-arm the
+//     terminal job (no-op if it's still pending/claimed).
+//   - If no job row exists: schedule a fresh one with fire_at=now.
+//   - If a job row exists in pending/claimed: leave it alone — the
+//     dispatcher will pick it up on the next tick anyway.
+//
+// Errors are logged but not surfaced — backfill is best-effort.
+func (h *SummaryHandler) enqueueSynthesisBackfill(
+	ctx context.Context, userID string, weekStart time.Time, summaryExists bool,
+) {
+	now := time.Now().UTC()
+	if summaryExists {
+		if err := h.Jobs.ReArm(ctx, userID, string(domain.PeriodWeek), weekStart, now); err != nil {
+			h.Logger.Warn("synthesis backfill re-arm failed",
+				"err", err, "user_id", userID, "week_start", weekStart)
+		}
+		return
+	}
+	existing, err := h.Jobs.LatestForPeriod(ctx, userID, string(domain.PeriodWeek), weekStart)
+	if err != nil && !errors.Is(err, store.ErrSummaryJobNotFound) {
+		h.Logger.Warn("synthesis backfill lookup failed",
+			"err", err, "user_id", userID, "week_start", weekStart)
+		return
+	}
+	if existing == nil {
+		if _, err := h.Jobs.Schedule(ctx, userID, string(domain.PeriodWeek), weekStart, now); err != nil {
+			h.Logger.Warn("synthesis backfill schedule failed",
+				"err", err, "user_id", userID, "week_start", weekStart)
+		}
+		return
+	}
+	switch existing.Status {
+	case "completed", "skipped", "failed":
+		if err := h.Jobs.ReArm(ctx, userID, string(domain.PeriodWeek), weekStart, now); err != nil {
+			h.Logger.Warn("synthesis backfill re-arm failed",
+				"err", err, "user_id", userID, "week_start", weekStart)
+		}
+	}
 }
 
 // ----- Wizard mutating endpoints -----
@@ -746,7 +863,7 @@ func (h *SummaryHandler) StartReflection(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusInternalServerError, "start failed")
 		return
 	}
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, true)
 	if err != nil {
 		h.Logger.Error("build reflection after start", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
@@ -779,6 +896,41 @@ func (h *SummaryHandler) PatchReflection(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
+	weekStart, weekEnd, ok := h.resolveCurrentWeek(w, r, sess.UserID)
+	if !ok {
+		return
+	}
+	h.applyReflectionPatch(w, r, sess.UserID, weekStart, weekEnd)
+}
+
+// PatchReflectionByWeek handles PATCH /api/reflection/by-week/{week_start}.
+// Same partial-update shape as PatchReflection but targets a past
+// week's row, so users can edit surprise_text / goal_notes from the
+// History view. step / new_goal_id are still accepted but rarely used
+// in this context.
+func (h *SummaryHandler) PatchReflectionByWeek(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	weekStartStr := strings.TrimSpace(chi.URLParam(r, "week_start"))
+	weekStart, err := time.Parse("2006-01-02", weekStartStr)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid week_start")
+		return
+	}
+	weekEnd := weekStart.AddDate(0, 0, 6)
+	h.applyReflectionPatch(w, r, sess.UserID, weekStart, weekEnd)
+}
+
+// applyReflectionPatch is the shared body of PatchReflection and
+// PatchReflectionByWeek: validate the request, lazy-create the row if
+// needed, apply each provided field, and return the rebuilt
+// ReflectionResponse.
+func (h *SummaryHandler) applyReflectionPatch(
+	w http.ResponseWriter, r *http.Request, userID string, weekStart, weekEnd time.Time,
+) {
 	var req patchReflectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid json")
@@ -788,8 +940,8 @@ func (h *SummaryHandler) PatchReflection(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusBadRequest, "surprise_text too long")
 		return
 	}
-	if req.Step != nil && (*req.Step < 1 || *req.Step > 3) {
-		writeJSONError(w, http.StatusBadRequest, "step must be 1..3")
+	if req.Step != nil && (*req.Step < 1 || *req.Step > 2) {
+		writeJSONError(w, http.StatusBadRequest, "step must be 1..2")
 		return
 	}
 	if req.GoalNote != nil && len(*req.GoalNote) > maxGoalNoteLen {
@@ -800,19 +952,17 @@ func (h *SummaryHandler) PatchReflection(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusBadRequest, "goal_id and goal_note must be provided together")
 		return
 	}
-	weekStart, weekEnd, ok := h.resolveCurrentWeek(w, r, sess.UserID)
-	if !ok {
-		return
-	}
-	// Lazy-create the row in case the FE patches before /start fires.
-	if _, err := h.WeeklyReflections.Start(r.Context(), sess.UserID, weekStart, weekEnd); err != nil {
+	// Lazy-create the row so historical edits work even when no row
+	// exists yet for that week (e.g. user navigates to a History entry
+	// from a week that was never started).
+	if _, err := h.WeeklyReflections.Start(r.Context(), userID, weekStart, weekEnd); err != nil {
 		h.Logger.Error("ensure reflection row", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "patch failed")
 		return
 	}
 	if req.SurpriseText != nil || req.Step != nil {
 		if _, err := h.WeeklyReflections.Patch(
-			r.Context(), sess.UserID, weekStart,
+			r.Context(), userID, weekStart,
 			store.WeeklyReflectionPatch{
 				SurpriseText: req.SurpriseText,
 				Step:         req.Step,
@@ -825,7 +975,7 @@ func (h *SummaryHandler) PatchReflection(w http.ResponseWriter, r *http.Request)
 	}
 	if req.GoalID != nil {
 		if _, err := h.WeeklyReflections.SetGoalNote(
-			r.Context(), sess.UserID, weekStart,
+			r.Context(), userID, weekStart,
 			strings.TrimSpace(*req.GoalID),
 			strings.TrimSpace(*req.GoalNote),
 		); err != nil {
@@ -838,7 +988,7 @@ func (h *SummaryHandler) PatchReflection(w http.ResponseWriter, r *http.Request)
 		gid := strings.TrimSpace(*req.NewGoalID)
 		if gid != "" {
 			if _, err := h.WeeklyReflections.AddNewGoalID(
-				r.Context(), sess.UserID, weekStart, gid,
+				r.Context(), userID, weekStart, gid,
 			); err != nil {
 				h.Logger.Error("add new goal id", "err", err)
 				writeJSONError(w, http.StatusInternalServerError, "patch failed")
@@ -846,9 +996,54 @@ func (h *SummaryHandler) PatchReflection(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true)
+	resp, err := h.buildReflection(r.Context(), userID, weekStart, weekEnd, true, false)
 	if err != nil {
 		h.Logger.Error("build reflection after patch", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ReplayReflection handles POST /api/reflection/this-week/replay.
+// Clears completed_at and rewinds the wizard to step 1 so the user
+// can walk through the cards again. Preserves surprise_text and
+// goal_notes — the replay is for re-reading, not wiping. Returns the
+// full ReflectionResponse so the FE can swap the cache and re-render
+// the wizard from the Letter card.
+func (h *SummaryHandler) ReplayReflection(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	weekStart, weekEnd, ok := h.resolveCurrentWeek(w, r, sess.UserID)
+	if !ok {
+		return
+	}
+	// Replay = full reset of this week's reflection: drop the row so the
+	// frontend re-enters its IdleScreen ("Start reflection"). Goal_notes
+	// and new_goal_ids tied to this row are lost — the user is starting
+	// over by choice. The chat session is preserved so they can pick up
+	// the prior conversation when they re-enter the Reflection tab.
+	if _, err := h.WeeklyReflections.Delete(r.Context(), sess.UserID, weekStart); err != nil {
+		h.Logger.Error("delete reflection (replay)", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "replay failed")
+		return
+	}
+	// Best-effort: rewind any weekly chat session for this week back to
+	// exploring so the user can keep typing if they re-enter Reflection.
+	if h.ChatSessions != nil {
+		if cs, _ := h.ChatSessions.GetByWeek(r.Context(), sess.UserID, weekStart); cs != nil {
+			if _, err := h.ChatSessions.AdvancePhase(r.Context(), cs.ID, domain.ChatPhaseExploring); err != nil &&
+				!errors.Is(err, store.ErrChatSessionInvalidPhase) {
+				h.Logger.Warn("replay: advance chat phase", "err", err, "session_id", cs.ID)
+			}
+		}
+	}
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, false)
+	if err != nil {
+		h.Logger.Error("build reflection after replay", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
 		return
 	}
@@ -879,7 +1074,7 @@ func (h *SummaryHandler) CompleteReflection(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusInternalServerError, "complete failed")
 		return
 	}
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, false)
 	if err != nil {
 		h.Logger.Error("build reflection after complete", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")

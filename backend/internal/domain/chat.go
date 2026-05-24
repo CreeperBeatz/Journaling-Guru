@@ -20,6 +20,14 @@ const (
 	ChatModeVoice = "voice"
 )
 
+// Chat session scope. Daily is the original journal-companion chat; weekly
+// is the reflection chat that lives behind the weekly wizard's step 2.
+// Persona, tool set, and finalize behaviour all branch on this.
+const (
+	ChatScopeDaily  = "daily"
+	ChatScopeWeekly = "weekly"
+)
+
 // Chat message role ENUM mirrors OpenAI chat-completions, plus
 // system_event for server-injected breadcrumbs that the prompt builder
 // can surface contextually but the UI styles distinctly.
@@ -50,6 +58,12 @@ type ChatSession struct {
 	ID                  string     `json:"id"`
 	UserID              string     `json:"-"`
 	LocalDate           string     `json:"local_date"`
+	// Scope is "daily" (one session per user per local_date) or "weekly"
+	// (one session per user per week_start). For weekly rows LocalDate is
+	// set equal to PeriodStart so the existing as-of lookups keep working.
+	Scope               string     `json:"scope"`
+	// PeriodStart is the week_start date for scope="weekly", NULL for daily.
+	PeriodStart         *string    `json:"period_start,omitempty"`
 	Mode                string     `json:"mode"`
 	Phase               string     `json:"phase"`
 	ChatModel           string     `json:"chat_model"`

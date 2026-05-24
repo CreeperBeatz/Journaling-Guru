@@ -121,6 +121,15 @@ func (w *ChatExtractionWorker) Work(ctx context.Context, rj *river.Job[ChatExtra
 		}
 		return err
 	}
+	// Defensive scope guard: weekly chats use a different finalize path
+	// (no daily_inputs merge, no goal_check_ins). If a job somehow got
+	// queued for a weekly session — should be impossible since the
+	// idle sweeper skips weekly and the Finalize handler short-circuits
+	// before scheduling — mark skipped and exit.
+	if session.Scope == domain.ChatScopeWeekly {
+		_ = w.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionCompleted, nil)
+		return w.Jobs.MarkSkipped(ctx, job.ID)
+	}
 	// Idempotency comes from the chat_extraction_jobs row's status
 	// (terminal statuses early-return at the top of Work). The session
 	// phase is informational only in the open-chat model; running

@@ -32,6 +32,8 @@ var ErrChatSessionInvalidPhase = errors.New("invalid chat session phase transiti
 
 const chatSessionColumns = `id, user_id,
     to_char(local_date, 'YYYY-MM-DD') AS local_date,
+    scope,
+    to_char(period_start, 'YYYY-MM-DD') AS period_start,
     mode, phase, chat_model, extraction_model, openai_session_id,
     started_at, last_activity_at, ended_at, finalized_at,
     extraction_status, extraction_error, covered_question_ids,
@@ -41,7 +43,8 @@ const chatSessionColumns = `id, user_id,
 func scanChatSession(row pgx.Row) (*domain.ChatSession, error) {
 	var s domain.ChatSession
 	if err := row.Scan(
-		&s.ID, &s.UserID, &s.LocalDate, &s.Mode, &s.Phase,
+		&s.ID, &s.UserID, &s.LocalDate, &s.Scope, &s.PeriodStart,
+		&s.Mode, &s.Phase,
 		&s.ChatModel, &s.ExtractionModel, &s.OpenAISessionID,
 		&s.StartedAt, &s.LastActivityAt, &s.EndedAt, &s.FinalizedAt,
 		&s.ExtractionStatus, &s.ExtractionError, &s.CoveredQuestionIDs,
@@ -80,7 +83,8 @@ func (s *ChatSessionStore) CreateOrResume(
 	var sess domain.ChatSession
 	var inserted bool
 	if err := row.Scan(
-		&sess.ID, &sess.UserID, &sess.LocalDate, &sess.Mode, &sess.Phase,
+		&sess.ID, &sess.UserID, &sess.LocalDate, &sess.Scope, &sess.PeriodStart,
+		&sess.Mode, &sess.Phase,
 		&sess.ChatModel, &sess.ExtractionModel, &sess.OpenAISessionID,
 		&sess.StartedAt, &sess.LastActivityAt, &sess.EndedAt, &sess.FinalizedAt,
 		&sess.ExtractionStatus, &sess.ExtractionError, &sess.CoveredQuestionIDs,
@@ -91,6 +95,62 @@ func (s *ChatSessionStore) CreateOrResume(
 		return nil, false, err
 	}
 	return &sess, inserted, nil
+}
+
+// CreateOrResumeWeekly returns the (user, week_start) weekly chat session,
+// creating one if none exists. Mirrors CreateOrResume but writes
+// scope='weekly' + period_start=weekStart. local_date is set equal to
+// week_start so existing "as-of" lookups (active goals at that date,
+// prompt context) keep working through the same column.
+//
+// Idempotent via the partial unique on (user_id, period_start) WHERE
+// scope='weekly'. Returns (session, created bool, error).
+func (s *ChatSessionStore) CreateOrResumeWeekly(
+	ctx context.Context,
+	userID string,
+	weekStart time.Time,
+	chatModel, extractionModel string,
+) (*domain.ChatSession, bool, error) {
+	const q = `
+		INSERT INTO chat_sessions
+		    (user_id, local_date, scope, period_start, chat_model, extraction_model)
+		VALUES ($1, $2, 'weekly', $2, $3, $4)
+		ON CONFLICT (user_id, period_start) WHERE scope = 'weekly' DO UPDATE
+		   SET updated_at = chat_sessions.updated_at  -- no-op to RETURN existing row
+		RETURNING ` + chatSessionColumns + `,
+		         (xmax = 0) AS inserted`
+	row := s.DB.QueryRow(ctx, q, userID, weekStart, chatModel, extractionModel)
+	var sess domain.ChatSession
+	var inserted bool
+	if err := row.Scan(
+		&sess.ID, &sess.UserID, &sess.LocalDate, &sess.Scope, &sess.PeriodStart,
+		&sess.Mode, &sess.Phase,
+		&sess.ChatModel, &sess.ExtractionModel, &sess.OpenAISessionID,
+		&sess.StartedAt, &sess.LastActivityAt, &sess.EndedAt, &sess.FinalizedAt,
+		&sess.ExtractionStatus, &sess.ExtractionError, &sess.CoveredQuestionIDs,
+		&sess.CoverageLastClassifiedSeq,
+		&sess.CreatedAt, &sess.UpdatedAt,
+		&inserted,
+	); err != nil {
+		return nil, false, err
+	}
+	return &sess, inserted, nil
+}
+
+// GetByWeek returns the weekly-scoped chat session for one user and
+// week_start, or ErrChatSessionNotFound if none has been created.
+func (s *ChatSessionStore) GetByWeek(
+	ctx context.Context, userID string, weekStart time.Time,
+) (*domain.ChatSession, error) {
+	const q = `SELECT ` + chatSessionColumns + `
+	             FROM chat_sessions
+	            WHERE user_id = $1 AND scope = 'weekly' AND period_start = $2`
+	row := s.DB.QueryRow(ctx, q, userID, weekStart)
+	out, err := scanChatSession(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrChatSessionNotFound
+	}
+	return out, err
 }
 
 // GetByID loads a session scoped to user. Returns ErrChatSessionNotFound

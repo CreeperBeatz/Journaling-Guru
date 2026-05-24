@@ -154,6 +154,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		Goals:             goals,
 		CheckIns:          goalCheckIns,
 		WeeklyReflections: weeklyReflections,
+		ChatSessions:      chatSessions,
 		Logger:            logger,
 	}
 	pushH := &handlers.PushHandler{
@@ -180,24 +181,27 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	// so dev environments without the key still serve text chat.
 	realtimeClient := realtime.New(cfg.OpenAIKey, cfg.OpenAIRealtimeModel)
 	chatH := &handlers.ChatHandler{
-		Sessions:       chatSessions,
-		Messages:       chatMessages,
-		Jobs:           chatExtractionJobs,
-		Questions:      questions,
-		Goals:          goals,
-		Users:          users,
-		DailyInputs:    dailyInputs,
-		ChatLLM:        chatLLM,
-		ClassifyLLM:    classifyLLM,
-		Realtime:       realtimeClient,
-		Logger:         logger,
-		ChatModel:      cfg.ChatModel,
-		ClassifyModel:  cfg.ClassifyModel,
-		RealtimeModel:  cfg.OpenAIRealtimeModel,
-		MaxTurns:       cfg.ChatMaxTurns,
-		HardCapMinutes: cfg.ChatHardCapMinutes,
-		KeepLastN:      cfg.ChatTranscriptKeepLast,
-		ResourcesURL:   cfg.ChatCrisisResourcesURL,
+		Sessions:          chatSessions,
+		Messages:          chatMessages,
+		Jobs:              chatExtractionJobs,
+		Questions:         questions,
+		Goals:             goals,
+		Users:             users,
+		DailyInputs:       dailyInputs,
+		WeeklyReflections: weeklyReflections,
+		Summaries:         summaries,
+		DailyEntryTags:    dailyEntryTags,
+		ChatLLM:           chatLLM,
+		ClassifyLLM:       classifyLLM,
+		Realtime:          realtimeClient,
+		Logger:            logger,
+		ChatModel:         cfg.ChatModel,
+		ClassifyModel:     cfg.ClassifyModel,
+		RealtimeModel:     cfg.OpenAIRealtimeModel,
+		MaxTurns:          cfg.ChatMaxTurns,
+		HardCapMinutes:    cfg.ChatHardCapMinutes,
+		KeepLastN:         cfg.ChatTranscriptKeepLast,
+		ResourcesURL:      cfg.ChatCrisisResourcesURL,
 	}
 	// SMART shaper streams via the same chat-tier client. The model
 	// constant is the chat model unless a per-call override is added
@@ -289,6 +293,13 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 					r.Post("/reflection/this-week/start", summariesH.StartReflection)
 					r.Patch("/reflection/this-week", summariesH.PatchReflection)
 					r.Post("/reflection/this-week/complete", summariesH.CompleteReflection)
+					r.Post("/reflection/this-week/replay", summariesH.ReplayReflection)
+					// History view edits — same partial-update shape, scoped
+					// to a specific past week.
+					r.Patch("/reflection/by-week/{week_start}", summariesH.PatchReflectionByWeek)
+					// Weekly reflection chat — create-or-resume the weekly-
+					// scoped chat session for step 2 of the wizard.
+					r.Post("/reflection/this-week/chat", chatH.CreateOrResumeWeekly)
 
 					r.Post("/push/subscribe", pushH.Subscribe)
 					r.Delete("/push/subscribe", pushH.Unsubscribe)
@@ -325,6 +336,9 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 				// Phase 7 — Weekly reflection pattern view.
 				r.Get("/reflection/this-week", summariesH.WeeklyReflection)
 				r.Get("/reflection/by-week/{week_start}", summariesH.ReflectionByWeek)
+				// Weekly reflection chat reads.
+				r.Get("/reflection/this-week/chat", chatH.ThisWeekChat)
+				r.Get("/reflection/by-week/{week_start}/chat", chatH.ChatByWeek)
 
 				r.Get("/push/state", pushH.State)
 			})
@@ -385,6 +399,10 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 				r.Post("/sessions/{id}/wrap-up/cancel", chatH.CancelWrapUp)
 				r.Post("/sessions/{id}/finalize", chatH.Finalize)
 				r.Post("/sessions/{id}/reset", chatH.Reset)
+				// Inline-card events (e.g. user_accepted_goal) the FE
+				// injects so the next assistant turn sees the user's
+				// decision in the transcript.
+				r.Post("/sessions/{id}/system-event", chatH.AppendSystemEvent)
 				// Phase 6b — Talk. /voice/start mints an OpenAI Realtime
 				// ephemeral client_secret; /voice/transcript persists
 				// finalized transcript turns the browser receives off the

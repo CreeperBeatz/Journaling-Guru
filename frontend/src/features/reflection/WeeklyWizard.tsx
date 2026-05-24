@@ -1,45 +1,53 @@
-import { useEffect } from "react";
+import { Navigate, useNavigate } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
 import { ReflectionResponse } from "./api";
-import {
-  useCompleteReflection,
-  usePatchReflection,
-  useStartReflection,
-} from "./hooks";
-import { PatternAndSurpriseCard } from "./cards/PatternAndSurpriseCard";
-import { GoalReviewCard } from "./cards/GoalReviewCard";
-import { ShapeNextCard } from "./cards/ShapeNextCard";
+import { useStartReflection } from "./hooks";
 import { DonePage } from "./cards/DonePage";
 
 interface Props {
   data: ReflectionResponse;
 }
 
-// WeeklyWizard — orchestrates Idle → Card1 → Card2 → Card3 → Done.
-// State is server-driven via `data.started`, `data.step`, and
-// `data.completed_at`. The wizard nudges step forward via PATCH on
-// each Continue, and flips to Done via POST /complete.
+// WeeklyWizard — Idle → ReflectionChat → Done. The chat itself opens
+// with the letter as its first assistant message (seeded server-side
+// in CreateOrResumeWeekly), so there's no separate "read the letter"
+// step anymore. WeeklyWizard's only inline view is the IdleScreen;
+// everything else lives at /weekly/chat or in DonePage.
 export function WeeklyWizard({ data }: Props) {
-  // Done view wins — once completed, render frozen summary.
   if (data.completed_at) {
     return <DonePage data={data} completedAt={data.completed_at} />;
   }
-
   if (!data.started) {
     return <IdleScreen data={data} />;
   }
-
-  return <ActiveWizard data={data} />;
+  return <Navigate to="/weekly/chat" replace />;
 }
 
 // ---------------- Idle ----------------
 
 function IdleScreen({ data }: { data: ReflectionResponse }) {
   const start = useStartReflection();
+  const navigate = useNavigate();
+
+  const letterReady =
+    data.letter.trim() !== "" ||
+    data.charged.trim() !== "" ||
+    data.drained.trim() !== "" ||
+    data.grateful.trim() !== "" ||
+    data.insights.trim() !== "";
+
+  const onStart = async () => {
+    try {
+      await start.mutateAsync();
+      navigate("/weekly/chat");
+    } catch {
+      /* toast surfaced upstream */
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -57,82 +65,28 @@ function IdleScreen({ data }: { data: ReflectionResponse }) {
       <Card>
         <CardContent className="space-y-4 px-6 py-10 text-center">
           <p className="text-sm text-muted-foreground">
-            Walk through the week — pattern, goals, and what's next.
-            About 5 minutes.
+            Read your letter and talk it through. About 10 minutes.
           </p>
           <Button
             size="lg"
-            onClick={() => start.mutate()}
-            disabled={start.isPending}
+            onClick={onStart}
+            disabled={start.isPending || !letterReady}
             className="gap-2"
           >
             <Sparkles className="h-4 w-4" />
-            {start.isPending ? "Starting…" : "Start weekly reflection"}
+            {start.isPending
+              ? "Starting…"
+              : letterReady
+                ? "Start weekly reflection"
+                : "Letter on its way…"}
           </Button>
+          {!letterReady ? (
+            <p className="text-xs text-muted-foreground">
+              The letter is still being written. It'll be ready in a moment.
+            </p>
+          ) : null}
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-// ---------------- Active ----------------
-
-function ActiveWizard({ data }: { data: ReflectionResponse }) {
-  const patch = usePatchReflection();
-  const complete = useCompleteReflection();
-
-  // If the user is on Card 2 but has no active goals, auto-skip to Card 3.
-  useEffect(() => {
-    if (data.step === 2 && data.active_goals.length === 0) {
-      patch.mutate({ step: 3 });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.step, data.active_goals.length]);
-
-  const advance = (next: number) => {
-    patch.mutate({ step: next });
-  };
-
-  const finish = () => {
-    complete.mutate();
-  };
-
-  const totalSteps = data.active_goals.length === 0 ? 2 : 3;
-  const visibleStep = data.active_goals.length === 0 && data.step >= 2
-    ? data.step - 1
-    : data.step;
-
-  return (
-    <div className="space-y-6">
-      <header className="space-y-1">
-        <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-          Weekly reflection · step {visibleStep} of {totalSteps}
-        </p>
-        <h1 className="font-serif text-h1">This week, looking back</h1>
-        <p className="text-sm text-muted-foreground">
-          {data.week_start} → {data.week_end}
-        </p>
-      </header>
-
-      {data.step === 1 ? (
-        <PatternAndSurpriseCard
-          data={data}
-          saving={patch.isPending}
-          onContinue={() => advance(2)}
-        />
-      ) : null}
-
-      {data.step === 2 ? (
-        <GoalReviewCard
-          data={data}
-          saving={patch.isPending}
-          onContinue={() => advance(3)}
-        />
-      ) : null}
-
-      {data.step === 3 ? (
-        <ShapeNextCard onDone={finish} />
-      ) : null}
     </div>
   );
 }

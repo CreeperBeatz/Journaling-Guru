@@ -115,16 +115,18 @@ export const router = createBrowserRouter([
       // redirect to /settings?tab=questions so nothing 404s.
       { path: "questions", element: <Navigate to="/settings?tab=questions" replace /> },
       { path: "settings", element: withSuspense(<Settings />, <SettingsSkeleton />) },
-      // IA rename: /summaries → /summary (Trends + ByQuestion tabs).
-      // Direct deep links to a specific summary id keep working via
-      // the legacy SummaryDetail component until the dashboard widgets
-      // (step 6) replace it.
-      { path: "summary", element: withSuspense(<SummaryPage />, <SummariesPageSkeleton />) },
+      // IA rename: /summaries → /summary → /patterns. Direct deep links
+      // to a specific summary id keep working via the legacy
+      // SummaryDetail component until the dashboard widgets replace it.
+      { path: "patterns", element: withSuspense(<SummaryPage />, <SummariesPageSkeleton />) },
       { path: "summary/:id", element: withSuspense(<SummaryDetail />, <SummaryDetailSkeleton />) },
-      { path: "summaries", element: <Navigate to="/summary" replace /> },
-      { path: "summaries/:id", element: <Navigate to="/summary" replace /> },
+      { path: "summary", element: <Navigate to="/patterns" replace /> },
+      { path: "summaries", element: <Navigate to="/patterns" replace /> },
+      { path: "summaries/:id", element: <Navigate to="/patterns" replace /> },
       { path: "goals", element: withSuspense(<GoalsPage />, <p className="text-sm text-muted-foreground">Loading…</p>) },
       { path: "weekly", element: withSuspense(<WeeklyReflectionPage />, <p className="text-sm text-muted-foreground">Loading…</p>) },
+      // Legacy deep link: /weekly/chat → /weekly?tab=reflection.
+      { path: "weekly/chat", element: <Navigate to="/weekly?tab=reflection" replace /> },
     ],
   },
 ]);

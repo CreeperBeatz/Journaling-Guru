@@ -16,6 +16,9 @@ type WeeklyReflection struct {
 	Step          int               `json:"step"`
 	GoalNotes     map[string]string `json:"goal_notes"`
 	NewGoalIDs    []string          `json:"new_goal_ids"`
+	// ChatSessionID points at the weekly-scoped chat_sessions row backing
+	// step 2 of the wizard. Set once on first /chat create-or-resume.
+	ChatSessionID *string           `json:"chat_session_id,omitempty"`
 	CompletedAt   *time.Time        `json:"completed_at"`
 	CreatedAt     time.Time         `json:"created_at"`
 	UpdatedAt     time.Time         `json:"updated_at"`

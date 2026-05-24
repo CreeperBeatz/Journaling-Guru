@@ -55,6 +55,14 @@ func (s *ChatIdleSweeper) Sweep(ctx context.Context, limit int) int {
 		if session.Phase == domain.ChatPhaseFinalized {
 			continue
 		}
+		// Weekly chats have no auto-extraction: finalize for them just
+		// stamps weekly_reflections.completed_at + extracts the surprise
+		// sentence, and that's a user-driven action (clicking Finish in
+		// the wrap-up affordance). An idle weekly chat just stays where
+		// it is; the user can resume by reopening /weekly/chat.
+		if session.Scope == domain.ChatScopeWeekly {
+			continue
+		}
 		// Mark wrapping_up (idempotent if already there). Set status to
 		// pending so the polling endpoint reflects the impending run.
 		if _, err := s.Sessions.AdvancePhase(ctx, session.ID, domain.ChatPhaseWrappingUp); err != nil {

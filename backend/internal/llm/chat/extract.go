@@ -247,3 +247,60 @@ func truncate(s string, max int) string {
 	}
 	return s[:max] + "…"
 }
+
+// weeklySurpriseMaxChars caps the distilled continuity string. Matches
+// the JSON schema in weeklySurpriseExtractSystemPrompt.
+const weeklySurpriseMaxChars = 200
+
+// ExtractWeeklySurpriseParams bundles the inputs for the post-wrap-up
+// continuity extract. Model defaults to the OpenRouter client's default
+// (CLASSIFY_MODEL tier); callers can override.
+type ExtractWeeklySurpriseParams struct {
+	Model    string
+	Messages []domain.ChatMessage
+}
+
+// ExtractWeeklySurprise runs the post-wrap-up extract on a weekly chat
+// transcript and returns one short sentence capturing what next week's
+// letter should remember. Empty output is a valid result. Errors only
+// for transport/parse failures — empty transcript returns "" with nil
+// err so finalize doesn't block on extract.
+func ExtractWeeklySurprise(
+	ctx context.Context,
+	client *llm.OpenRouter,
+	params ExtractWeeklySurpriseParams,
+) (string, error) {
+	lines := TranscriptLinesFromMessages(params.Messages)
+	if len(lines) == 0 {
+		return "", nil
+	}
+	var sb strings.Builder
+	for _, l := range lines {
+		sb.WriteString(strings.ToUpper(l.Role[:1]))
+		sb.WriteString(l.Role[1:])
+		sb.WriteString(": ")
+		sb.WriteString(l.Content)
+		sb.WriteString("\n")
+	}
+	resp, err := client.Complete(ctx, llm.CompletionRequest{
+		Model:     params.Model,
+		System:    weeklySurpriseExtractSystemPrompt,
+		User:      sb.String(),
+		MaxTokens: 200,
+		JSONMode:  true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("weekly surprise extract: %w", err)
+	}
+	var parsed struct {
+		Surprise string `json:"surprise"`
+	}
+	if err := json.Unmarshal([]byte(stripFences(resp.Content)), &parsed); err != nil {
+		return "", fmt.Errorf("parse weekly surprise: %w (content: %s)", err, truncate(resp.Content, 200))
+	}
+	s := strings.TrimSpace(parsed.Surprise)
+	if len(s) > weeklySurpriseMaxChars {
+		s = s[:weeklySurpriseMaxChars-1] + "…"
+	}
+	return s, nil
+}

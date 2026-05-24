@@ -20,9 +20,15 @@ export type ExtractionStatus =
 
 export type ChatRole = "user" | "assistant" | "tool" | "system_event";
 
+export type ChatScope = "daily" | "weekly";
+
 export interface ChatSession {
   id: string;
   local_date: string;
+  /** "daily" (per-user-per-day) or "weekly" (per-user-per-week_start). */
+  scope: ChatScope;
+  /** week_start for weekly sessions; null for daily. YYYY-MM-DD. */
+  period_start?: string | null;
   mode: ChatMode;
   phase: ChatPhase;
   chat_model: string;

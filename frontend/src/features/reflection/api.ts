@@ -1,5 +1,6 @@
 import { api } from "@/api/client";
 
+import type { ChatSessionEnvelope } from "@/features/chat/api";
 import type { Zone1GoalStatus } from "@/features/summary/api";
 
 export interface ReflectionTagRow {
@@ -13,6 +14,17 @@ export interface ReflectionTagRow {
 export interface ReflectionGratitude {
   local_date: string;
   text: string;
+}
+
+// ReflectionTheme — one ad-hoc tag cluster surfaced by the weekly LLM
+// synthesis. Themes are regenerated per week; they do NOT correspond
+// to a persistent parent_tag_id.
+export interface ReflectionTheme {
+  name: string;
+  tags: string[];
+  role: "drainer" | "charger" | "mixed";
+  days_appeared: number;
+  note: string;
 }
 
 // ReflectionResponse mirrors handlers/summaries.go::ReflectionResponse.
@@ -30,6 +42,22 @@ export interface ReflectionResponse {
   chargers: ReflectionTagRow[];
   gratitude_items: ReflectionGratitude[];
   active_goals: Zone1GoalStatus[];
+
+  // Weekly synthesis from the LLM. Empty/[] for pre-feature weeks or
+  // weeks where the job hasn't fired yet (in which case
+  // synthesis_pending is true and the FE shows an "arriving" affordance).
+  //
+  // Structured paragraphs (charged/drained/grateful/insights) are the
+  // Sonnet-tier shape; `letter` is the legacy single-string fallback
+  // for rows synthesised before the structured prompt landed.
+  letter: string;
+  charged: string;
+  drained: string;
+  grateful: string;
+  insights: string;
+  themes: ReflectionTheme[];
+  closing_question: string;
+  synthesis_pending: boolean;
 
   // Wizard state.
   started: boolean;
@@ -70,6 +98,61 @@ export function patchReflection(body: PatchReflectionBody): Promise<ReflectionRe
   return api("/api/reflection/this-week", { method: "PATCH", body });
 }
 
+// patchReflectionByWeek is the historical-edit counterpart — same
+// partial-update shape, but targets a specific past week. Used by the
+// History view's editable surprise_text + goal_notes textareas.
+export function patchReflectionByWeek(
+  weekStart: string,
+  body: PatchReflectionBody,
+): Promise<ReflectionResponse> {
+  return api(`/api/reflection/by-week/${weekStart}`, { method: "PATCH", body });
+}
+
 export function completeReflection(): Promise<ReflectionResponse> {
   return api("/api/reflection/this-week/complete", { method: "POST" });
+}
+
+export function replayReflection(): Promise<ReflectionResponse> {
+  return api("/api/reflection/this-week/replay", { method: "POST" });
+}
+
+// ----- Weekly reflection chat -----
+
+// getThisWeekChat returns the weekly-scoped chat envelope; `session` is
+// null when no chat has been created for this week yet.
+export function getThisWeekChat(): Promise<ChatSessionEnvelope> {
+  return api("/api/reflection/this-week/chat");
+}
+
+// createOrResumeWeeklyChat lazily creates the weekly chat session (or
+// returns the existing one). Idempotent server-side.
+export function createOrResumeWeeklyChat(): Promise<ChatSessionEnvelope> {
+  return api("/api/reflection/this-week/chat", { method: "POST", body: {} });
+}
+
+// getReflectionChatByWeek loads the historical read-only weekly chat
+// transcript for a past week.
+export function getReflectionChatByWeek(weekStart: string): Promise<ChatSessionEnvelope> {
+  return api(`/api/reflection/by-week/${weekStart}/chat`);
+}
+
+// SystemEventContent is the closed set of whitelisted event strings the
+// backend's POST /sessions/:id/system-event endpoint accepts.
+export type SystemEventContent =
+  | "user_accepted_goal"
+  | "user_declined_goal"
+  | "user_edited_goal"
+  | "user_accepted_extend_goal"
+  | "user_declined_extend_goal"
+  | "user_accepted_complete_goal"
+  | "user_declined_complete_goal";
+
+export function postSystemEvent(
+  sessionId: string,
+  content: SystemEventContent,
+): Promise<{ message_id: string; seq: number }> {
+  return api(`/api/chat/sessions/${sessionId}/system-event`, {
+    method: "POST",
+    body: { content },
+  });
 }

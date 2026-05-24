@@ -119,7 +119,15 @@ export interface UseStreamingChatResult {
 //
 // Concurrency: only one stream at a time. A second sendMessage call
 // while status='streaming' is rejected (the composer disables itself).
-export function useStreamingChat(sessionId: string | null): UseStreamingChatResult {
+//
+// `cacheKey` selects which envelope cache to optimistically patch
+// during streaming. Daily chat passes nothing (defaults to
+// chatSessionKey()); the weekly reflection chat passes its own
+// (weeklyChatKey) so writes don't leak across scopes.
+export function useStreamingChat(
+  sessionId: string | null,
+  cacheKey: readonly unknown[] = chatSessionKey(),
+): UseStreamingChatResult {
   const qc = useQueryClient();
   const [state, setState] = useState<StreamingState>(initialStreamState);
   const abortRef = useRef<AbortController | null>(null);
@@ -148,7 +156,7 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
             case "phase":
               // Update cached session.phase so the composer / wrap-up
               // affordance re-renders without a refetch.
-              qc.setQueryData<ChatSessionEnvelope>(chatSessionKey(), (old) => {
+              qc.setQueryData<ChatSessionEnvelope>(cacheKey, (old) => {
                 if (!old?.session) return old;
                 return { ...old, session: { ...old.session, phase: ev.phase } };
               });
@@ -157,7 +165,7 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
               // Authoritative covered set from the post-turn classifier.
               // Write straight into the session cache so consumers
               // (CoverageChips) read the same source pre/post-stream.
-              qc.setQueryData<ChatSessionEnvelope>(chatSessionKey(), (old) => {
+              qc.setQueryData<ChatSessionEnvelope>(cacheKey, (old) => {
                 if (!old?.session) return old;
                 return {
                   ...old,
@@ -186,7 +194,7 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
               // turn land in the messages array. Clearing eagerly was
               // the source of the flicker where the bubble briefly
               // disappeared and reappeared.
-              qc.invalidateQueries({ queryKey: chatSessionKey() });
+              qc.invalidateQueries({ queryKey: cacheKey });
               // NOTE: don't return — the server emits `done` BEFORE
               // the post-turn coverage classifier so the composer
               // re-enables immediately. A `coverage_update` frame may
@@ -225,7 +233,7 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
 
       // Optimistic: append the user message to the cached transcript so
       // the bubble appears immediately.
-      qc.setQueryData<ChatSessionEnvelope>(chatSessionKey(), (old) => {
+      qc.setQueryData<ChatSessionEnvelope>(cacheKey, (old) => {
         if (!old?.session) return old;
         const optimisticMsg: ChatMessage = {
           id: `optimistic-${Date.now()}`,
@@ -246,7 +254,7 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
         const msg = err instanceof Error ? err.message : "send failed";
         setState((s) => ({ ...s, status: "error", lastError: msg }));
         // Roll back optimistic write — refetch will resolve.
-        qc.invalidateQueries({ queryKey: chatSessionKey() });
+        qc.invalidateQueries({ queryKey: cacheKey });
         toast.error("Couldn't send", { description: msg });
       }
     },
@@ -284,7 +292,7 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
     abortRef.current = ac;
     setState({ ...initialStreamState, status: "streaming" });
 
-    qc.setQueryData<ChatSessionEnvelope>(chatSessionKey(), (old) => {
+    qc.setQueryData<ChatSessionEnvelope>(cacheKey, (old) => {
       if (!old?.session) return old;
       const optimisticMsg: ChatMessage = {
         id: `optimistic-${Date.now()}`,
@@ -304,7 +312,7 @@ export function useStreamingChat(sessionId: string | null): UseStreamingChatResu
     } catch (err) {
       const msg = err instanceof Error ? err.message : "wrap-up failed";
       setState((s) => ({ ...s, status: "error", lastError: msg }));
-      qc.invalidateQueries({ queryKey: chatSessionKey() });
+      qc.invalidateQueries({ queryKey: cacheKey });
       toast.error("Couldn't wrap up", { description: msg });
     }
   }, [sessionId, state.status, qc, consumeStream]);
@@ -339,7 +347,7 @@ export interface FinalizeArgs {
   sessionId: string;
 }
 
-export function useFinalizeChat() {
+export function useFinalizeChat(cacheKey: readonly unknown[] = chatSessionKey()) {
   const qc = useQueryClient();
   return useMutation<FinalizeResponse, ApiError, FinalizeArgs>({
     mutationFn: ({ sessionId }) => finalizeSession(sessionId),
@@ -347,7 +355,7 @@ export function useFinalizeChat() {
       // Optimistically reflect the new phase + extraction_status so the
       // sticky-bar "Updating…" pill appears immediately, before the
       // 2s polling interval has a chance to round-trip.
-      qc.setQueryData<ChatSessionEnvelope>(chatSessionKey(), (old) => {
+      qc.setQueryData<ChatSessionEnvelope>(cacheKey, (old) => {
         if (!old?.session) return old;
         return {
           ...old,
@@ -368,7 +376,11 @@ export function useFinalizeChat() {
 // daily-input + entries + stats caches so the manual fields update.
 // The chat itself stays open — extraction is a "refresh the check-in"
 // trigger, not a session terminator.
-export function useExtractionStatus(sessionId: string | null, enabled: boolean) {
+export function useExtractionStatus(
+  sessionId: string | null,
+  enabled: boolean,
+  cacheKey: readonly unknown[] = chatSessionKey(),
+) {
   const qc = useQueryClient();
   const seenCompleted = useRef(false);
 
@@ -389,7 +401,7 @@ export function useExtractionStatus(sessionId: string | null, enabled: boolean) 
     if (!sessionId || !status) return;
     if (status === "completed" && !seenCompleted.current) {
       seenCompleted.current = true;
-      qc.invalidateQueries({ queryKey: chatSessionKey() });
+      qc.invalidateQueries({ queryKey: cacheKey });
       qc.invalidateQueries({ queryKey: dailyInputKey() });
       qc.invalidateQueries({ queryKey: entriesKey() });
       qc.invalidateQueries({ queryKey: ENTRY_DATES_KEY });
@@ -418,12 +430,12 @@ export function useExtractionStatus(sessionId: string | null, enabled: boolean) 
 // after clicking "Wrap up". Optimistically patches the cached session
 // phase so the WrapUpButton + affordance update without waiting for a
 // session refetch.
-export function useCancelWrapUp() {
+export function useCancelWrapUp(cacheKey: readonly unknown[] = chatSessionKey()) {
   const qc = useQueryClient();
   return useMutation<{ phase: ChatPhase }, ApiError, string>({
     mutationFn: (sessionId) => cancelWrapUp(sessionId),
     onSuccess: (resp) => {
-      qc.setQueryData<ChatSessionEnvelope>(chatSessionKey(), (old) => {
+      qc.setQueryData<ChatSessionEnvelope>(cacheKey, (old) => {
         if (!old?.session) return old;
         return {
           ...old,
@@ -441,13 +453,13 @@ export function useCancelWrapUp() {
 // confirmation dialog (ChatHeader) before calling. On success, the
 // session envelope returns to greeting phase with no messages and the
 // opener auto-streams again.
-export function useResetChat() {
+export function useResetChat(cacheKey: readonly unknown[] = chatSessionKey()) {
   const qc = useQueryClient();
   return useMutation<ChatSessionEnvelope, ApiError, string>({
     mutationFn: (sessionId) => resetSession(sessionId),
     onSuccess: (env) => {
-      qc.setQueryData<ChatSessionEnvelope>(chatSessionKey(), env);
-      qc.invalidateQueries({ queryKey: chatSessionKey() });
+      qc.setQueryData<ChatSessionEnvelope>(cacheKey, env);
+      qc.invalidateQueries({ queryKey: cacheKey });
     },
     onError: (err) => {
       toast.error("Couldn't reset", { description: err.message });

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
@@ -39,6 +40,14 @@ type ChatHandler struct {
 	Goals          *store.GoalStore
 	Users          *store.UserStore
 	DailyInputs    *store.DailyInputStore
+	// WeeklyReflections, Summaries, and DailyEntryTags are populated for
+	// the weekly reflection chat (scope='weekly') — used to seed the
+	// system prompt with the letter + patterns and to mark the wizard
+	// completed at wrap-up. Nil for callers that only need daily chat
+	// (legacy), but the router wires them all.
+	WeeklyReflections *store.WeeklyReflectionStore
+	Summaries         *store.SummaryStore
+	DailyEntryTags    *store.DailyEntryTagStore
 	ChatLLM        *llm.OpenRouter
 	ClassifyLLM    *llm.OpenRouter
 	// Realtime is the OpenAI Realtime API client used by /voice/start.
@@ -239,6 +248,273 @@ func (h *ChatHandler) ByDate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, chatSessionEnvelope{Session: session, Messages: messages})
 }
 
+// ---------- /reflection/this-week/chat (weekly create-or-resume) ----------
+
+// resolveCurrentWeek returns weekStart (today - 6 days) and weekEnd
+// (today) for the requesting user, mirroring the SummaryHandler helper.
+// Single source of truth for "this week" within the chat handler so the
+// reflection chat keys align with the wizard's view.
+func (h *ChatHandler) resolveCurrentWeek(r *http.Request, userID string) (time.Time, time.Time, *domain.User, error) {
+	today, user, err := h.resolveToday(r, userID)
+	if err != nil {
+		return time.Time{}, time.Time{}, nil, err
+	}
+	weekStart := today.AddDate(0, 0, -6)
+	return weekStart, today, user, nil
+}
+
+// CreateOrResumeWeekly handles POST /api/reflection/this-week/chat.
+// Idempotent — returns the existing weekly chat session if one exists
+// for (user, week_start), otherwise inserts a fresh greeting-phase row
+// with scope='weekly'. Also writes the chat_session_id FK onto the
+// weekly_reflections row so the wizard / DonePage can resolve the
+// session in one query.
+func (h *ChatHandler) CreateOrResumeWeekly(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	weekStart, weekEnd, _, err := h.resolveCurrentWeek(r, sess.UserID)
+	if err != nil {
+		h.Logger.Error("resolve current week", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "could not resolve week")
+		return
+	}
+	// Lazy-seed the reflection row so the FK target exists.
+	if h.WeeklyReflections != nil {
+		if _, err := h.WeeklyReflections.Start(r.Context(), sess.UserID, weekStart, weekEnd); err != nil {
+			h.Logger.Warn("ensure reflection row (weekly chat)", "err", err)
+		}
+	}
+	session, created, err := h.Sessions.CreateOrResumeWeekly(
+		r.Context(), sess.UserID, weekStart, h.ChatModel, h.ClassifyModel,
+	)
+	if err != nil {
+		h.Logger.Error("create weekly chat session", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "create failed")
+		return
+	}
+	if h.WeeklyReflections != nil {
+		if _, err := h.WeeklyReflections.SetChatSession(r.Context(), sess.UserID, weekStart, session.ID); err != nil {
+			h.Logger.Warn("set chat_session_id on reflection", "err", err)
+		}
+	}
+
+	// Seed the letter as the first assistant turn so the user can SEE
+	// the letter while the chat asks them about it. The closing question
+	// lives at the bottom of the bubble so the model's first prompt is
+	// already in the transcript — no separate streamed opener needed.
+	if created {
+		body := h.composeWeeklyLetterOpener(r.Context(), sess.UserID, weekStart)
+		if body != "" {
+			if _, aerr := h.Messages.Append(r.Context(), store.AppendInput{
+				SessionID: session.ID,
+				Role:      domain.ChatRoleAssistant,
+				Content:   body,
+			}); aerr != nil {
+				h.Logger.Warn("seed weekly letter opener", "err", aerr, "session_id", session.ID)
+			} else {
+				// Advance phase from greeting → exploring; the assistant
+				// has "spoken" and the FE's auto-opener will skip.
+				if updated, perr := h.Sessions.AdvancePhase(r.Context(), session.ID, domain.ChatPhaseExploring); perr == nil {
+					session = updated
+				}
+			}
+		}
+	}
+
+	messages, err := h.Messages.ListBySession(r.Context(), session.ID)
+	if err != nil {
+		h.Logger.Error("list messages", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, chatSessionEnvelope{Session: session, Messages: messages})
+}
+
+// composeWeeklyLetterOpener assembles the four structured paragraphs +
+// closing question into a single multi-paragraph string suitable for an
+// assistant chat bubble. Falls back to the legacy `letter` blob when
+// the structured fields are empty. Returns "" if no letter content
+// exists at all (the FE then sees an empty transcript; the model's
+// regular auto-opener fires).
+func (h *ChatHandler) composeWeeklyLetterOpener(
+	ctx context.Context, userID string, weekStart time.Time,
+) string {
+	if h.Summaries == nil {
+		return ""
+	}
+	weekEnd := weekStart.AddDate(0, 0, 6)
+	summary, _ := h.Summaries.GetByPeriod(ctx, userID, string(domain.PeriodWeek), weekStart)
+	if summary == nil || !summary.Metadata.HasLetterSynthesis() {
+		if latest, _ := h.Summaries.LatestByPeriodTypeUpTo(ctx, userID, string(domain.PeriodWeek), weekEnd); latest != nil && latest.Metadata.HasLetterSynthesis() {
+			summary = latest
+		}
+	}
+	if summary == nil {
+		return ""
+	}
+	m := summary.Metadata
+	var parts []string
+	if m.Charged != "" {
+		parts = append(parts, m.Charged)
+	}
+	if m.Drained != "" {
+		parts = append(parts, m.Drained)
+	}
+	if m.Grateful != "" {
+		parts = append(parts, m.Grateful)
+	}
+	if m.Insights != "" {
+		parts = append(parts, m.Insights)
+	}
+	if len(parts) == 0 && m.Letter != "" {
+		parts = append(parts, m.Letter)
+	}
+	if m.ClosingQuestion != "" {
+		parts = append(parts, m.ClosingQuestion)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// ThisWeekChat handles GET /api/reflection/this-week/chat. Returns the
+// existing weekly session + transcript, or {session:null, messages:[]}
+// when no session has been created yet (FE then calls the POST).
+func (h *ChatHandler) ThisWeekChat(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	weekStart, _, _, err := h.resolveCurrentWeek(r, sess.UserID)
+	if err != nil {
+		h.Logger.Error("resolve current week", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "could not resolve week")
+		return
+	}
+	session, err := h.Sessions.GetByWeek(r.Context(), sess.UserID, weekStart)
+	if err != nil {
+		if errors.Is(err, store.ErrChatSessionNotFound) {
+			writeJSON(w, http.StatusOK, chatSessionEnvelope{Session: nil, Messages: []domain.ChatMessage{}})
+			return
+		}
+		h.Logger.Error("get weekly session", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	messages, err := h.Messages.ListBySession(r.Context(), session.ID)
+	if err != nil {
+		h.Logger.Error("list messages", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, chatSessionEnvelope{Session: session, Messages: messages})
+}
+
+// ChatByWeek handles GET /api/reflection/by-week/:week_start/chat.
+// Historical read-only transcript surface. 404 when the user has no
+// weekly chat for that week.
+func (h *ChatHandler) ChatByWeek(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	weekParam := chi.URLParam(r, "week_start")
+	weekStart, err := time.Parse("2006-01-02", weekParam)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid week_start")
+		return
+	}
+	session, err := h.Sessions.GetByWeek(r.Context(), sess.UserID, weekStart)
+	if err != nil {
+		if errors.Is(err, store.ErrChatSessionNotFound) {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		h.Logger.Error("get weekly session", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	messages, err := h.Messages.ListBySession(r.Context(), session.ID)
+	if err != nil {
+		h.Logger.Error("list messages", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, chatSessionEnvelope{Session: session, Messages: messages})
+}
+
+// ---------- /sessions/:id/system-event ----------
+
+// systemEventRequest carries one of the whitelisted user-driven events
+// the FE injects so the assistant sees the user's interaction with an
+// inline UI surface on the next turn.
+type systemEventRequest struct {
+	Content string `json:"content"`
+}
+
+// allowedSystemEvents is the closed set of content strings the FE may
+// inject via the system-event endpoint. Anything else is rejected.
+var allowedSystemEvents = map[string]struct{}{
+	"user_accepted_goal":          {},
+	"user_declined_goal":          {},
+	"user_edited_goal":            {},
+	"user_accepted_extend_goal":   {},
+	"user_declined_extend_goal":   {},
+	"user_accepted_complete_goal": {},
+	"user_declined_complete_goal": {},
+}
+
+// AppendSystemEvent handles POST /api/chat/sessions/:id/system-event.
+// Appends a system_event chat_message with one of the whitelisted
+// content strings. Used by the FE to surface inline-card interactions
+// (Accept / Decline on propose_goal etc.) into the transcript so the
+// next assistant turn can react.
+func (h *ChatHandler) AppendSystemEvent(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	sessionID := chi.URLParam(r, "id")
+	if sessionID == "" {
+		writeJSONError(w, http.StatusBadRequest, "id required")
+		return
+	}
+	var req systemEventRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	content := strings.TrimSpace(req.Content)
+	if _, ok := allowedSystemEvents[content]; !ok {
+		writeJSONError(w, http.StatusBadRequest, "unknown event")
+		return
+	}
+	if _, err := h.Sessions.GetByID(r.Context(), sess.UserID, sessionID); err != nil {
+		if errors.Is(err, store.ErrChatSessionNotFound) {
+			writeJSONError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		h.Logger.Error("get session", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "session lookup failed")
+		return
+	}
+	row, err := h.Messages.Append(r.Context(), store.AppendInput{
+		SessionID: sessionID,
+		Role:      domain.ChatRoleSystemEvent,
+		Content:   content,
+	})
+	if err != nil {
+		h.Logger.Error("append system_event", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "persist failed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"message_id": row.ID, "seq": row.Seq})
+}
+
 // ---------- /sessions/:id/messages (SSE stream) ----------
 
 type streamMessageRequest struct {
@@ -294,10 +570,11 @@ func (h *ChatHandler) StreamMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "session lookup failed")
 		return
 	}
-	// No phase-based blocking. Chat stays open per (user, local_date) all
-	// day; finalize is just a "refresh the check-in now" trigger, not a
-	// lock. If the session was previously finalized, the first new user
-	// turn rolls phase back to exploring (handled below).
+	// No phase-based blocking for DAILY chat. It stays open per
+	// (user, local_date) all day; finalize is just a "refresh the
+	// check-in now" trigger, not a lock. If the session was previously
+	// finalized, the first new user turn rolls phase back to exploring
+	// (handled below).
 
 	// Turn cap check (user + assistant only — tool / system_event don't
 	// count). Hard cap is enforced server-side; the FE's hard-cap-minute
@@ -454,7 +731,59 @@ func (h *ChatHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "session lookup failed")
 		return
 	}
-	// Advance to wrapping_up if not already there or finalized.
+
+	// Weekly finalize is a different machine: no extraction job, no
+	// daily_inputs merge. Distil one continuity sentence from the
+	// transcript, write it into weekly_reflections.surprise_text, mark
+	// the reflection completed, and advance the chat phase to finalized.
+	// The FE then redirects to /weekly (DonePage).
+	if session.Scope == domain.ChatScopeWeekly {
+		if updated, err := h.Sessions.AdvancePhase(r.Context(), sessionID, domain.ChatPhaseFinalized); err == nil {
+			session = updated
+		} else if !errors.Is(err, store.ErrChatSessionInvalidPhase) {
+			h.Logger.Warn("advance weekly phase finalized", "err", err, "session_id", sessionID)
+		}
+		// Best-effort surprise extract. Failures don't block wrap-up.
+		transcript, lerr := h.Messages.ListBySession(r.Context(), session.ID)
+		if lerr != nil {
+			h.Logger.Warn("weekly finalize: load transcript", "err", lerr, "session_id", session.ID)
+		} else if h.ClassifyLLM != nil {
+			surpriseText, eerr := chat.ExtractWeeklySurprise(r.Context(), h.ClassifyLLM, chat.ExtractWeeklySurpriseParams{
+				Model:    session.ExtractionModel,
+				Messages: transcript,
+			})
+			if eerr != nil {
+				h.Logger.Warn("weekly surprise extract", "err", eerr, "session_id", session.ID)
+			} else if h.WeeklyReflections != nil && session.PeriodStart != nil {
+				if ws, perr := time.Parse("2006-01-02", *session.PeriodStart); perr == nil {
+					if _, serr := h.WeeklyReflections.SetSurpriseText(
+						r.Context(), session.UserID, ws, surpriseText,
+					); serr != nil {
+						h.Logger.Warn("set surprise text", "err", serr, "session_id", session.ID)
+					}
+				}
+			}
+		}
+		if h.WeeklyReflections != nil {
+			if _, err := h.WeeklyReflections.MarkCompletedBySession(r.Context(), session.ID); err != nil {
+				h.Logger.Warn("mark reflection completed", "err", err, "session_id", session.ID)
+			}
+		}
+		// Set extraction_status completed so the FE polling loop closes
+		// out (we reuse the same envelope shape as daily finalize).
+		_ = h.Sessions.SetExtractionStatus(r.Context(), session.ID, domain.ChatExtractionCompleted, nil)
+		_ = h.Sessions.MarkFinalized(r.Context(), session.ID)
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"session_id":        session.ID,
+			"extraction_status": domain.ChatExtractionCompleted,
+			"phase":             domain.ChatPhaseFinalized,
+			"poll_status_url":   fmt.Sprintf("/api/chat/sessions/%s/extraction/status", session.ID),
+		})
+		return
+	}
+
+	// Daily finalize: advance to wrapping_up if not already there or
+	// finalized, then enqueue the extraction job.
 	if session.Phase != domain.ChatPhaseWrappingUp && session.Phase != domain.ChatPhaseFinalized {
 		if updated, err := h.Sessions.AdvancePhase(r.Context(), sessionID, domain.ChatPhaseWrappingUp); err == nil {
 			session = updated
@@ -544,9 +873,37 @@ func (h *ChatHandler) Reset(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "reset failed")
 		return
 	}
+
+	// Weekly reset restores the chat to its initial state — i.e. the
+	// letter shown as the first assistant turn, phase = exploring.
+	// Without this, a reset weekly session would land in greeting phase
+	// with an empty transcript, and the FE's auto-opener gate (which
+	// expects the seeded letter) would never fire.
+	messages := []domain.ChatMessage{}
+	if session.Scope == domain.ChatScopeWeekly && session.PeriodStart != nil {
+		if weekStart, perr := time.Parse("2006-01-02", *session.PeriodStart); perr == nil {
+			body := h.composeWeeklyLetterOpener(r.Context(), session.UserID, weekStart)
+			if body != "" {
+				row, aerr := h.Messages.Append(r.Context(), store.AppendInput{
+					SessionID: session.ID,
+					Role:      domain.ChatRoleAssistant,
+					Content:   body,
+				})
+				if aerr != nil {
+					h.Logger.Warn("reseed weekly letter on reset", "err", aerr, "session_id", session.ID)
+				} else {
+					messages = append(messages, *row)
+					if updated, perr2 := h.Sessions.AdvancePhase(r.Context(), session.ID, domain.ChatPhaseExploring); perr2 == nil {
+						session = updated
+					}
+				}
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, chatSessionEnvelope{
 		Session:  session,
-		Messages: []domain.ChatMessage{},
+		Messages: messages,
 	})
 }
 
@@ -766,7 +1123,7 @@ func (h *ChatHandler) StartVoice(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
 		return
 	}
-	systemPrompt, err := h.buildSystemPrompt(r.Context(), user, session)
+	systemPrompt, _, _, err := h.buildSystemPrompt(r.Context(), user, session)
 	if err != nil {
 		h.Logger.Error("build system prompt for voice", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "prompt build failed")
@@ -971,7 +1328,7 @@ func (h *ChatHandler) runStream(
 		writeSSEFrame(w, rc, "error", map[string]any{"message": "user lookup failed"})
 		return
 	}
-	systemPrompt, err := h.buildSystemPrompt(r.Context(), user, session)
+	systemPrompt, activeGoals, endingGoals, err := h.buildSystemPrompt(r.Context(), user, session)
 	if err != nil {
 		h.Logger.Error("build system prompt", "err", err)
 		writeSSEHeaders(w)
@@ -1009,11 +1366,15 @@ func (h *ChatHandler) runStream(
 	if session.ChatModel != "" && session.ChatModel != h.RealtimeModel {
 		model = session.ChatModel
 	}
+	tools := chat.AssistantTools
+	if session.Scope == domain.ChatScopeWeekly {
+		tools = chat.WeeklyAssistantTools
+	}
 	chunks, err := h.ChatLLM.CompleteStream(r.Context(), llm.StreamRequest{
 		Model:           model,
 		System:          systemPrompt,
 		Messages:        llmMsgs,
-		Tools:           chat.AssistantTools,
+		Tools:           tools,
 		MaxTokens:       maxTokens,
 		Temperature:     0.7,
 		SystemCacheable: true,
@@ -1074,27 +1435,68 @@ func (h *ChatHandler) runStream(
 		firstToolArgs = toolCalls[0].Args
 	}
 
-	// Retry: a tool-call-only propose_wrap_up turn breaks the UX
-	// (empty bubble) and may also be premature if the model jumped to
-	// wrap-up without verifying every Energy Audit topic was actually
-	// covered. Throw away the empty turn, push a corrective system
-	// note, and run a second LLM pass. The corrective note is short
-	// so it doesn't dominate the system window.
-	if finalContent == "" && firstToolName != nil && *firstToolName == chat.ToolProposeWrapUp {
-		retryNote := "Your previous reply was a propose_wrap_up tool call with NO text. " +
-			"That is forbidden. Re-do this turn now: " +
-			"(1) ALWAYS emit a plain-text reply to the user FIRST. " +
-			"(2) Re-read the transcript and verify whether ALL FOUR Energy Audit topics " +
-			"(drained, charged, grateful, anything-else) have been substantively addressed by the user. " +
-			"(3) If any topic is still missing or only thinly touched, ask ONE focused open question " +
-			"on the most important uncovered topic AND DO NOT call propose_wrap_up — the user is not done. " +
-			"(4) Only if all four topics are clearly covered may you call propose_wrap_up, and only AFTER " +
-			"emitting a short warm sign-off sentence as text. Never tool-call without text."
+	// Retry: a propose_wrap_up call is rejected and re-prompted when
+	// either (a) the turn has NO accompanying text (breaks the UX —
+	// empty bubble), or (b) one or more active goals were never raised
+	// in the transcript, which means the model is wrapping up without
+	// ever putting those goals to the user. unaddressedGoals uses a
+	// permissive keyword heuristic and errs toward "addressed" so the
+	// retry only fires when there's high confidence the model skipped
+	// the goal entirely. If the goal HAS been raised but the user's
+	// answer is ambiguous, that's the model's wrap-up judgment to make
+	// (per the wrapping_up phase block in daily_chat_context.tmpl).
+	//
+	// Weekly extension: the wrap-up gate ALSO requires that every
+	// "ending this week" goal has received a propose_extend_goal or
+	// propose_complete_goal tool call earlier in the transcript. The
+	// FE renders the inline confirmation card from those tool calls;
+	// without one the user has no way to settle the goal.
+	toolIsWrapUp := firstToolName != nil && *firstToolName == chat.ToolProposeWrapUp
+	emptyTurn := finalContent == ""
+	var skippedGoals []chat.GoalView
+	var undecidedEndingGoals []chat.GoalView
+	if toolIsWrapUp {
+		if session.Scope == domain.ChatScopeWeekly {
+			// Weekly chat doesn't gate on "every goal raised in plain
+			// conversation" the way daily does — the gate is "every
+			// ENDING goal has a decision tool call." So skipped-goals
+			// is only computed for daily.
+			undecidedEndingGoals = endingGoalsWithoutDecision(endingGoals, transcript)
+		} else {
+			skippedGoals = unaddressedGoals(activeGoals, transcript)
+		}
+	}
+	if toolIsWrapUp && (emptyTurn || len(skippedGoals) > 0 || len(undecidedEndingGoals) > 0) {
+		var parts []string
+		parts = append(parts, "Your previous propose_wrap_up call was rejected. Re-do this turn now.")
+		if emptyTurn {
+			parts = append(parts, "Issue: the tool call had NO accompanying text. Every assistant turn MUST emit a plain-text reply to the user BEFORE any tool call.")
+		}
+		if len(skippedGoals) > 0 {
+			var lines []string
+			for _, g := range skippedGoals {
+				lines = append(lines, fmt.Sprintf("- %q (goal: %s)", g.CheckInQuestion, g.Title))
+			}
+			parts = append(parts, "Issue: these active goal(s) have NOT been put to the user in this session — no yes, no, or explicit refusal in the transcript:\n"+strings.Join(lines, "\n"))
+		}
+		if len(undecidedEndingGoals) > 0 {
+			var lines []string
+			for _, g := range undecidedEndingGoals {
+				lines = append(lines, fmt.Sprintf("- %s (goal_id: %s)", g.Title, g.ID))
+			}
+			parts = append(parts, "Issue: these ENDING-THIS-WEEK goal(s) lack a propose_extend_goal OR propose_complete_goal tool call in this transcript. You MUST surface one of those tools (with the user's decision) before you can call propose_wrap_up:\n"+strings.Join(lines, "\n"))
+		}
+		if session.Scope == domain.ChatScopeWeekly {
+			parts = append(parts, "Action: emit a SHORT warm plain-text reply that asks ONE focused open question about the single most pressing missing item. If an ending goal is undecided, ask the user whether they want to extend it or call it done — when they answer clearly, call propose_extend_goal or propose_complete_goal (not propose_wrap_up). Do NOT call propose_wrap_up in this retry; the user is not done.")
+		} else {
+			parts = append(parts, "Action: emit a SHORT warm plain-text reply that asks ONE focused open question about the single most pressing missing item. Tiebreak: any unanswered goal > drained > charged > grateful. If a goal is unanswered, ask about that goal in plain conversation using the check-in question's own words — do not list multiple goals. Do NOT call propose_wrap_up in this retry; the user is not done.")
+		}
+		retryNote := strings.Join(parts, "\n\n")
 		retryMsgs := append([]llm.Message{}, llmMsgs...)
 		retryMsgs = append(retryMsgs, llm.Message{Role: "system", Content: retryNote})
-		retryContent, retryToolCalls, retryDone, retryErr := h.streamAssistantOnce(r, w, rc, model, systemPrompt, retryMsgs, maxTokens)
+		retryContent, retryToolCalls, retryDone, retryErr := h.streamAssistantOnce(r, w, rc, model, systemPrompt, retryMsgs, maxTokens, session.Scope)
 		if retryErr != nil {
-			h.Logger.Warn("wrap-up retry failed", "err", retryErr, "session_id", session.ID)
+			h.Logger.Warn("wrap-up retry failed", "err", retryErr, "session_id", session.ID, "skipped_goals", len(skippedGoals), "undecided_ending", len(undecidedEndingGoals))
 			// Fall through with the safety-net text below.
 		} else {
 			finalContent = retryContent
@@ -1216,6 +1618,123 @@ func hashedSafetyID(userID string) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
+// goalKeywordStopwords are short common words excluded when extracting
+// distinctive keywords from a goal's check-in question or title. The
+// unaddressed-goal heuristic searches the transcript for any of the
+// remaining keywords to decide whether the model ever raised the goal.
+var goalKeywordStopwords = map[string]bool{
+	"what": true, "when": true, "where": true, "which": true, "have": true,
+	"your": true, "today": true, "this": true, "that": true, "with": true,
+	"into": true, "from": true, "been": true, "were": true, "will": true,
+	"just": true, "they": true, "them": true, "than": true, "then": true,
+	"some": true, "more": true, "much": true, "many": true, "could": true,
+	"would": true, "should": true, "about": true, "after": true, "before": true,
+	"while": true, "since": true, "until": true, "even": true, "ever": true,
+	"also": true, "very": true, "really": true, "going": true, "didn": true,
+	"doing": true, "done": true, "yourself": true,
+}
+
+// goalKeywords pulls case-folded distinctive words from a goal's
+// check-in question and title for use in the unaddressed-goal
+// heuristic. Words ≤ 3 chars and stopwords are dropped.
+func goalKeywords(g chat.GoalView) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range strings.Fields(g.CheckInQuestion + " " + g.Title) {
+		w := strings.ToLower(strings.TrimFunc(raw, func(r rune) bool {
+			return !unicode.IsLetter(r)
+		}))
+		if len(w) < 4 || goalKeywordStopwords[w] || seen[w] {
+			continue
+		}
+		seen[w] = true
+		out = append(out, w)
+	}
+	return out
+}
+
+// endingGoalsWithoutDecision returns the subset of goals whose end_date
+// has passed (so they appeared in the "Ending this week" section of the
+// weekly system prompt) but for which the transcript contains NO
+// propose_extend_goal or propose_complete_goal tool call addressing the
+// goal_id. Used to gate weekly propose_wrap_up.
+//
+// Heuristic: scan assistant rows for tool_name == propose_extend_goal
+// or propose_complete_goal and check the args' goal_id matches. The
+// `activeGoals` slice passed in is the full set (mid-flight + ending);
+// we re-detect "ending" by absence-of-keyword-match in the transcript,
+// which isn't reliable — instead use the persisted end_date check at
+// build-system-prompt time. As a simpler proxy here we just take every
+// goal in `endingGoals` (see callers) — this helper assumes the caller
+// already filtered to ending goals. For the daily scope path it's
+// called with an empty slice and returns nil.
+func endingGoalsWithoutDecision(endingGoals []chat.GoalView, transcript []domain.ChatMessage) []chat.GoalView {
+	if len(endingGoals) == 0 {
+		return nil
+	}
+	decided := map[string]struct{}{}
+	for _, m := range transcript {
+		if m.Role != domain.ChatRoleAssistant || m.ToolName == nil {
+			continue
+		}
+		name := *m.ToolName
+		if name != chat.ToolProposeExtendGoal && name != chat.ToolProposeCompleteGoal {
+			continue
+		}
+		if m.ToolArgs == nil {
+			continue
+		}
+		if gid, ok := m.ToolArgs["goal_id"].(string); ok && gid != "" {
+			decided[gid] = struct{}{}
+		}
+	}
+	var out []chat.GoalView
+	for _, g := range endingGoals {
+		if _, ok := decided[g.ID]; !ok {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// unaddressedGoals returns the subset of active goals that appear to
+// have never been raised in the transcript. Heuristic: a goal counts
+// as addressed if ANY of its distinctive keywords (from
+// CheckInQuestion + Title) appears anywhere in any prior message —
+// user, assistant, or system_event. Errs toward "addressed" to avoid
+// spurious retries; the prompt-level wrap-up rules handle the model's
+// answer-clarity judgment when the goal HAS been raised.
+func unaddressedGoals(goals []chat.GoalView, transcript []domain.ChatMessage) []chat.GoalView {
+	if len(goals) == 0 {
+		return nil
+	}
+	var haystack strings.Builder
+	for _, m := range transcript {
+		haystack.WriteString(strings.ToLower(m.Content))
+		haystack.WriteByte(' ')
+	}
+	text := haystack.String()
+	var out []chat.GoalView
+	for _, g := range goals {
+		kws := goalKeywords(g)
+		if len(kws) == 0 {
+			// No distinctive keywords to search on; trust the model.
+			continue
+		}
+		addressed := false
+		for _, kw := range kws {
+			if strings.Contains(text, kw) {
+				addressed = true
+				break
+			}
+		}
+		if !addressed {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
 // defaultToolFallbackText returns a short visible reply to use when
 // the model emitted a tool call without any accompanying text. Keeps
 // the user from staring at an empty bubble. Empty string ⇒ no
@@ -1250,12 +1769,17 @@ func (h *ChatHandler) streamAssistantOnce(
 	model, systemPrompt string,
 	messages []llm.Message,
 	maxTokens int,
+	scope string,
 ) (string, []heldToolCall, *llm.StreamDone, error) {
+	tools := chat.AssistantTools
+	if scope == domain.ChatScopeWeekly {
+		tools = chat.WeeklyAssistantTools
+	}
 	chunks, err := h.ChatLLM.CompleteStream(r.Context(), llm.StreamRequest{
 		Model:           model,
 		System:          systemPrompt,
 		Messages:        messages,
-		Tools:           chat.AssistantTools,
+		Tools:           tools,
 		MaxTokens:       maxTokens,
 		Temperature:     0.7,
 		SystemCacheable: true,
@@ -1358,13 +1882,31 @@ func (h *ChatHandler) runCoverageClassifier(
 	})
 }
 
-// buildSystemPrompt assembles the session's BuildSystemPromptParams and
-// renders the chat system prompt. Recent context is pulled from the
-// last 7 days of daily_inputs (excluding today so today's check-in
-// doesn't echo back at the user).
+// buildSystemPrompt assembles the session's system prompt — branching
+// on session.Scope to either the daily Energy-Audit persona or the
+// weekly reflection persona. Returns the rendered prompt plus two goal
+// slices:
+//
+//   - allActive: every active goal (mid-flight + ending). Daily wrap-up
+//     gating uses this directly (every active goal must be put to the
+//     user). Voice mode ignores it.
+//   - endingThisWeek: the subset whose end_date is on or before the
+//     week_end of a weekly session. Empty for daily scope. Used by the
+//     weekly wrap-up gate to enforce that each ending goal has received
+//     a propose_extend_goal or propose_complete_goal tool call.
 func (h *ChatHandler) buildSystemPrompt(
 	ctx context.Context, user *domain.User, session *domain.ChatSession,
-) (string, error) {
+) (string, []chat.GoalView, []chat.GoalView, error) {
+	if session.Scope == domain.ChatScopeWeekly {
+		return h.buildWeeklySystemPrompt(ctx, user, session)
+	}
+	return h.buildDailySystemPrompt(ctx, user, session)
+}
+
+// buildDailySystemPrompt is the original daily/Energy-Audit branch.
+func (h *ChatHandler) buildDailySystemPrompt(
+	ctx context.Context, user *domain.User, session *domain.ChatSession,
+) (string, []chat.GoalView, []chat.GoalView, error) {
 	loc, err := time.LoadLocation(user.Timezone)
 	if err != nil || loc == nil {
 		loc = time.UTC
@@ -1373,7 +1915,7 @@ func (h *ChatHandler) buildSystemPrompt(
 
 	questions, err := h.Questions.ListActive(ctx, user.ID)
 	if err != nil {
-		return "", fmt.Errorf("load questions: %w", err)
+		return "", nil, nil, fmt.Errorf("load questions: %w", err)
 	}
 	views := chat.QuestionViewsFromDomain(questions)
 
@@ -1386,7 +1928,7 @@ func (h *ChatHandler) buildSystemPrompt(
 		if asOf, perr := time.Parse("2006-01-02", session.LocalDate); perr == nil {
 			activeGoals, gerr := h.Goals.ListActive(ctx, user.ID, asOf)
 			if gerr != nil {
-				return "", fmt.Errorf("load goals: %w", gerr)
+				return "", nil, nil, fmt.Errorf("load goals: %w", gerr)
 			}
 			goalViews = chat.GoalViewsFromDomain(activeGoals)
 		}
@@ -1395,7 +1937,7 @@ func (h *ChatHandler) buildSystemPrompt(
 	// Recent context: 7-day window ending yesterday (today excluded).
 	localToday, err := timezone.LocalDate(time.Now(), user.Timezone, user.DayStartMinutes)
 	if err != nil {
-		return "", err
+		return "", nil, nil, err
 	}
 	since := localToday.AddDate(0, 0, -7)
 	until := localToday.AddDate(0, 0, -1)
@@ -1427,7 +1969,7 @@ func (h *ChatHandler) buildSystemPrompt(
 	}
 	dayStartLabel := fmt.Sprintf("%02d:%02d", dsm/60, dsm%60)
 
-	return chat.BuildSystemPrompt(chat.BuildSystemPromptParams{
+	prompt, err := chat.BuildSystemPrompt(chat.BuildSystemPromptParams{
 		DisplayName:       displayName,
 		JournalDate:       session.LocalDate,
 		JournalWeekday:    journalWeekday,
@@ -1443,4 +1985,116 @@ func (h *ChatHandler) buildSystemPrompt(
 		Phase:             session.Phase,
 		HardCapMinutes:    h.HardCapMinutes,
 	})
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return prompt, goalViews, nil, nil
+}
+
+// buildWeeklySystemPrompt assembles the weekly-reflection chat's system
+// prompt. Inputs: the letter (loaded from summaries.metadata), active
+// goals split by end_date, top drainers/chargers for the week, and the
+// prior-week surprise sentence for continuity. session.PeriodStart is
+// the week_start anchor.
+func (h *ChatHandler) buildWeeklySystemPrompt(
+	ctx context.Context, user *domain.User, session *domain.ChatSession,
+) (string, []chat.GoalView, []chat.GoalView, error) {
+	if session.PeriodStart == nil {
+		return "", nil, nil, fmt.Errorf("weekly session has no period_start")
+	}
+	weekStart, err := time.Parse("2006-01-02", *session.PeriodStart)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("parse period_start: %w", err)
+	}
+	weekEnd := weekStart.AddDate(0, 0, 6)
+
+	displayName := ""
+	if user.DisplayName != nil {
+		displayName = *user.DisplayName
+	}
+
+	// Letter. Pull the summaries row for this week_start; fall back to
+	// the most recent weekly summary up to weekEnd so legacy-anchored
+	// rows still seed the prompt with something.
+	var letter chat.WeeklyLetterView
+	if h.Summaries != nil {
+		summary, _ := h.Summaries.GetByPeriod(ctx, user.ID, string(domain.PeriodWeek), weekStart)
+		if summary == nil || !summary.Metadata.HasLetterSynthesis() {
+			if latest, _ := h.Summaries.LatestByPeriodTypeUpTo(ctx, user.ID, string(domain.PeriodWeek), weekEnd); latest != nil && latest.Metadata.HasLetterSynthesis() {
+				summary = latest
+			}
+		}
+		if summary != nil {
+			letter = chat.WeeklyLetterView{
+				Charged:         summary.Metadata.Charged,
+				Drained:         summary.Metadata.Drained,
+				Grateful:        summary.Metadata.Grateful,
+				Insights:        summary.Metadata.Insights,
+				ClosingQuestion: summary.Metadata.ClosingQuestion,
+			}
+		}
+	}
+
+	// Patterns: top 3 drainers + chargers for the 7-day window.
+	var topDrainers, topChargers []chat.TagSummary
+	if h.DailyEntryTags != nil {
+		drainAggs, _ := h.DailyEntryTags.TopByValence(ctx, user.ID, domain.TagRoleDrainer, 7, 3)
+		for _, a := range drainAggs {
+			topDrainers = append(topDrainers, chat.TagSummary{Label: a.Label, Appearances: a.Appearances})
+		}
+		chargeAggs, _ := h.DailyEntryTags.TopByValence(ctx, user.ID, domain.TagRoleCharger, 7, 3)
+		for _, a := range chargeAggs {
+			topChargers = append(topChargers, chat.TagSummary{Label: a.Label, Appearances: a.Appearances})
+		}
+	}
+
+	// Goals: split into mid-flight (end_date > weekEnd) and ending
+	// (end_date <= weekEnd). We list active as-of weekEnd so we don't
+	// miss a goal that ends exactly on weekEnd.
+	var allActive, endingGoals, midGoals []chat.GoalView
+	if h.Goals != nil {
+		rawGoals, gerr := h.Goals.ListActive(ctx, user.ID, weekEnd)
+		if gerr != nil {
+			return "", nil, nil, fmt.Errorf("load goals: %w", gerr)
+		}
+		for _, g := range rawGoals {
+			view := chat.GoalView{ID: g.ID, Title: g.Title, CheckInQuestion: g.CheckInQuestion}
+			allActive = append(allActive, view)
+			endDate, perr := time.Parse("2006-01-02", g.EndDate)
+			if perr != nil {
+				midGoals = append(midGoals, view)
+				continue
+			}
+			if !endDate.After(weekEnd) {
+				endingGoals = append(endingGoals, view)
+			} else {
+				midGoals = append(midGoals, view)
+			}
+		}
+	}
+
+	// Continuity: previous week's distilled surprise.
+	prevSurprise := ""
+	if h.WeeklyReflections != nil {
+		if prev, _ := h.WeeklyReflections.LatestBeforeWeek(ctx, user.ID, weekStart); prev != nil {
+			prevSurprise = prev.SurpriseText
+		}
+	}
+
+	prompt, err := chat.BuildWeeklySystemPrompt(chat.BuildWeeklySystemPromptParams{
+		DisplayName:      displayName,
+		WeekStart:        timezone.FormatDate(weekStart),
+		WeekEnd:          timezone.FormatDate(weekEnd),
+		Letter:           letter,
+		TopDrainers:      topDrainers,
+		TopChargers:      topChargers,
+		MidFlightGoals:   midGoals,
+		EndingGoals:      endingGoals,
+		PrevWeekSurprise: prevSurprise,
+		Phase:            session.Phase,
+	})
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return prompt, allActive, endingGoals, nil
 }

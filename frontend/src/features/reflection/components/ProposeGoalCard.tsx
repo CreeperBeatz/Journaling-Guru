@@ -1,0 +1,226 @@
+import { useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/sonner";
+import { useCreateGoal } from "@/features/goals/hooks";
+
+// Local <Label> shim — the project doesn't ship a shadcn label
+// primitive, so use the native element with a stable class.
+function Label({
+  htmlFor,
+  className,
+  children,
+}: {
+  htmlFor?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label
+      htmlFor={htmlFor}
+      className={`text-xs font-medium text-foreground/85 ${className ?? ""}`}
+    >
+      {children}
+    </label>
+  );
+}
+
+import { postSystemEvent } from "../api";
+import { usePatchReflection } from "../hooks";
+
+// Tool args emitted by the model when calling propose_goal. Field names
+// match backend/internal/llm/chat/tools.go::ToolProposeGoal parameters.
+export interface ProposeGoalArgs {
+  title?: string;
+  check_in_question?: string;
+  why_matters?: string;
+  if_followed?: string;
+  if_not_followed?: string;
+  duration_weeks?: number;
+}
+
+interface Props {
+  sessionId: string;
+  args: ProposeGoalArgs;
+}
+
+// ProposeGoalCard renders the inline confirmation card for a model-
+// proposed weekly goal. The "why" fields (why_matters / if_followed /
+// if_not_followed) are read-only context — they live in the chat
+// transcript, not in the goal row. Only title / check-in / duration
+// are editable + persisted via POST /api/goals.
+//
+// Lifecycle:
+//   1. Initial: form prefilled with the model's proposal.
+//   2. Accept: createGoal → patchReflection({new_goal_id}) → switch to
+//      saved state, append user_accepted_goal system_event.
+//   3. Decline: append user_declined_goal system_event, switch to
+//      declined state.
+//
+// Decision is one-shot per card render. A future turn proposing a
+// different goal will mount a fresh card.
+export function ProposeGoalCard({ sessionId, args }: Props) {
+  const [title, setTitle] = useState(args.title ?? "");
+  const [checkIn, setCheckIn] = useState(args.check_in_question ?? "");
+  const [weeks, setWeeks] = useState(args.duration_weeks ?? 1);
+  const [state, setState] = useState<"open" | "saving" | "saved" | "declined">("open");
+
+  const createGoal = useCreateGoal();
+  const patch = usePatchReflection();
+
+  const pending = state === "saving" || createGoal.isPending;
+
+  const onAccept = async () => {
+    if (!title.trim() || !checkIn.trim()) {
+      toast.error("Goal needs a title and a check-in question.");
+      return;
+    }
+    setState("saving");
+    try {
+      const goal = await createGoal.mutateAsync({
+        title: title.trim(),
+        check_in_question: checkIn.trim(),
+        duration_weeks: Math.max(1, Math.min(52, weeks)),
+      });
+      try {
+        await patch.mutateAsync({ new_goal_id: goal.id });
+      } catch {
+        // Non-fatal: the goal still exists; the reflection ↔ goal
+        // link is best-effort.
+      }
+      try {
+        await postSystemEvent(sessionId, "user_accepted_goal");
+      } catch {
+        /* best-effort */
+      }
+      setState("saved");
+    } catch (err) {
+      setState("open");
+      toast.error("Couldn't save goal", {
+        description: err instanceof Error ? err.message : "try again",
+      });
+    }
+  };
+
+  const onDecline = async () => {
+    setState("declined");
+    try {
+      await postSystemEvent(sessionId, "user_declined_goal");
+    } catch {
+      /* best-effort */
+    }
+  };
+
+  if (state === "saved") {
+    return (
+      <Card className="border-emerald-500/40 bg-emerald-500/5">
+        <CardContent className="px-4 py-3 text-sm">
+          <p className="font-medium">Goal saved: {title.trim()}</p>
+          <p className="mt-1 text-muted-foreground">
+            Daily check-in: {checkIn.trim()}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (state === "declined") {
+    return (
+      <Card className="border-border/60 bg-muted/30">
+        <CardContent className="px-4 py-3 text-sm text-muted-foreground">
+          You passed on this goal.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-primary/30 bg-primary/5">
+      <CardContent className="space-y-3 px-4 py-3 text-sm">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">
+          Proposed goal for next week
+        </p>
+        <div className="space-y-1">
+          <Label htmlFor="goal-title" className="text-xs">
+            Title
+          </Label>
+          <Input
+            id="goal-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="What you'll try"
+            maxLength={120}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="goal-checkin" className="text-xs">
+            Daily check-in question
+          </Label>
+          <Input
+            id="goal-checkin"
+            value={checkIn}
+            onChange={(e) => setCheckIn(e.target.value)}
+            placeholder="Did you do it today?"
+            maxLength={160}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="goal-weeks" className="text-xs">
+            How many weeks
+          </Label>
+          <Input
+            id="goal-weeks"
+            type="number"
+            min={1}
+            max={12}
+            value={weeks}
+            onChange={(e) => setWeeks(Number(e.target.value) || 1)}
+            className="w-24"
+          />
+        </div>
+
+        {(args.why_matters || args.if_followed || args.if_not_followed) && (
+          <div className="space-y-2 rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground">Why this matters (your words)</p>
+            {args.why_matters ? (
+              <Textarea
+                value={args.why_matters}
+                readOnly
+                className="min-h-[3rem] resize-none border-none bg-transparent text-xs"
+              />
+            ) : null}
+            {args.if_followed ? (
+              <p>
+                <span className="font-medium">If you follow it: </span>
+                {args.if_followed}
+              </p>
+            ) : null}
+            {args.if_not_followed ? (
+              <p>
+                <span className="font-medium">If you don't: </span>
+                {args.if_not_followed}
+              </p>
+            ) : null}
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <Button size="sm" onClick={onAccept} disabled={pending}>
+            {pending ? "Saving…" : "Accept"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onDecline}
+            disabled={pending}
+          >
+            Not this one
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
