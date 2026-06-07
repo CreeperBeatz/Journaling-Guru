@@ -287,6 +287,37 @@ func (s *DailyInputStore) MoodSeries(
 	return out, rows.Err()
 }
 
+// MoodSeriesInRange is MoodSeries anchored to an explicit [since, until]
+// date window (inclusive) instead of current_date. Used by the weekly
+// synthesis worker so a late-firing job still reads its own period's
+// moods rather than "the last N days from now".
+func (s *DailyInputStore) MoodSeriesInRange(
+	ctx context.Context, userID string, since, until time.Time,
+) ([]DailyMoodPoint, error) {
+	const q = `
+		SELECT to_char(local_date, 'YYYY-MM-DD') AS local_date,
+		       mood::float8                       AS score
+		  FROM daily_inputs
+		 WHERE user_id = $1
+		   AND mood IS NOT NULL
+		   AND local_date BETWEEN $2 AND $3
+		ORDER BY local_date ASC`
+	rows, err := s.DB.Query(ctx, q, userID, since, until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]DailyMoodPoint, 0)
+	for rows.Next() {
+		var p DailyMoodPoint
+		if err := rows.Scan(&p.LocalDate, &p.Score); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // AggregatedMetadata is the minimal shape kept after the Energy Audit
 // pivot. Mood is the arithmetic mean of non-null mood values in range,
 // EntryCount is the number of distinct local_dates with any input.

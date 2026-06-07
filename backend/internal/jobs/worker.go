@@ -138,19 +138,17 @@ func (w *SummaryWorker) runWeekly(
 	}
 
 	// Build the tag-table inputs the headline prompt feeds on. Window
-	// is one week (period.Start..period.End inclusive). 0 limit pulls
-	// the full set so the prompt sees the actual top by appearance.
-	weekDays := int(period.End.Sub(period.Start).Hours()/24) + 1
-	if weekDays < 1 {
-		weekDays = 7
-	}
+	// is the job's own period (period.Start..period.End inclusive) —
+	// NOT "last N days from now": jobs can fire days late (retries,
+	// worker downtime, carry-over) and a relative window would silently
+	// aggregate the wrong week.
 	var drainers, chargers []store.TagAggregate
 	if w.DailyEntryTags != nil {
-		drainers, _ = w.DailyEntryTags.TopByValence(ctx, user.ID, domain.TagRoleDrainer, weekDays, 5)
-		chargers, _ = w.DailyEntryTags.TopByValence(ctx, user.ID, domain.TagRoleCharger, weekDays, 5)
+		drainers, _ = w.DailyEntryTags.TopByValenceInRange(ctx, user.ID, domain.TagRoleDrainer, period.Start, period.End, 5)
+		chargers, _ = w.DailyEntryTags.TopByValenceInRange(ctx, user.ID, domain.TagRoleCharger, period.Start, period.End, 5)
 	}
 
-	moodSeries, _ := w.DailyInputs.MoodSeries(ctx, user.ID, weekDays)
+	moodSeries, _ := w.DailyInputs.MoodSeriesInRange(ctx, user.ID, period.Start, period.End)
 	gratitudes, _ := w.DailyInputs.ListGratitudeInRange(ctx, user.ID, period.Start, period.End)
 
 	// Per-day text snapshot. Days with content but no existing tags get

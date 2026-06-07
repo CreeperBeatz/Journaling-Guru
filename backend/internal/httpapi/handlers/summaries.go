@@ -762,11 +762,20 @@ func (h *SummaryHandler) buildReflection(
 	summary, _ := h.Summaries.GetByPeriod(ctx, userID, string(domain.PeriodWeek), weekStart)
 	if summary == nil || !summary.Metadata.HasLetterSynthesis() {
 		// Exact-match miss or pre-synthesis row. Fall back to the most
-		// recent weekly summary at-or-before weekEnd so off-day opens
-		// and legacy-ISO-anchored rows still surface something.
+		// recent weekly summary at-or-before weekEnd so legacy-ISO-
+		// anchored rows (period_start off by a few days from the
+		// canonical reflection_weekday anchoring) still surface.
+		//
+		// The fallback row must OVERLAP the requested week
+		// (period_end >= weekStart; period_start <= weekEnd is implied
+		// by the query's asOf bound). Without this guard an empty week
+		// would render an arbitrarily old letter as if it were this
+		// week's — entries from weeks ago presented under the current
+		// week's header. ISO-date strings compare lexicographically.
 		if latest, _ := h.Summaries.LatestByPeriodTypeUpTo(
 			ctx, userID, string(domain.PeriodWeek), weekEnd,
-		); latest != nil && latest.Metadata.HasLetterSynthesis() {
+		); latest != nil && latest.Metadata.HasLetterSynthesis() &&
+			latest.PeriodEnd >= timezone.FormatDate(weekStart) {
 			summary = latest
 		}
 	}

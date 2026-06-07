@@ -188,3 +188,48 @@ func (s *DailyEntryTagStore) TopByValence(
 	}
 	return out, rows.Err()
 }
+
+// TopByValenceInRange is TopByValence anchored to an explicit
+// [since, until] date window (inclusive) instead of current_date. Used
+// by the weekly synthesis worker so a job that fires late still
+// aggregates the tags of its own period, not "the last N days from
+// whenever the worker got to it".
+func (s *DailyEntryTagStore) TopByValenceInRange(
+	ctx context.Context, userID, role string, since, until time.Time, limit int,
+) ([]TagAggregate, error) {
+	q := `
+		SELECT t.id,
+		       t.label,
+		       COUNT(*)::int                            AS appearances,
+		       AVG(di.mood)::float8                     AS avg_mood
+		  FROM daily_entry_tags det
+		  JOIN tags t ON t.id = det.tag_id
+		  LEFT JOIN daily_inputs di
+		         ON di.user_id = det.user_id
+		        AND di.local_date = det.local_date
+		 WHERE det.user_id = $1
+		   AND det.role = $2
+		   AND t.status = 'active'
+		   AND det.local_date BETWEEN $3 AND $4
+		 GROUP BY t.id, t.label
+		 ORDER BY appearances DESC, t.label ASC`
+	args := []any{userID, role, since, until}
+	if limit > 0 {
+		q += ` LIMIT $5`
+		args = append(args, limit)
+	}
+	rows, err := s.DB.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]TagAggregate, 0)
+	for rows.Next() {
+		var a TagAggregate
+		if err := rows.Scan(&a.TagID, &a.Label, &a.Appearances, &a.AvgMood); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
