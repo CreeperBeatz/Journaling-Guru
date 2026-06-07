@@ -70,6 +70,8 @@ func main() {
 	goalStore := store.NewGoalStore(db)
 	goalCheckIns := store.NewGoalCheckInStore(db)
 	weeklyReflections := store.NewWeeklyReflectionStore(db)
+	memories := store.NewMemoryStore(db)
+	memoryJobs := store.NewMemoryExtractionJobStore(db)
 
 	summaryLLM := llm.NewOpenRouter(
 		cfg.OpenRouterKey, cfg.SummaryModel,
@@ -103,6 +105,11 @@ func main() {
 	}
 	reminderScheduler := &jobs.ReminderScheduler{
 		Jobs:   reminderJobs,
+		Users:  users,
+		Logger: logger,
+	}
+	memoryScheduler := &jobs.MemoryScheduler{
+		Jobs:   memoryJobs,
 		Users:  users,
 		Logger: logger,
 	}
@@ -145,8 +152,19 @@ func main() {
 		Users:             users,
 		WeeklyReflections: weeklyReflections,
 		Scheduler:         scheduler,
+		MemoryScheduler:   memoryScheduler,
 		LLM:               classifyLLM,
 		Logger:            logger,
+	}
+
+	memoryWorker := &jobs.MemoryExtractionWorker{
+		Jobs:        memoryJobs,
+		Memories:    memories,
+		Entries:     entries,
+		DailyInputs: dailyInputs,
+		Users:       users,
+		LLM:         classifyLLM,
+		Logger:      logger,
 	}
 
 	chatIdleSweeper := &jobs.ChatIdleSweeper{
@@ -160,6 +178,7 @@ func main() {
 	river.AddWorker(workers, worker)
 	river.AddWorker(workers, pushWorker)
 	river.AddWorker(workers, chatExtractWorker)
+	river.AddWorker(workers, memoryWorker)
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues: map[string]river.QueueConfig{
@@ -188,7 +207,7 @@ func main() {
 	)
 
 	go runDispatchLoop(rootCtx, logger, jobsStore, reminderJobs,
-		chatExtractionJobs, chatIdleSweeper,
+		chatExtractionJobs, memoryJobs, chatIdleSweeper,
 		riverClient, time.Duration(cfg.SummaryDispatchInterval)*time.Second)
 
 	<-rootCtx.Done()
@@ -201,15 +220,16 @@ func main() {
 }
 
 // runDispatchLoop is the every-N-seconds tick that drains the surviving
-// three job queues (summary, reminder, chat extraction) and runs the
-// chat idle sweeper. Atomic claim (FOR UPDATE SKIP LOCKED) means
-// concurrent worker replicas can't double-enqueue.
+// four job queues (summary, reminder, chat extraction, memory
+// extraction) and runs the chat idle sweeper. Atomic claim (FOR UPDATE
+// SKIP LOCKED) means concurrent worker replicas can't double-enqueue.
 func runDispatchLoop(
 	ctx context.Context,
 	logger *slog.Logger,
 	jobsStore *store.SummaryJobStore,
 	reminderJobs *store.ReminderJobStore,
 	chatExtractionJobs *store.ChatExtractionJobStore,
+	memoryJobs *store.MemoryExtractionJobStore,
 	chatIdleSweeper *jobs.ChatIdleSweeper,
 	riverClient *river.Client[pgx.Tx],
 	interval time.Duration,
@@ -222,14 +242,14 @@ func runDispatchLoop(
 
 	// Run once immediately so a freshly-restarted worker doesn't sit
 	// idle for a full interval if there's a backlog.
-	tick(ctx, logger, jobsStore, reminderJobs, chatExtractionJobs, chatIdleSweeper, riverClient)
+	tick(ctx, logger, jobsStore, reminderJobs, chatExtractionJobs, memoryJobs, chatIdleSweeper, riverClient)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tick(ctx, logger, jobsStore, reminderJobs, chatExtractionJobs, chatIdleSweeper, riverClient)
+			tick(ctx, logger, jobsStore, reminderJobs, chatExtractionJobs, memoryJobs, chatIdleSweeper, riverClient)
 		}
 	}
 }
@@ -240,6 +260,7 @@ func tick(
 	jobsStore *store.SummaryJobStore,
 	reminderJobs *store.ReminderJobStore,
 	chatExtractionJobs *store.ChatExtractionJobStore,
+	memoryJobs *store.MemoryExtractionJobStore,
 	chatIdleSweeper *jobs.ChatIdleSweeper,
 	riverClient *river.Client[pgx.Tx],
 ) {
@@ -292,16 +313,38 @@ func tick(
 	claimedChat, err := chatExtractionJobs.ClaimDue(ctx, batch)
 	if err != nil {
 		logger.Warn("claim due chat extractions", "err", err)
+	} else if len(claimedChat) > 0 {
+		logger.Info("dispatching chat extraction jobs", "count", len(claimedChat))
+		for _, c := range claimedChat {
+			if _, err := riverClient.Insert(ctx, jobs.ChatExtractionArgs{JobID: c.ID}, nil); err != nil {
+				logger.Warn("river insert (chat extraction)", "err", err, "job_id", c.ID)
+				_ = chatExtractionJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
+			}
+		}
+	}
+
+	// Memory reconciliation queue — same reclaim-then-claim shape as
+	// summaries. The 15-minute stale threshold dwarfs the single
+	// classify-tier call this worker makes.
+	if reclaimed, err := memoryJobs.ReclaimStale(ctx, 15*time.Minute, 5); err != nil {
+		logger.Warn("reclaim stale memory jobs", "err", err)
+	} else if reclaimed > 0 {
+		logger.Info("reclaimed stale memory jobs", "count", reclaimed)
+	}
+
+	claimedMemory, err := memoryJobs.ClaimDue(ctx, batch)
+	if err != nil {
+		logger.Warn("claim due memory extractions", "err", err)
 		return
 	}
-	if len(claimedChat) == 0 {
+	if len(claimedMemory) == 0 {
 		return
 	}
-	logger.Info("dispatching chat extraction jobs", "count", len(claimedChat))
-	for _, c := range claimedChat {
-		if _, err := riverClient.Insert(ctx, jobs.ChatExtractionArgs{JobID: c.ID}, nil); err != nil {
-			logger.Warn("river insert (chat extraction)", "err", err, "job_id", c.ID)
-			_ = chatExtractionJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
+	logger.Info("dispatching memory extraction jobs", "count", len(claimedMemory))
+	for _, c := range claimedMemory {
+		if _, err := riverClient.Insert(ctx, jobs.MemoryExtractionArgs{JobID: c.ID}, nil); err != nil {
+			logger.Warn("river insert (memory extraction)", "err", err, "job_id", c.ID)
+			_ = memoryJobs.ReleaseForRetry(ctx, c.ID, "river insert: "+err.Error())
 		}
 	}
 }

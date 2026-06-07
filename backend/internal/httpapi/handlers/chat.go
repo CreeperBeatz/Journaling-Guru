@@ -48,6 +48,9 @@ type ChatHandler struct {
 	WeeklyReflections *store.WeeklyReflectionStore
 	Summaries         *store.SummaryStore
 	DailyEntryTags    *store.DailyEntryTagStore
+	// Memories feeds the "What you know about the user" block in both
+	// chat scopes. Nil-safe: skipped when unset.
+	Memories       *store.MemoryStore
 	ChatLLM        *llm.OpenRouter
 	ClassifyLLM    *llm.OpenRouter
 	// Realtime is the OpenAI Realtime API client used by /voice/start.
@@ -2016,6 +2019,7 @@ func (h *ChatHandler) buildDailySystemPrompt(
 	dayStartLabel := fmt.Sprintf("%02d:%02d", dsm/60, dsm%60)
 
 	prompt, err := chat.BuildSystemPrompt(chat.BuildSystemPromptParams{
+		Memories:          h.loadMemoryGroups(ctx, user.ID),
 		DisplayName:       displayName,
 		JournalDate:       session.LocalDate,
 		JournalWeekday:    journalWeekday,
@@ -2035,6 +2039,21 @@ func (h *ChatHandler) buildDailySystemPrompt(
 		return "", nil, nil, err
 	}
 	return prompt, goalViews, nil, nil
+}
+
+// loadMemoryGroups fetches the user's active durable facts grouped for
+// the prompt templates. Best-effort: a memory load failure degrades to
+// "no memories" rather than blocking the chat session — log and move on.
+func (h *ChatHandler) loadMemoryGroups(ctx context.Context, userID string) []chat.MemoryGroup {
+	if h.Memories == nil {
+		return nil
+	}
+	rows, err := h.Memories.ListActive(ctx, userID)
+	if err != nil {
+		h.Logger.Warn("load memories for prompt", "err", err, "user_id", userID)
+		return nil
+	}
+	return chat.MemoryGroupsFromDomain(rows)
 }
 
 // buildWeeklySystemPrompt assembles the weekly-reflection chat's system
@@ -2137,6 +2156,7 @@ func (h *ChatHandler) buildWeeklySystemPrompt(
 		MidFlightGoals:   midGoals,
 		EndingGoals:      endingGoals,
 		PrevWeekSurprise: prevSurprise,
+		Memories:         h.loadMemoryGroups(ctx, user.ID),
 		Phase:            session.Phase,
 	})
 	if err != nil {

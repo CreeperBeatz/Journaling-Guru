@@ -1,0 +1,61 @@
+{{/* User-prompt template for the per-day memory reconciliation pass.
+   The system prompt (memoryReconcileSystemPrompt in chat/memory.go)
+   sets the schema and durability rules; this template provides the
+   inputs.
+
+   Variables:
+     .LocalDate — YYYY-MM-DD
+     .Weekday   — e.g. "Friday"
+     .Daily     — *MemoryDayInput or nil {MoodLabel, DrainedText,
+                  ChargedText, GratitudeText, ReflectionText}
+     .Entries   — []MemoryDayEntry{Prompt, Body}
+     .Writable  — []MemoryView{ID, Category, Content} (may be updated/deleted)
+     .Pinned    — []MemoryView (read-only, user-locked)
+*/ -}}
+
+# Journal record for {{.Weekday}}, {{.LocalDate}}
+
+{{if .Daily -}}
+## Daily check-in
+{{if .Daily.MoodLabel}}Mood: {{.Daily.MoodLabel}}
+{{end -}}
+{{if .Daily.DrainedText}}What drained them: {{.Daily.DrainedText}}
+{{end -}}
+{{if .Daily.ChargedText}}What charged them: {{.Daily.ChargedText}}
+{{end -}}
+{{if .Daily.GratitudeText}}Grateful for: {{.Daily.GratitudeText}}
+{{end -}}
+{{if .Daily.ReflectionText}}Reflection: {{.Daily.ReflectionText}}
+{{end}}
+{{end -}}
+{{if .Entries -}}
+## Journal entries
+{{range .Entries}}Q: {{.Prompt}}
+A: {{.Body}}
+
+{{end}}
+{{end -}}
+# Existing memories you may UPDATE or DELETE
+
+Reference these by `id` verbatim — never invent an id.
+{{if .Writable}}
+{{range .Writable -}}
+- id={{.ID}} [{{.Category}}] {{.Content}}
+{{end}}
+{{- else}}
+(none yet)
+{{end}}
+{{if .Pinned -}}
+# User-locked memories (read-only)
+
+The user wrote or confirmed these themselves. You must NOT update or
+delete them, and you must NOT re-add a fact already covered by one of
+them.
+
+{{range .Pinned -}}
+- [{{.Category}}] {{.Content}}
+{{end}}
+{{end -}}
+
+Now emit the JSON object exactly per the schema in the system prompt.
+If today's record contains no new durable facts, emit {"operations": []}.

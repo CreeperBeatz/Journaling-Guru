@@ -26,9 +26,10 @@ type ApplyDeps struct {
 	DailyEntryTags *store.DailyEntryTagStore
 	Goals          *store.GoalStore        // optional; nil disables goal_check_ins writes
 	GoalCheckIns   *store.GoalCheckInStore // paired with Goals
-	LLM            *llm.OpenRouter
-	Logger         *slog.Logger
-	Scheduler      *Scheduler // optional; nil-safe
+	LLM             *llm.OpenRouter
+	Logger          *slog.Logger
+	Scheduler       *Scheduler       // optional; nil-safe
+	MemoryScheduler *MemoryScheduler // optional; nil-safe
 }
 
 // ApplyExtraction writes the extraction result to daily_inputs +
@@ -160,6 +161,11 @@ func ApplyExtraction(
 	if d.Scheduler != nil {
 		if err := d.Scheduler.LazySeed(ctx, user.ID, time.Now()); err != nil && d.Logger != nil {
 			d.Logger.Warn("lazy seed (chat extraction)", "err", err, "session_id", session.ID)
+		}
+	}
+	if d.MemoryScheduler != nil {
+		if err := d.MemoryScheduler.LazySeed(ctx, user.ID, time.Now()); err != nil && d.Logger != nil {
+			d.Logger.Warn("lazy seed memory (chat extraction)", "err", err, "session_id", session.ID)
 		}
 	}
 

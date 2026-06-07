@@ -33,6 +33,7 @@ type EntryHandler struct {
 	WeeklyReflections *store.WeeklyReflectionStore // optional; surfaces reflection week_ends in heatmap
 	Logger            *slog.Logger
 	Scheduler         SummaryScheduler // nil-safe: phase-1 callers (tests) can omit
+	MemoryScheduler   SummaryScheduler // same contract; arms the day's memory pass
 }
 
 const maxEntryBodyLen = 16_000
@@ -291,6 +292,11 @@ func (h *EntryHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 		if err := h.Scheduler.LazySeed(r.Context(), sess.UserID, time.Now()); err != nil {
 			// Log only — schedule churn must never block the user save.
 			h.Logger.Warn("lazy seed", "err", err, "user_id", sess.UserID)
+		}
+	}
+	if entry != nil && h.MemoryScheduler != nil {
+		if err := h.MemoryScheduler.LazySeed(r.Context(), sess.UserID, time.Now()); err != nil {
+			h.Logger.Warn("lazy seed memory", "err", err, "user_id", sess.UserID)
 		}
 	}
 

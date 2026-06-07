@@ -47,6 +47,8 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	chatMessages := store.NewChatMessageStore(db)
 	chatExtractionJobs := store.NewChatExtractionJobStore(db)
 	weeklyReflections := store.NewWeeklyReflectionStore(db)
+	memories := store.NewMemoryStore(db)
+	memoryJobs := store.NewMemoryExtractionJobStore(db)
 
 	magicSvc := auth.NewMagicLinkService(auth.MagicLinkConfig{
 		TTL:         cfg.MagicLinkTTL(),
@@ -76,6 +78,15 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	// ScheduleNext is the worker's job; the api owns Replan.
 	reminderScheduler := &jobs.ReminderScheduler{
 		Jobs:   reminderJobs,
+		Users:  users,
+		Logger: logger,
+	}
+
+	// Memory scheduler — arms the per-day memory reconciliation pass on
+	// every entry / daily-input write, same lazy-seed contract as the
+	// summary scheduler.
+	memoryScheduler := &jobs.MemoryScheduler{
+		Jobs:   memoryJobs,
 		Users:  users,
 		Logger: logger,
 	}
@@ -124,15 +135,18 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		WeeklyReflections: weeklyReflections,
 		Logger:            logger,
 		Scheduler:         scheduler,
+		MemoryScheduler:   memoryScheduler,
 	}
 	dailyInputsH := &handlers.DailyInputHandler{
-		Inputs:         dailyInputs,
-		Users:          users,
-		Tags:           tags,
-		DailyEntryTags: dailyEntryTags,
-		Logger:         logger,
-		Scheduler:      scheduler,
+		Inputs:          dailyInputs,
+		Users:           users,
+		Tags:            tags,
+		DailyEntryTags:  dailyEntryTags,
+		Logger:          logger,
+		Scheduler:       scheduler,
+		MemoryScheduler: memoryScheduler,
 	}
+	memoriesH := &handlers.MemoryHandler{Memories: memories, Logger: logger}
 	tagsH := &handlers.TagHandler{Tags: tags, Logger: logger}
 	goalsH := &handlers.GoalHandler{
 		Goals:          goals,
@@ -191,6 +205,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		WeeklyReflections: weeklyReflections,
 		Summaries:         summaries,
 		DailyEntryTags:    dailyEntryTags,
+		Memories:          memories,
 		ChatLLM:           chatLLM,
 		ClassifyLLM:       classifyLLM,
 		Realtime:          realtimeClient,
@@ -304,6 +319,12 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 					r.Post("/push/subscribe", pushH.Subscribe)
 					r.Delete("/push/subscribe", pushH.Unsubscribe)
 					r.Post("/push/test", pushH.Test)
+
+					// Memory management — user writes pin the row
+					// against the reconciliation worker (manual-wins).
+					r.Post("/memories", memoriesH.Create)
+					r.Patch("/memories/{id}", memoriesH.Update)
+					r.Delete("/memories/{id}", memoriesH.Delete)
 				})
 			})
 
@@ -341,6 +362,8 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 				r.Get("/reflection/by-week/{week_start}/chat", chatH.ChatByWeek)
 
 				r.Get("/push/state", pushH.State)
+
+				r.Get("/memories", memoriesH.List)
 			})
 		})
 

@@ -42,8 +42,9 @@ import { InstallCard } from "@/features/install/InstallCard";
 
 import { updateMe, UpdateMePatch } from "./api";
 import { AppearanceCard } from "./AppearanceCard";
+import { MemoryCard } from "./memory/MemoryCard";
 
-const VALID_TABS = ["general", "notifications", "account"] as const;
+const VALID_TABS = ["general", "memory", "notifications", "account"] as const;
 
 type SettingsTab = (typeof VALID_TABS)[number];
 
@@ -151,8 +152,9 @@ export function Settings() {
       </header>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as SettingsTab)}>
-        <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">
+        <TabsList className="grid w-full grid-cols-4 sm:inline-flex sm:w-auto">
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="memory">Memory</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="account">Account</TabsTrigger>
         </TabsList>
@@ -321,6 +323,10 @@ export function Settings() {
             <span className="mx-1.5">·</span>
             Re-runs the first-time setup tour. Doesn't reset anything.
           </p>
+        </TabsContent>
+
+        <TabsContent value="memory" className="space-y-4">
+          <MemoryCard />
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-4">

@@ -66,8 +66,10 @@ grateful for, and anything else on their mind.
   active crisis, or asks for clinical help: respond with care for
   exactly two sentences and stop. The system handles crisis resources
   separately.
-- Never invent facts about the user. No "I remember when you said X"
-  unless X is verbatim earlier in this transcript.
+- Never invent facts about the user. You may reference (a) anything
+  verbatim earlier in this transcript and (b) the established facts in
+  the "What you know about the user" section below, when present. Do
+  not assert anything about their life beyond those two sources.
 - Keep replies bounded to 40-80 tokens. Cut the second clause if it's
   not load-bearing.
 - The session has a soft budget of 5-15 minutes (and a 30-minute hard
@@ -164,8 +166,10 @@ land one small thing to take into next week.
   pharmacological advice. If the user mentions self-harm, suicide,
   active crisis, or asks for clinical help: respond with care for
   exactly two sentences and stop. The system handles crisis resources.
-- Never invent facts about the user. No "I remember when you said X"
-  unless X is verbatim earlier in this transcript or in the letter.
+- Never invent facts about the user. You may reference (a) anything
+  verbatim earlier in this transcript or in the letter and (b) the
+  established facts in the "What you know about the user" section
+  below, when present. Do not assert anything beyond those sources.
 - Keep replies bounded to 40-80 tokens. Cut the second clause if it's
   not load-bearing.
 
@@ -312,6 +316,43 @@ func GoalViewsFromDomain(gs []domain.Goal) []GoalView {
 	return out
 }
 
+// MemoryGroup is one category's worth of durable user facts, rendered
+// into the chat context templates. Items are plain fact sentences —
+// status/pinned internals never reach the prompt.
+type MemoryGroup struct {
+	Category string
+	Items    []string
+}
+
+// memoryPromptCap bounds how many facts reach the prompt. Inject-all is
+// the intended behavior (a journaling corpus stays small); the cap is a
+// runaway guard, not a relevance filter. Oldest-first within each
+// category (ListActive's order), so long-established facts survive.
+const memoryPromptCap = 200
+
+// MemoryGroupsFromDomain groups active memories by category in the
+// canonical domain.MemoryCategories order. Caller passes
+// MemoryStore.ListActive output (already ordered by category position).
+func MemoryGroupsFromDomain(memories []domain.Memory) []MemoryGroup {
+	if len(memories) == 0 {
+		return nil
+	}
+	if len(memories) > memoryPromptCap {
+		memories = memories[:memoryPromptCap]
+	}
+	byCat := make(map[string][]string, len(domain.MemoryCategories))
+	for _, m := range memories {
+		byCat[m.Category] = append(byCat[m.Category], m.Content)
+	}
+	out := make([]MemoryGroup, 0, len(byCat))
+	for _, cat := range domain.MemoryCategories {
+		if items := byCat[cat]; len(items) > 0 {
+			out = append(out, MemoryGroup{Category: cat, Items: items})
+		}
+	}
+	return out
+}
+
 // BuildSystemPromptParams is the shape passed into BuildSystemPrompt.
 // Recent7DayMoodAvg and RecentTopEmotions can be nil/empty — the
 // template renders sensibly either way.
@@ -338,6 +379,10 @@ type BuildSystemPromptParams struct {
 	Goals             []GoalView
 	Recent7DayMoodAvg *float64
 	RecentTopEmotions []string
+	// Memories are the user's durable facts, grouped by category.
+	// Loaded once at prompt-build; stable within a session because the
+	// reconciliation pass runs at day close.
+	Memories       []MemoryGroup
 	Phase          string
 	HardCapMinutes int
 }
@@ -386,6 +431,7 @@ type BuildWeeklySystemPromptParams struct {
 	MidFlightGoals   []GoalView
 	EndingGoals      []GoalView
 	PrevWeekSurprise string
+	Memories         []MemoryGroup
 	Phase            string
 }
 

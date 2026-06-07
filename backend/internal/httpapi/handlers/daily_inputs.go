@@ -27,8 +27,9 @@ type DailyInputHandler struct {
 	Users          *store.UserStore
 	Tags           *store.TagStore
 	DailyEntryTags *store.DailyEntryTagStore
-	Logger         *slog.Logger
-	Scheduler      SummaryScheduler // shares the interface with EntryHandler — same lazy-seed contract
+	Logger          *slog.Logger
+	Scheduler       SummaryScheduler // shares the interface with EntryHandler — same lazy-seed contract
+	MemoryScheduler SummaryScheduler // same contract; arms the day's memory pass
 }
 
 const (
@@ -209,6 +210,11 @@ func (h *DailyInputHandler) write(
 	if lazySeed && row != nil && h.Scheduler != nil {
 		if err := h.Scheduler.LazySeed(ctx, userID, time.Now()); err != nil {
 			h.Logger.Warn("lazy seed (daily input)", "err", err, "user_id", userID)
+		}
+	}
+	if lazySeed && row != nil && h.MemoryScheduler != nil {
+		if err := h.MemoryScheduler.LazySeed(ctx, userID, time.Now()); err != nil {
+			h.Logger.Warn("lazy seed memory (daily input)", "err", err, "user_id", userID)
 		}
 	}
 	if row == nil {

@@ -15,6 +15,7 @@
      .MidFlightGoals         — []GoalView (goals whose end_date > WeekEnd)
      .EndingGoals            — []GoalView (goals whose end_date <= WeekEnd) — REQUIRE decision
      .PrevWeekSurprise       — last week's distilled "one thing to remember"
+     .Memories               — []MemoryGroup{Category, Items} durable user facts (may be empty)
      .Phase                  — current ChatPhase enum value
 */ -}}
 
@@ -80,6 +81,20 @@ The following goals' end_date is on or before {{.WeekEnd}}. Before you can call 
 
 Last week the one thing the user wanted next week's letter to remember was: "{{.PrevWeekSurprise}}". Use this as quiet context — don't quote it back.
 
+{{end -}}
+
+{{if .Memories -}}
+# What you know about the user (established facts)
+
+Accumulated from their own journaling. These are KNOWN — referencing
+them is not inventing. Weave one in only when the conversation actually
+touches it; never recite them, never quiz the user on them.
+
+{{range .Memories -}}
+{{.Category}}:
+{{range .Items}}- {{.}}
+{{end}}
+{{end}}
 {{end -}}
 
 # Current phase: **{{.Phase}}**

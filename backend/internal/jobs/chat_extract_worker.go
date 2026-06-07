@@ -87,6 +87,7 @@ type ChatExtractionWorker struct {
 	Users             *store.UserStore
 	WeeklyReflections *store.WeeklyReflectionStore // weekly-scope finalize path
 	Scheduler         *Scheduler                   // re-seeds summaries after extraction lands
+	MemoryScheduler   *MemoryScheduler             // arms the day's memory pass after extraction lands
 	// LLM is the classify-tier client (CLASSIFY_MODEL default). Per-call
 	// model override comes from the session pin only — no env-level
 	// override beyond what the client constructor pinned.
@@ -257,9 +258,10 @@ func (w *ChatExtractionWorker) process(
 		DailyEntryTags: w.DailyEntryTags,
 		Goals:          w.Goals,
 		GoalCheckIns:   w.GoalCheckIns,
-		LLM:            w.LLM,
-		Logger:         w.Logger,
-		Scheduler:      w.Scheduler,
+		LLM:             w.LLM,
+		Logger:          w.Logger,
+		Scheduler:       w.Scheduler,
+		MemoryScheduler: w.MemoryScheduler,
 	}, result, user, session, views, model); err != nil {
 		return err
 	}
