@@ -13,8 +13,9 @@ import { cn } from "@/lib/utils";
 import { useMe } from "@/features/auth/useAuth";
 
 const baseNavItems = [
-  // Weekly sits above Today as the primary-tinted CTA. It's only shown
-  // on the user's reflection weekday — see filter below.
+  // Weekly sits above Today as the primary-tinted CTA. Shown on the
+  // user's reflection weekday, and on later days while that week's
+  // reflection is still pending (carry-over) — see filter below.
   { to: "/weekly", end: false, label: "Weekly", icon: CalendarCheck, primary: true },
   { to: "/", end: true, label: "Today", icon: MessageSquare },
   { to: "/history", end: false, label: "History", icon: CalendarDays },
@@ -34,7 +35,12 @@ export function NavMenu({ layoutId, onNavigate }: Props) {
     me.data != null &&
     typeof me.data.local_weekday === "number" &&
     me.data.local_weekday === me.data.reflection_weekday;
-  const navItems = isReflectionDay
+  // On the reflection day the button stays all day (even after
+  // completing — Done view / replay remain reachable). On carry-over
+  // days it shows only while the week's reflection is pending.
+  const showWeekly =
+    isReflectionDay || me.data?.reflection_pending === true;
+  const navItems = showWeekly
     ? baseNavItems
     : baseNavItems.filter((item) => item.to !== "/weekly");
 

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { ApiError } from "@/api/client";
+import { ME_KEY } from "@/features/auth/useAuth";
 import type { ChatSessionEnvelope } from "@/features/chat/api";
 import { heatmapKey } from "@/features/journal/hooks";
 
@@ -88,6 +89,9 @@ export function useCompleteReflection() {
       // — the response carries the new completed_at but the heatmap is
       // a separate query keyed by date range.
       qc.invalidateQueries({ queryKey: heatmapKey() });
+      // reflection_pending lives on /api/me — refetch so the Weekly nav
+      // button hides right away on carry-over days.
+      qc.invalidateQueries({ queryKey: ME_KEY });
     },
   });
 }
@@ -142,6 +146,10 @@ export function useReplayReflection() {
       // side; refetch the weekly chat envelope so the FE sees the new
       // phase and lifts its read-only lock.
       qc.invalidateQueries({ queryKey: weeklyChatKey });
+      // Replay deletes the row server-side → the week is pending again;
+      // refetch /api/me so the Weekly nav button reappears on carry-over
+      // days.
+      qc.invalidateQueries({ queryKey: ME_KEY });
     },
   });
 }

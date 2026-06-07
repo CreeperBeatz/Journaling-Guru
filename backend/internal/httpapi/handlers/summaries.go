@@ -586,18 +586,11 @@ func (h *SummaryHandler) WeeklyReflection(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	user, err := h.Users.GetByID(r.Context(), sess.UserID)
-	if err != nil || user == nil {
-		writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
+	weekStart, weekEnd, ok := h.resolveCurrentWeek(w, r, sess.UserID)
+	if !ok {
 		return
 	}
-	today, err := timezone.LocalDate(time.Now(), user.Timezone, user.DayStartMinutes)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "could not resolve today")
-		return
-	}
-	weekStart := today.AddDate(0, 0, -6)
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, today, true, true)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, true)
 	if err != nil {
 		h.Logger.Error("build reflection (this week)", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
@@ -812,10 +805,11 @@ func (h *SummaryHandler) buildReflection(
 // job will actually run for it. The previous shape pre-checked whether
 // the summary row existed and used that as a proxy for "ReArm vs Schedule",
 // but ReArm silently affected zero rows when no job existed at the exact
-// period_start the FE was using (today-6, which doesn't match the
-// canonical reflection_weekday-anchored period_start for non-reflection
-// days) — leaving the FE stuck showing "Synthesis arriving" while no
-// job was actually queued.
+// period_start the FE was using (historically today-6, which didn't
+// match the canonical reflection_weekday-anchored period_start on
+// non-reflection days; resolveCurrentWeek anchors canonically now) —
+// leaving the FE stuck showing "Synthesis arriving" while no job was
+// actually queued.
 //
 // Lifecycle, in order:
 //   - ReArm a terminal row if one exists at this period_start → in flight.
@@ -1095,9 +1089,14 @@ func (h *SummaryHandler) CompleteReflection(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// resolveCurrentWeek loads the user, computes today + the
-// (weekStart, weekEnd) covering "the past 7 days ending today". Writes
-// an HTTP error and returns ok=false on failure.
+// resolveCurrentWeek loads the user and computes the canonical current
+// reflection week: the week ENDING on the most recent reflection_weekday
+// at-or-before today (timezone.PeriodContaining). On the reflection day
+// this is "the past 7 days ending today"; on later days it still points
+// at the missed week, so a late reflection targets the same
+// weekly_reflections / summaries / chat rows — and the next reflection
+// day naturally supersedes it. Writes an HTTP error and returns
+// ok=false on failure.
 func (h *SummaryHandler) resolveCurrentWeek(
 	w http.ResponseWriter, r *http.Request, userID string,
 ) (time.Time, time.Time, bool) {
@@ -1106,12 +1105,14 @@ func (h *SummaryHandler) resolveCurrentWeek(
 		writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
 		return time.Time{}, time.Time{}, false
 	}
-	today, err := timezone.LocalDate(time.Now(), user.Timezone, user.DayStartMinutes)
+	p, err := timezone.PeriodContaining(
+		time.Now(), user.Timezone, user.DayStartMinutes, user.ReflectionWeekday, domain.PeriodWeek,
+	)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "could not resolve today")
+		writeJSONError(w, http.StatusInternalServerError, "could not resolve week")
 		return time.Time{}, time.Time{}, false
 	}
-	return today.AddDate(0, 0, -6), today, true
+	return p.Start, p.End, true
 }
 
 // subtractCurrentFromCombined returns just the prior-week portion of a

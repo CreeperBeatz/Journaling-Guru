@@ -261,17 +261,27 @@ func (h *ChatHandler) ByDate(w http.ResponseWriter, r *http.Request) {
 
 // ---------- /reflection/this-week/chat (weekly create-or-resume) ----------
 
-// resolveCurrentWeek returns weekStart (today - 6 days) and weekEnd
-// (today) for the requesting user, mirroring the SummaryHandler helper.
-// Single source of truth for "this week" within the chat handler so the
-// reflection chat keys align with the wizard's view.
+// resolveCurrentWeek returns the canonical current reflection week —
+// the week ending on the most recent reflection_weekday at-or-before
+// today (timezone.PeriodContaining) — mirroring the SummaryHandler
+// helper. Single source of truth for "this week" within the chat
+// handler so the reflection chat keys align with the wizard's view,
+// including late (carry-over) reflections on non-reflection days.
 func (h *ChatHandler) resolveCurrentWeek(r *http.Request, userID string) (time.Time, time.Time, *domain.User, error) {
-	today, user, err := h.resolveToday(r, userID)
+	user, err := h.Users.GetByID(r.Context(), userID)
 	if err != nil {
 		return time.Time{}, time.Time{}, nil, err
 	}
-	weekStart := today.AddDate(0, 0, -6)
-	return weekStart, today, user, nil
+	if user == nil {
+		return time.Time{}, time.Time{}, nil, errors.New("user not found")
+	}
+	p, err := timezone.PeriodContaining(
+		time.Now(), user.Timezone, user.DayStartMinutes, user.ReflectionWeekday, domain.PeriodWeek,
+	)
+	if err != nil {
+		return time.Time{}, time.Time{}, nil, err
+	}
+	return p.Start, p.End, user, nil
 }
 
 // CreateOrResumeWeekly handles POST /api/reflection/this-week/chat.

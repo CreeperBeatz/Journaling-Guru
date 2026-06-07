@@ -121,6 +121,9 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		Users:     users,
 		Logger:    logger,
 		Replanner: reminderScheduler,
+		// Feed the derived reflection_pending flag (Weekly nav carry-over).
+		WeeklyReflections: weeklyReflections,
+		DailyInputs:       dailyInputs,
 	}
 	acctH := &handlers.AccountHandler{
 		Users:        users,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -34,25 +34,14 @@ const STORAGE_KEY = "journai.weeklyTab";
 // the page re-renders into the LetterReadingView. The chat transcript
 // is preserved (replay doesn't wipe the chat session).
 export function WeeklyReflection() {
-  const me = useMe();
-  const isReflectionDay =
-    me.data != null &&
-    typeof me.data.local_weekday === "number" &&
-    me.data.local_weekday === me.data.reflection_weekday;
+  // No reflection-day route guard: the server anchors "this week" to the
+  // canonical week ending on the most recent reflection_weekday, so the
+  // page is coherent on any day (carry-over for missed reflections, Done
+  // view once completed). Discoverability is governed by the nav button;
+  // a reactive guard here would bounce the user to "/" the moment they
+  // complete a late reflection.
   const reflection = useThisWeekReflection();
 
-  if (me.isPending) {
-    return (
-      <Card>
-        <CardContent className="px-6 py-8 text-sm text-muted-foreground">
-          Loading the week…
-        </CardContent>
-      </Card>
-    );
-  }
-  if (me.data != null && !isReflectionDay) {
-    return <Navigate to="/" replace />;
-  }
   if (reflection.isPending) {
     return (
       <Card>
@@ -85,7 +74,15 @@ export function WeeklyReflection() {
 // ---------------- IdleScreen ----------------
 
 function IdleScreen({ data }: { data: ReflectionResponse }) {
+  const me = useMe();
   const start = useStartReflection();
+  // Carry-over: today is past the reflection day but this week's
+  // reflection hasn't been done. Swap the copy so the user understands
+  // the dates shown are the missed week, not the trailing 7 days.
+  const isCatchUp =
+    me.data != null &&
+    typeof me.data.local_weekday === "number" &&
+    me.data.local_weekday !== me.data.reflection_weekday;
 
   return (
     <div className="space-y-6">
@@ -93,7 +90,9 @@ function IdleScreen({ data }: { data: ReflectionResponse }) {
         <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
           Weekly reflection
         </p>
-        <h1 className="font-serif text-h1">This week, looking back</h1>
+        <h1 className="font-serif text-h1">
+          {isCatchUp ? "Catching up on last week" : "This week, looking back"}
+        </h1>
         <p className="text-sm text-muted-foreground">
           {data.week_start} → {data.week_end} · {data.entry_count}{" "}
           {data.entry_count === 1 ? "logged day" : "logged days"}

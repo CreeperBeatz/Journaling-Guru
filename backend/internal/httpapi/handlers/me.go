@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -14,16 +15,22 @@ import (
 	"github.com/cosmosthrace/journai/backend/internal/timezone"
 )
 
-// meResponse flattens the persisted user with one derived field that the
-// frontend can't compute itself: which weekday "now" falls on under the
-// user's timezone + day_start_minutes cutoff. Used to gate the weekly
-// reflection nav button + route so the ritual only opens on the chosen day.
+// meResponse flattens the persisted user with derived fields the
+// frontend can't compute itself:
+//   - local_weekday: which weekday "now" falls on under the user's
+//     timezone + day_start_minutes cutoff.
+//   - reflection_pending: whether the current canonical reflection week
+//     (the week ending on the most recent reflection_weekday) has logged
+//     activity but no completed weekly reflection yet. Drives the Weekly
+//     nav button on carry-over days so a missed reflection day doesn't
+//     hide the ritual until next week.
 type meResponse struct {
 	*domain.User
-	LocalWeekday *int `json:"local_weekday,omitempty"`
+	LocalWeekday      *int  `json:"local_weekday,omitempty"`
+	ReflectionPending *bool `json:"reflection_pending,omitempty"`
 }
 
-func wrapMe(u *domain.User) any {
+func wrapMe(u *domain.User, reflectionPending *bool) any {
 	if u == nil {
 		return nil
 	}
@@ -34,7 +41,7 @@ func wrapMe(u *domain.User) any {
 		return u
 	}
 	wd := int(d.Weekday())
-	return meResponse{User: u, LocalWeekday: &wd}
+	return meResponse{User: u, LocalWeekday: &wd, ReflectionPending: reflectionPending}
 }
 
 // MeHandler exposes /api/me. The session middleware should sit in front:
@@ -44,6 +51,44 @@ type MeHandler struct {
 	Users     *store.UserStore
 	Logger    *slog.Logger
 	Replanner ReminderReplanner // optional — nil-safe when push isn't wired
+	// WeeklyReflections + DailyInputs feed the derived reflection_pending
+	// flag. Both optional — nil leaves the flag unset (degrade open).
+	WeeklyReflections *store.WeeklyReflectionStore
+	DailyInputs       *store.DailyInputStore
+}
+
+// reflectionPending reports whether the current canonical reflection
+// week is awaiting a reflection: the week had at least one logged day
+// (daily_inputs) and its weekly_reflections row is missing or not yet
+// completed. Returns nil (omit the field) when the stores aren't wired
+// or anything fails — gating UI must not break a /me read.
+func (h *MeHandler) reflectionPending(ctx context.Context, u *domain.User) *bool {
+	if u == nil || h.WeeklyReflections == nil || h.DailyInputs == nil {
+		return nil
+	}
+	p, err := timezone.PeriodContaining(
+		time.Now(), u.Timezone, u.DayStartMinutes, u.ReflectionWeekday, domain.PeriodWeek,
+	)
+	if err != nil {
+		return nil
+	}
+	wr, err := h.WeeklyReflections.GetByWeekStart(ctx, u.ID, p.Start)
+	if err != nil {
+		h.Logger.Warn("reflection_pending: load weekly reflection", "err", err, "user_id", u.ID)
+		return nil
+	}
+	pending := wr == nil || wr.CompletedAt == nil
+	if pending {
+		// Only nag when the week actually has something to reflect on —
+		// a dormant user shouldn't carry a permanent Weekly button.
+		agg, err := h.DailyInputs.AggregateForRange(ctx, u.ID, p.Start, p.End)
+		if err != nil {
+			h.Logger.Warn("reflection_pending: aggregate inputs", "err", err, "user_id", u.ID)
+			return nil
+		}
+		pending = agg != nil && agg.EntryCount > 0
+	}
+	return &pending
 }
 
 // Get returns the current user. Returns 401 when no session is attached
@@ -69,7 +114,7 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 					h.Logger.Warn("replan reminders after tz auto-sync", "err", err, "user_id", sess.UserID)
 				}
 			}
-			writeJSON(w, http.StatusOK, wrapMe(synced))
+			writeJSON(w, http.StatusOK, wrapMe(synced, h.reflectionPending(r.Context(), synced)))
 			return
 		}
 	}
@@ -82,7 +127,7 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, wrapMe(u))
+	writeJSON(w, http.StatusOK, wrapMe(u, h.reflectionPending(r.Context(), u)))
 }
 
 type updateMeRequest struct {
@@ -197,5 +242,5 @@ func (h *MeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, wrapMe(u))
+	writeJSON(w, http.StatusOK, wrapMe(u, h.reflectionPending(r.Context(), u)))
 }
