@@ -27,7 +27,8 @@ export interface TagDayLink {
 // (which live in the parallel `tags` array on the response, not on the
 // DailyInput row itself).
 //
-// Mood is a 1..3 scale (1=sad, 2=neutral, 3=happy). null = unset.
+// Mood is a signed -2..+2 scale (-2=very bad, -1=bad, 0=neutral,
+// +1=good, +2=very good). null = unset.
 export interface DailyInput {
   id: string;
   local_date: string; // YYYY-MM-DD

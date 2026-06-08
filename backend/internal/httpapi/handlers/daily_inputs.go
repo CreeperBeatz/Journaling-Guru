@@ -18,8 +18,8 @@ import (
 )
 
 // DailyInputHandler hosts /api/daily/inputs/*. The check-in surface for
-// the Energy Audit pivot's five-prompt template: 1..3 mood plus drainer
-// / charger / gratitude / reflection text. Drainer/charger tags are
+// the Energy Audit pivot's five-prompt template: signed -2..+2 mood plus
+// drainer / charger / gratitude / reflection text. Drainer/charger tags are
 // attached in the same write — the handler links daily_entry_tags rows
 // after the daily_inputs upsert.
 type DailyInputHandler struct {
@@ -241,8 +241,8 @@ func decodeUpsert(r *http.Request) (*upsertDailyInputRequest, error) {
 		return nil, errors.New("invalid json")
 	}
 	if req.Mood != nil {
-		if *req.Mood < 1 || *req.Mood > 3 {
-			return nil, errors.New("mood must be 1-3")
+		if *req.Mood < -2 || *req.Mood > 2 {
+			return nil, errors.New("mood must be -2..2")
 		}
 	}
 	if len(req.DrainedText) > maxAuditTextLen {

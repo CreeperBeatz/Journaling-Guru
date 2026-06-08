@@ -21,7 +21,7 @@ import (
 // TagStore.UpsertByLabel before writing daily_entry_tags rows. Labels
 // here are pre-normalization — the store owns the dedup rule.
 type ExtractionResult struct {
-	Mood                  *int              // 1..3 or nil
+	Mood                  *int              // signed -2..2 or nil
 	DrainedText           string            // ≤ 1000 chars
 	ChargedText           string            // ≤ 1000 chars
 	GratitudeText         string            // ≤ 1000 chars
@@ -125,7 +125,7 @@ func parseExtractionJSON(content string) (*rawExtraction, error) {
 }
 
 // validateExtraction clamps and de-hallucinates the raw LLM output:
-//   - mood: out-of-range (anything not 1..3) becomes nil.
+//   - mood: out-of-range (anything not -2..2) becomes nil.
 //   - drained/charged/gratitude_text: trimmed, capped at 1000 chars.
 //   - reflection_text: trimmed, capped at 4000 chars.
 //   - answers: only keys matching one of `questions` are kept.
@@ -140,7 +140,7 @@ func validateExtraction(raw *rawExtraction, questions []QuestionView, goals []Go
 		Answers:      map[string]string{},
 		GoalCheckIns: []GoalCheckInExtraction{},
 	}
-	if raw.Mood != nil && *raw.Mood >= 1 && *raw.Mood <= 3 {
+	if raw.Mood != nil && *raw.Mood >= -2 && *raw.Mood <= 2 {
 		m := *raw.Mood
 		out.Mood = &m
 	}

@@ -4,13 +4,14 @@ import "time"
 
 // DailyInput is the user-provided per-day check-in. Under the Energy
 // Audit pivot it carries the five-prompt template's analyzable fields:
-// a 1..3 mood scale, the drainer/charger/gratitude/reflection texts.
-// Drainer and charger *tags* live in daily_entry_tags, keyed by
+// a signed -2..+2 mood scale, the drainer/charger/gratitude/reflection
+// texts. Drainer and charger *tags* live in daily_entry_tags, keyed by
 // (user_id, local_date, tag_id, role) — they are not on this struct.
 //
 // Mood is a pointer so the API can express "user hasn't set it yet"
-// without colliding with a real low value of 0. Wire format: integer
-// 1..3 or null. (1=sad, 2=neutral, 3=happy.)
+// without colliding with the real neutral value of 0. Wire format:
+// integer -2..2 or null. (-2=very bad, -1=bad, 0=neutral, +1=good,
+// +2=very good.)
 //
 // Backfilled flags entries written ≤2-3 days late so analysis can treat
 // them separately if needed (per spec). EditedAt is set whenever a row
@@ -30,19 +31,23 @@ type DailyInput struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-// MoodLabel maps the 1..3 scale to a human label. Returns "" for nil so
-// callers display "—" or omit the chip.
+// MoodLabel maps the signed -2..+2 scale to a human label. Returns ""
+// for nil so callers display "—" or omit the chip.
 func MoodLabel(mood *int) string {
 	if mood == nil {
 		return ""
 	}
 	switch *mood {
-	case 1:
-		return "sad"
-	case 2:
+	case -2:
+		return "very bad"
+	case -1:
+		return "bad"
+	case 0:
 		return "neutral"
-	case 3:
-		return "happy"
+	case 1:
+		return "good"
+	case 2:
+		return "very good"
 	}
 	return ""
 }

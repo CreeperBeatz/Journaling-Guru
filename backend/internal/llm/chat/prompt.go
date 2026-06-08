@@ -219,7 +219,7 @@ Emit ONE JSON object — no prose before/after, no markdown fences. The
 schema is exactly:
 
 {
-  "mood":                  <integer 1..3 OR null>,  // 1=sad, 2=neutral, 3=happy
+  "mood":                  <integer -2..2 OR null>, // -2=very bad, -1=bad, 0=neutral, 1=good, 2=very good
   "drained_text":          <string>,                 // ≤ 1000 chars
   "charged_text":          <string>,                 // ≤ 1000 chars
   "gratitude_text":        <string>,                 // ≤ 1000 chars
@@ -233,9 +233,10 @@ schema is exactly:
 # Rules
 
 - mood: ONLY set when the user clearly signaled how the day felt
-  ("kind of a great day", "rough today"). 1=clearly negative,
-  2=mixed/flat, 3=clearly positive. Default null when ambiguous — do
-  NOT infer from tone alone.
+  ("kind of a great day", "rough today"). -2=very bad/terrible day,
+  -1=bad, 0=neutral/flat/mixed, 1=good, 2=very good/great day.
+  Reserve the extremes (-2, 2) for clearly strong signals. Default
+  null when ambiguous — do NOT infer from tone alone.
 - drained_text: what drained the user today, in the user's words. ≤
   1000 chars. Empty string if the conversation didn't surface anything.
 - charged_text: what charged the user today, in the user's words. Same

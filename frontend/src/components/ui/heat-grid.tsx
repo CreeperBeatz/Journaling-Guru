@@ -346,8 +346,8 @@ function cellLabel(iso: string, data?: HeatCellData): string {
  * response. A day counts as filled (`level === 1`) if it has any manual
  * signal — a journal entry, a daily-input field (mood / drained /
  * charged / gratitude / reflection), or a chat session with substantive
- * turns. `moodUp` is mood === 3 (the "happy" face on the 1..3 Energy
- * Audit scale).
+ * turns. `moodUp` is mood >= 1 on the signed -2..+2 Energy Audit scale
+ * (any positive day; 0=neutral does not count).
  */
 export function buildHeatCells(
   days: {
@@ -366,7 +366,7 @@ export function buildHeatCells(
     return {
       date: d.local_date,
       level: d.answered > 0 || d.chat_turns >= 3 || !!d.has_inputs ? 1 : 0,
-      moodUp: (d.mood ?? 0) >= 3,
+      moodUp: d.mood != null && d.mood >= 1,
       hasWeeklyReflection: reflectionSet.has(d.local_date),
     };
   });

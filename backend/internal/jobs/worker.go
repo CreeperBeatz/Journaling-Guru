@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -276,7 +277,9 @@ func (w *SummaryWorker) runWeekly(
 		ClosingQuestion: narrative.ClosingQuestion,
 	}
 	if agg.MoodScore != nil {
-		rounded := int(*agg.MoodScore + 0.5)
+		// math.Round, not int(x+0.5): the latter truncates toward zero
+		// and mis-rounds negative averages on the signed -2..+2 scale.
+		rounded := int(math.Round(*agg.MoodScore))
 		meta.MoodLabel = domain.MoodLabel(&rounded)
 	}
 
@@ -813,7 +816,7 @@ func buildWeeklySynthesisPrompt(
 		period.Start.Format("2006-01-02"), period.End.Format("2006-01-02"))
 
 	if agg != nil && agg.MoodScore != nil {
-		fmt.Fprintf(&b, "Average mood (1-3 scale, 1=sad 2=neutral 3=happy): %.2f over %d logged day(s).\n\n",
+		fmt.Fprintf(&b, "Average mood (-2..+2 scale: -2=very bad, 0=neutral, +2=very good): %+.2f over %d logged day(s).\n\n",
 			*agg.MoodScore, agg.EntryCount)
 	} else {
 		b.WriteString("Average mood: not enough data this week.\n\n")
@@ -822,7 +825,7 @@ func buildWeeklySynthesisPrompt(
 	if len(moodSeries) > 0 {
 		b.WriteString("Mood by day:\n")
 		for _, p := range moodSeries {
-			fmt.Fprintf(&b, "  - %s: %.0f\n", p.LocalDate, p.Score)
+			fmt.Fprintf(&b, "  - %s: %+.0f\n", p.LocalDate, p.Score)
 		}
 		b.WriteString("\n")
 	}

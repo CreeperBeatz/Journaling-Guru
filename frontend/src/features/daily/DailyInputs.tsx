@@ -276,10 +276,12 @@ function FieldSection({
 
 // ---------------- Mood faces ----------------
 
-const FACES: Array<{ value: 1 | 2 | 3; emoji: string; label: string }> = [
-  { value: 1, emoji: "🙁", label: "Sad" },
-  { value: 2, emoji: "😐", label: "Neutral" },
-  { value: 3, emoji: "🙂", label: "Happy" },
+const FACES: Array<{ value: -2 | -1 | 0 | 1 | 2; emoji: string; label: string }> = [
+  { value: -2, emoji: "😣", label: "Very bad" },
+  { value: -1, emoji: "🙁", label: "Bad" },
+  { value: 0, emoji: "😐", label: "Neutral" },
+  { value: 1, emoji: "🙂", label: "Good" },
+  { value: 2, emoji: "😄", label: "Very good" },
 ];
 
 function MoodFaces({

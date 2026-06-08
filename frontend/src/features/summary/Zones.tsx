@@ -48,7 +48,6 @@ export function Zone1Card({ data }: { data: Zone1Response }) {
             </p>
             <p className="font-mono text-2xl tabular-nums">
               {fmtMood(data.mood_avg_7d)}
-              <span className="text-sm text-muted-foreground"> / 3</span>
             </p>
             {delta ? (
               <p
@@ -154,7 +153,7 @@ function ActiveGoalRow({ goal }: { goal: Zone1GoalStatus }) {
 }
 
 function Sparkline({ points }: { points: DailyMoodPoint[] }) {
-  // Pure SVG line, no library dependency. 1..3 scale; pad x by 0.5
+  // Pure SVG line, no library dependency. Signed -2..+2 scale; pad x by 0.5
   // segments on each side so a short series doesn't hug the edges.
   if (points.length === 0) {
     return (
@@ -173,7 +172,7 @@ function Sparkline({ points }: { points: DailyMoodPoint[] }) {
       : padX + ((W - 2 * padX) * i) / (points.length - 1),
   );
   const ys = points.map((p) => {
-    const t = (p.score - 1) / 2; // 0..1
+    const t = (p.score + 2) / 4; // -2..+2 → 0..1 (0 lands on the midline)
     return H - padY - t * (H - 2 * padY);
   });
   const path = points
@@ -230,7 +229,9 @@ function computeMoodDelta(
 
 function fmtMood(score: number | null): string {
   if (score === null) return "—";
-  return score.toFixed(1);
+  // Signed scale: make the sign explicit so 0=neutral reads naturally.
+  const s = score.toFixed(1);
+  return score > 0 ? `+${s}` : s;
 }
 
 // ---------- Zone 2 ----------

@@ -144,7 +144,7 @@ type TagAggregate struct {
 }
 
 // TopByValence returns the most-frequent active tags of one role across
-// `daysBack` days for a user, with average mood (1-3) on the days each
+// `daysBack` days for a user, with average mood (-2..+2) on the days each
 // tag appeared. NULL avg_mood when none of the days had a recorded mood.
 //
 // Limit caps the result; pass 0 for "no cap". Drives Zone 2 of the

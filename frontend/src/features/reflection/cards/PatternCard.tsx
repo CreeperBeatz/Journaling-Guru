@@ -24,7 +24,6 @@ export function PatternCard({ data }: { data: ReflectionResponse }) {
             </p>
             <p className="font-mono text-2xl tabular-nums">
               {fmtMood(data.mood_avg)}
-              <span className="text-sm text-muted-foreground"> / 3</span>
             </p>
           </div>
           {moodDelta ? (
@@ -166,7 +165,9 @@ function DeltaTagTable({
 
 function fmtMood(score: number | null): string {
   if (score === null) return "—";
-  return score.toFixed(1);
+  // Signed -2..+2 scale: make the sign explicit so 0=neutral reads naturally.
+  const s = score.toFixed(1);
+  return score > 0 ? `+${s}` : s;
 }
 
 function computeMoodDelta(

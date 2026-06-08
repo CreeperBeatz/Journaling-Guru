@@ -20,7 +20,7 @@
      .LocalTimeOfDay    — "morning" | "afternoon" | "evening" | "late night"
      .Questions         — []QuestionView{ID, Prompt} (currently unused — see above)
      .Memories          — []MemoryGroup{Category, Items} durable user facts (may be empty)
-     .Recent7DayMoodAvg — *float64 averaged over 1..3 scale; rendered as "—" when nil
+     .Recent7DayMoodAvg — *float64 averaged over signed -2..+2 scale; rendered as "—" when nil
      .RecentTopEmotions — []string (retired — empty under the pivot)
      .HardCapMinutes    — soft hint, not a hard timer the model controls
      .Phase             — current ChatPhase enum value
@@ -80,7 +80,7 @@ warmth).
 # Recent context (read for tone, do not bring up unless they do)
 
 {{if .Recent7DayMoodAvg -}}
-- Past-week mood average: {{printf "%.1f" .Recent7DayMoodAvg}}/3.
+- Past-week mood average: {{printf "%+.1f" .Recent7DayMoodAvg}} (scale -2..+2, 0=neutral).
 {{- else -}}
 - Past-week mood: not enough data.
 {{- end}}

@@ -134,7 +134,7 @@ func buildSuggestUserPrompt(in SuggestionInput) string {
 	b.WriteString("WEEK PATTERN\n")
 	b.WriteString(fmt.Sprintf("- Window: last %d days\n", in.WeekDays))
 	if in.MoodAvg != nil {
-		b.WriteString(fmt.Sprintf("- Mood avg: %.1f / 3\n", *in.MoodAvg))
+		b.WriteString(fmt.Sprintf("- Mood avg: %+.1f (scale -2..+2, 0=neutral)\n", *in.MoodAvg))
 	} else {
 		b.WriteString("- Mood avg: (not enough data)\n")
 	}
@@ -145,7 +145,7 @@ func buildSuggestUserPrompt(in SuggestionInput) string {
 		for _, t := range in.TopDrainers {
 			b.WriteString(fmt.Sprintf("  - %s (%d days", t.Label, t.Appearances))
 			if t.AvgMood != nil {
-				b.WriteString(fmt.Sprintf(", mood %.1f", *t.AvgMood))
+				b.WriteString(fmt.Sprintf(", mood %+.1f", *t.AvgMood))
 			}
 			b.WriteString(")\n")
 		}
@@ -157,7 +157,7 @@ func buildSuggestUserPrompt(in SuggestionInput) string {
 		for _, t := range in.TopChargers {
 			b.WriteString(fmt.Sprintf("  - %s (%d days", t.Label, t.Appearances))
 			if t.AvgMood != nil {
-				b.WriteString(fmt.Sprintf(", mood %.1f", *t.AvgMood))
+				b.WriteString(fmt.Sprintf(", mood %+.1f", *t.AvgMood))
 			}
 			b.WriteString(")\n")
 		}

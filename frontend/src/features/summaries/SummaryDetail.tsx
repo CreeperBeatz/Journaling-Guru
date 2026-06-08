@@ -142,8 +142,9 @@ export function SummaryDetail() {
           <CardContent className="grid gap-3 sm:grid-cols-2">
             {meta.mood_score != null ? (
               <Stat label="Mood">
-                <span className="font-mono text-xl tabular-nums">{meta.mood_score.toFixed(1)}</span>
-                <span className="text-muted-foreground"> /3</span>
+                <span className="font-mono text-xl tabular-nums">
+                  {meta.mood_score > 0 ? `+${meta.mood_score.toFixed(1)}` : meta.mood_score.toFixed(1)}
+                </span>
                 {meta.mood_label ? (
                   <span className={cn("ml-2 text-sm capitalize", moodLabelClass(meta.mood_label))}>
                     {meta.mood_label}

@@ -258,7 +258,7 @@ type DailyMoodPoint struct {
 
 // MoodSeries returns daily mood values over the last `days` days, oldest
 // first. Days where mood IS NULL are skipped (the chart renders a
-// discontinuous line). The mood scale is 1..3 — Score is float64 to
+// discontinuous line). The mood scale is signed -2..+2 — Score is float64 to
 // share the existing chart rendering pipeline that expects float points.
 func (s *DailyInputStore) MoodSeries(
 	ctx context.Context, userID string, days int,
