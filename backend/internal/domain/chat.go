@@ -149,26 +149,31 @@ func IsValidChatPhase(s string) bool {
 // back to exploring so the user can keep talking.
 //
 // Allowed transitions:
-//   greeting    → exploring | wrapping_up
+//   greeting    → exploring | wrapping_up | abandoned
 //   exploring   → wrapping_up | finalized
-//   wrapping_up → exploring | finalized            (resume by typing)
+//   wrapping_up → exploring | finalized | abandoned (resume by typing)
 //   finalized   → exploring | wrapping_up          (resume after extraction)
 //   abandoned   → exploring                        (rare — sweeper bailout)
 //
 // finalized is reachable for legacy reasons (the worker briefly stamps
 // it inside the extraction tx); the worker then immediately advances
-// back to exploring. abandoned is reserved for sweeper failures.
+// back to exploring. abandoned is reserved for sweeper failures: the
+// extraction worker marks an opener-only transcript abandoned from
+// either greeting (sweeper skipped the wrapping_up advance — nothing to
+// land) or wrapping_up (sessions swept before that skip existed).
 func LegalChatPhaseTransition(from, to string) bool {
 	if !IsValidChatPhase(from) || !IsValidChatPhase(to) {
 		return false
 	}
 	switch from {
 	case ChatPhaseGreeting:
-		return to == ChatPhaseExploring || to == ChatPhaseWrappingUp
+		return to == ChatPhaseExploring || to == ChatPhaseWrappingUp ||
+			to == ChatPhaseAbandoned
 	case ChatPhaseExploring:
 		return to == ChatPhaseWrappingUp || to == ChatPhaseFinalized
 	case ChatPhaseWrappingUp:
-		return to == ChatPhaseExploring || to == ChatPhaseFinalized
+		return to == ChatPhaseExploring || to == ChatPhaseFinalized ||
+			to == ChatPhaseAbandoned
 	case ChatPhaseFinalized:
 		return to == ChatPhaseExploring || to == ChatPhaseWrappingUp
 	case ChatPhaseAbandoned:

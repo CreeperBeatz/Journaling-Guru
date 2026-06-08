@@ -206,9 +206,17 @@ func (w *ChatExtractionWorker) process(
 	}
 	// Empty / opener-only transcript → skip extraction; advance phase to
 	// abandoned so the row stops appearing in the idle sweeper. Manual
-	// fields stay untouched.
+	// fields stay untouched. Legal from greeting (sweeper skipped the
+	// wrapping_up advance for opener-only sessions) and from wrapping_up
+	// (sessions swept before that skip existed); anything else is a bug
+	// worth surfacing, so the error is logged rather than swallowed —
+	// a silent failure here is exactly what used to strand sessions in
+	// wrapping_up forever.
 	if !hasUsableTranscript(messages) {
-		_, _ = w.Sessions.AdvancePhase(ctx, session.ID, domain.ChatPhaseAbandoned)
+		if _, err := w.Sessions.AdvancePhase(ctx, session.ID, domain.ChatPhaseAbandoned); err != nil {
+			w.Logger.Warn("advance phase abandoned (empty transcript)",
+				"err", err, "session_id", session.ID, "phase", session.Phase)
+		}
 		_ = w.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionCompleted, nil)
 		return w.Jobs.MarkSkipped(ctx, job.ID)
 	}

@@ -17,6 +17,7 @@ import (
 // tick.
 type ChatIdleSweeper struct {
 	Sessions       *store.ChatSessionStore
+	Messages       *store.ChatMessageStore
 	Jobs           *store.ChatExtractionJobStore
 	IdleAfter      time.Duration
 	Logger         *slog.Logger
@@ -65,10 +66,31 @@ func (s *ChatIdleSweeper) Sweep(ctx context.Context, limit int) int {
 		//
 		// Mark wrapping_up (idempotent if already there). Set status to
 		// pending so the polling endpoint reflects the impending run.
-		if _, err := s.Sessions.AdvancePhase(ctx, session.ID, domain.ChatPhaseWrappingUp); err != nil {
-			// Tolerate "already wrapping_up" via the idempotent path
-			// inside AdvancePhase; only log unexpected errors.
-			s.Logger.Warn("idle sweep advance phase", "err", err, "session_id", session.ID)
+		//
+		// Exception: an opener-only daily session has nothing to land —
+		// don't flip it into wrapping_up (the persona's land-it mode +
+		// the UI's "Wrapping up" pill) just for the extraction worker to
+		// abandon it. Leave the phase alone so reopening the app shows a
+		// normal chat; the worker's empty-transcript path marks it
+		// abandoned from greeting directly. Weekly sessions keep the
+		// advance: their empty path deliberately finalizes the
+		// reflection (see ChatExtractionWorker.processWeekly), and
+		// wrapping_up → finalized is the legal route there.
+		advance := true
+		if session.Scope == domain.ChatScopeDaily && s.Messages != nil {
+			if hasUser, herr := s.Messages.HasUserMessage(ctx, session.ID); herr != nil {
+				// Fail open — pre-skip behavior — rather than stall the sweep.
+				s.Logger.Warn("idle sweep user-turn check", "err", herr, "session_id", session.ID)
+			} else if !hasUser {
+				advance = false
+			}
+		}
+		if advance {
+			if _, err := s.Sessions.AdvancePhase(ctx, session.ID, domain.ChatPhaseWrappingUp); err != nil {
+				// Tolerate "already wrapping_up" via the idempotent path
+				// inside AdvancePhase; only log unexpected errors.
+				s.Logger.Warn("idle sweep advance phase", "err", err, "session_id", session.ID)
+			}
 		}
 		if err := s.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionPending, nil); err != nil {
 			s.Logger.Warn("idle sweep set status pending", "err", err, "session_id", session.ID)

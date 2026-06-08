@@ -169,6 +169,7 @@ func main() {
 
 	chatIdleSweeper := &jobs.ChatIdleSweeper{
 		Sessions:  chatSessions,
+		Messages:  chatMessages,
 		Jobs:      chatExtractionJobs,
 		IdleAfter: time.Duration(cfg.ChatIdleTimeoutMinutes) * time.Minute,
 		Logger:    logger,

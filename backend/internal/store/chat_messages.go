@@ -179,6 +179,24 @@ func (s *ChatMessageStore) CountTurns(ctx context.Context, sessionID string) (in
 	return n, err
 }
 
+// HasUserMessage reports whether the session has at least one user row
+// with non-empty content — the same "anything to extract?" test as the
+// extraction worker's hasUsableTranscript, evaluated in SQL so the idle
+// sweeper can branch without loading the transcript.
+func (s *ChatMessageStore) HasUserMessage(ctx context.Context, sessionID string) (bool, error) {
+	var exists bool
+	err := s.DB.QueryRow(ctx,
+		`SELECT EXISTS (
+		    SELECT 1 FROM chat_messages
+		     WHERE session_id = $1
+		       AND role = 'user'
+		       AND content <> ''
+		 )`,
+		sessionID,
+	).Scan(&exists)
+	return exists, err
+}
+
 func scanChatMessage(row pgx.Row) (*domain.ChatMessage, error) {
 	var m domain.ChatMessage
 	var argsJSON, resultJSON []byte
