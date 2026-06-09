@@ -26,14 +26,14 @@ type ReminderReplanner interface {
 // side concerns (encryption, fan-out, retries) live in internal/push +
 // internal/jobs — this handler is just the persistence + Replan glue.
 type PushHandler struct {
-	Subs          *store.PushSubscriptionStore
-	Users         *store.UserStore
-	Reminders     *store.ReminderJobStore
-	Replanner     ReminderReplanner
-	Sender        push.Sender // nil-safe: nil → 503 on /test
-	Logger        *slog.Logger
-	VAPIDPublic   string
-	AppOrigin     string // origin used for the test-push URL
+	Subs        *store.PushSubscriptionStore
+	Users       *store.UserStore
+	Reminders   *store.ReminderJobStore
+	Replanner   ReminderReplanner
+	Sender      push.Sender // nil-safe: nil → 503 on /test
+	Logger      *slog.Logger
+	VAPIDPublic string
+	AppOrigin   string // origin used for the test-push URL
 }
 
 // VAPIDKeyResponse carries the public key the browser feeds into
@@ -271,4 +271,3 @@ func (h *PushHandler) Test(w http.ResponseWriter, r *http.Request) {
 		"retryable": retryable,
 	})
 }
-

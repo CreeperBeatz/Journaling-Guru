@@ -27,7 +27,7 @@ var crisisPattern = regexp.MustCompile(`(?i)\b(` +
 	`overdos(e|ing)|jump off|hang myself|shoot myself|` +
 	// abuse / acute danger
 	`he('?s| is) (hitting|hurting|abusing) me|she('?s| is) (hitting|hurting|abusing) me|` +
-	`raped|assaulted me`+
+	`raped|assaulted me` +
 	`)\b`)
 
 // IsCrisis reports whether `text` matches a crisis indicator. Trims

@@ -70,6 +70,7 @@ func main() {
 	goalStore := store.NewGoalStore(db)
 	goalCheckIns := store.NewGoalCheckInStore(db)
 	weeklyReflections := store.NewWeeklyReflectionStore(db)
+	monthlyReflections := store.NewMonthlyReflectionStore(db)
 	memories := store.NewMemoryStore(db)
 	memoryJobs := store.NewMemoryExtractionJobStore(db)
 
@@ -90,18 +91,20 @@ func main() {
 	}
 
 	worker := &jobs.SummaryWorker{
-		Summaries:         summaries,
-		Jobs:              jobsStore,
-		Entries:           entries,
-		DailyInputs:       dailyInputs,
-		DailyEntryTags:    dailyEntryTags,
-		Tags:              tagStore,
-		Users:             users,
-		WeeklyReflections: weeklyReflections,
-		Scheduler:         scheduler,
-		LLM:               summaryLLM,
-		Logger:            logger,
-		ShotCount:         cfg.SummaryShotCount,
+		Summaries:          summaries,
+		Jobs:               jobsStore,
+		Entries:            entries,
+		DailyInputs:        dailyInputs,
+		DailyEntryTags:     dailyEntryTags,
+		Tags:               tagStore,
+		Users:              users,
+		WeeklyReflections:  weeklyReflections,
+		MonthlyReflections: monthlyReflections,
+		Goals:              goalStore,
+		Scheduler:          scheduler,
+		LLM:                summaryLLM,
+		Logger:             logger,
+		ShotCount:          cfg.SummaryShotCount,
 	}
 	reminderScheduler := &jobs.ReminderScheduler{
 		Jobs:   reminderJobs,
@@ -139,22 +142,23 @@ func main() {
 	}
 
 	chatExtractWorker := &jobs.ChatExtractionWorker{
-		Sessions:          chatSessions,
-		Messages:          chatMessages,
-		Jobs:              chatExtractionJobs,
-		Entries:           entries,
-		DailyInputs:       dailyInputs,
-		Tags:              tagStore,
-		DailyEntryTags:    dailyEntryTags,
-		Questions:         questions,
-		Goals:             goalStore,
-		GoalCheckIns:      goalCheckIns,
-		Users:             users,
-		WeeklyReflections: weeklyReflections,
-		Scheduler:         scheduler,
-		MemoryScheduler:   memoryScheduler,
-		LLM:               classifyLLM,
-		Logger:            logger,
+		Sessions:           chatSessions,
+		Messages:           chatMessages,
+		Jobs:               chatExtractionJobs,
+		Entries:            entries,
+		DailyInputs:        dailyInputs,
+		Tags:               tagStore,
+		DailyEntryTags:     dailyEntryTags,
+		Questions:          questions,
+		Goals:              goalStore,
+		GoalCheckIns:       goalCheckIns,
+		Users:              users,
+		WeeklyReflections:  weeklyReflections,
+		MonthlyReflections: monthlyReflections,
+		Scheduler:          scheduler,
+		MemoryScheduler:    memoryScheduler,
+		LLM:                classifyLLM,
+		Logger:             logger,
 	}
 
 	memoryWorker := &jobs.MemoryExtractionWorker{

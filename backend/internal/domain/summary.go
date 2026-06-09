@@ -53,6 +53,16 @@ type SummaryMetadata struct {
 	Insights        string         `json:"insights,omitempty"`
 	Themes          []SummaryTheme `json:"themes,omitempty"`
 	ClosingQuestion string         `json:"closing_question,omitempty"`
+
+	// Monthly synthesis paragraphs (period_type='month' rows only). The
+	// monthly letter looks back rather than auditing days: Arc is the
+	// month's story told through its weeks, Recurring the threads that
+	// kept showing up across weekly letters, GoalsRetro what the goal
+	// ledger says about what actually matters. ClosingQuestion doubles as
+	// the direction question on monthly rows.
+	Arc        string `json:"arc,omitempty"`
+	Recurring  string `json:"recurring,omitempty"`
+	GoalsRetro string `json:"goals_retro,omitempty"`
 }
 
 // HasLetterSynthesis reports whether m has any letter-shaped content —
@@ -65,6 +75,15 @@ func (m SummaryMetadata) HasLetterSynthesis() bool {
 		m.Drained != "" ||
 		m.Grateful != "" ||
 		m.Insights != ""
+}
+
+// HasMonthlySynthesis is the monthly-letter analogue of
+// HasLetterSynthesis. Kept separate on purpose: weekly code paths gate on
+// HasLetterSynthesis and all summary lookups are period_type-scoped.
+func (m SummaryMetadata) HasMonthlySynthesis() bool {
+	return m.Arc != "" ||
+		m.Recurring != "" ||
+		m.GoalsRetro != ""
 }
 
 // SummaryTheme is one ad-hoc grouping of related tags the weekly LLM

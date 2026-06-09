@@ -23,10 +23,10 @@ import (
 // attached in the same write — the handler links daily_entry_tags rows
 // after the daily_inputs upsert.
 type DailyInputHandler struct {
-	Inputs         *store.DailyInputStore
-	Users          *store.UserStore
-	Tags           *store.TagStore
-	DailyEntryTags *store.DailyEntryTagStore
+	Inputs          *store.DailyInputStore
+	Users           *store.UserStore
+	Tags            *store.TagStore
+	DailyEntryTags  *store.DailyEntryTagStore
 	Logger          *slog.Logger
 	Scheduler       SummaryScheduler // shares the interface with EntryHandler — same lazy-seed contract
 	MemoryScheduler SummaryScheduler // same contract; arms the day's memory pass
@@ -64,9 +64,9 @@ func (h *DailyInputHandler) resolveDate(r *http.Request, userID, param string) (
 // dailyInputResponse is the GET payload. `tags` is the union of drainer
 // + charger links for the day; FE splits by role for rendering.
 type dailyInputResponse struct {
-	LocalDate string                  `json:"local_date"`
-	Input     *domain.DailyInput      `json:"input"`
-	Tags      []store.TagDayLink      `json:"tags"`
+	LocalDate string             `json:"local_date"`
+	Input     *domain.DailyInput `json:"input"`
+	Tags      []store.TagDayLink `json:"tags"`
 }
 
 // Get handles GET /api/daily/inputs?date=YYYY-MM-DD (or omitted = today).
@@ -106,13 +106,13 @@ func (h *DailyInputHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 type upsertDailyInputRequest struct {
-	Mood            *int     `json:"mood"`
-	DrainedText     string   `json:"drained_text"`
-	ChargedText     string   `json:"charged_text"`
-	GratitudeText   string   `json:"gratitude_text"`
-	ReflectionText  string   `json:"reflection_text"`
-	DrainedTagIDs   []string `json:"drained_tag_ids"`
-	ChargedTagIDs   []string `json:"charged_tag_ids"`
+	Mood           *int     `json:"mood"`
+	DrainedText    string   `json:"drained_text"`
+	ChargedText    string   `json:"charged_text"`
+	GratitudeText  string   `json:"gratitude_text"`
+	ReflectionText string   `json:"reflection_text"`
+	DrainedTagIDs  []string `json:"drained_tag_ids"`
+	ChargedTagIDs  []string `json:"charged_tag_ids"`
 }
 
 // Upsert handles PUT /api/daily/inputs — write today's check-in.

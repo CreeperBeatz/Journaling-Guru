@@ -15,9 +15,14 @@ import { cn } from "@/lib/utils";
 import type { Zone1GoalStatus } from "@/features/summary/api";
 import { useRegenerateSummary } from "@/features/summaries/hooks";
 
-import { PatchReflectionBody, ReflectionResponse } from "./api";
+import { LIFE_DOMAINS, PatchReflectionBody, ReflectionResponse } from "./api";
+import { MonthlyLetterCard } from "./cards/MonthlyLetterCard";
 import { WeeklySynthesisCard } from "./cards/WeeklySynthesisCard";
-import { usePatchReflection, useReplayReflection } from "./hooks";
+import {
+  usePatchReflection,
+  useReplayReflection,
+  useSetMonthlyIntention,
+} from "./hooks";
 
 interface Props {
   data: ReflectionResponse;
@@ -147,6 +152,13 @@ export function WeeklySummary({
         saving={patching}
       />
 
+      {data.monthly ? (
+        <MonthSection
+          monthly={data.monthly}
+          editable={showReplay /* current week only — History is read-only */}
+        />
+      ) : null}
+
       {showReplay || (showRegenerate && hasAnyBody) ? (
         <div className="flex items-center justify-center gap-1 pt-2">
           {showReplay ? (
@@ -174,6 +186,144 @@ export function WeeklySummary({
             />
           ) : null}
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+// MonthSection — the "This month" block on monthly weeks: the monthly
+// letter, the intention (editable until the user is happy with it), the
+// distilled direction note once the chat finalized, and a compact
+// ratings row with deltas vs the previous rated month.
+function MonthSection({
+  monthly,
+  editable,
+}: {
+  monthly: NonNullable<ReflectionResponse["monthly"]>;
+  editable: boolean;
+}) {
+  const setIntention = useSetMonthlyIntention();
+  const [intentionDraft, setIntentionDraft] = useState(monthly.intention_text);
+  const [intentionDirty, setIntentionDirty] = useState(false);
+
+  useEffect(() => {
+    if (!intentionDirty) setIntentionDraft(monthly.intention_text);
+  }, [monthly.intention_text, intentionDirty]);
+
+  const saveIntention = () => {
+    if (!intentionDirty) return;
+    const text = intentionDraft.trim();
+    if (text === "" || text === monthly.intention_text) {
+      setIntentionDirty(false);
+      setIntentionDraft(monthly.intention_text);
+      return;
+    }
+    setIntention.mutate(text);
+    setIntentionDirty(false);
+  };
+
+  const prev = monthly.prev_ratings ?? {};
+  const ratingRows = monthly.ratings
+    ? LIFE_DOMAINS.filter((d) => monthly.ratings![d.key] !== undefined).map((d) => {
+        const score = monthly.ratings![d.key];
+        const prior = prev[d.key];
+        return { key: d.key, label: d.label, score, delta: prior !== undefined ? score - prior : null };
+      })
+    : [];
+
+  return (
+    <div className="space-y-6">
+      <header className="space-y-1 pt-2">
+        <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+          This month
+        </p>
+      </header>
+
+      <MonthlyLetterCard monthly={monthly} />
+
+      <Card className="border-accent/40 bg-accent/5">
+        <CardHeader className="pb-3">
+          <CardTitle className="font-serif text-base">
+            Intention for next month
+          </CardTitle>
+          <p className="text-xs italic text-muted-foreground">
+            One direction — broader than a goal.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {editable ? (
+            <Textarea
+              value={intentionDraft}
+              onChange={(e) => {
+                setIntentionDraft(e.target.value);
+                setIntentionDirty(true);
+              }}
+              onBlur={saveIntention}
+              placeholder="e.g. Protect my mornings…"
+              maxLength={300}
+              rows={2}
+              className="min-h-[3.5rem]"
+              disabled={setIntention.isPending}
+            />
+          ) : (
+            <p className="text-sm">
+              {monthly.intention_text.trim() !== ""
+                ? monthly.intention_text
+                : "No intention was set this month."}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {monthly.direction_text.trim() !== "" ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="font-serif text-base">
+              The direction check
+            </CardTitle>
+            <p className="text-xs italic text-muted-foreground">
+              Where you said this is pointing — distilled from the conversation.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <p className="whitespace-pre-wrap text-sm text-foreground/90">
+              {monthly.direction_text}
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {ratingRows.length > 0 ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="font-serif text-base">Life check-in</CardTitle>
+            <p className="text-xs italic text-muted-foreground">
+              0–10 satisfaction, with movement vs last month.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+              {ratingRows.map((r) => (
+                <div key={r.key} className="flex items-baseline justify-between gap-3">
+                  <dt className="text-sm">{r.label}</dt>
+                  <dd className="font-mono text-sm tabular-nums">
+                    {r.score}
+                    {r.delta !== null && r.delta !== 0 ? (
+                      <span
+                        className={cn(
+                          "ml-1.5 text-[11px]",
+                          r.delta > 0 ? "text-accent" : "text-destructive/80",
+                        )}
+                      >
+                        {r.delta > 0 ? `+${r.delta}` : r.delta}
+                      </span>
+                    ) : null}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </CardContent>
+        </Card>
       ) : null}
     </div>
   );

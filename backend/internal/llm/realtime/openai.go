@@ -25,10 +25,10 @@ var ErrNoAPIKey = errors.New("openai realtime: API key not configured")
 // Client is a thin OpenAI Realtime wrapper. The HTTP client is shared so
 // keep-alive amortizes across mints; constructed once at server start.
 type Client struct {
-	APIKey   string
-	Model    string
-	BaseURL  string
-	HTTP     *http.Client
+	APIKey  string
+	Model   string
+	BaseURL string
+	HTTP    *http.Client
 }
 
 // New builds a client with sensible defaults. Pass empty BaseURL for

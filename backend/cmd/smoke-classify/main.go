@@ -5,7 +5,8 @@
 // post-validation filtered set.
 //
 // Usage: DATABASE_URL=... OPENROUTER_API_KEY=... CLASSIFY_MODEL=...
-//        go run ./cmd/smoke-classify [session-id]
+//
+//	go run ./cmd/smoke-classify [session-id]
 //
 // If no session id is passed, the most recent chat_sessions row is used.
 package main

@@ -15,9 +15,9 @@ import (
 // Period spans Monday..Sunday inclusive. Both are "midnight in user's tz"
 // instants, so they round-trip through `to_char(.., 'YYYY-MM-DD')`.
 type Period struct {
-	Type     domain.SummaryPeriod
-	Start    time.Time // user-tz local midnight, inclusive
-	End      time.Time // user-tz local midnight, inclusive
+	Type      domain.SummaryPeriod
+	Start     time.Time // user-tz local midnight, inclusive
+	End       time.Time // user-tz local midnight, inclusive
 	FireAtUTC time.Time
 }
 
@@ -40,7 +40,11 @@ type Period struct {
 //   - weekly: period_end (= reflection_weekday) at day_start_minutes, in
 //     user-tz. The synthesis fires at the start of reflection day so
 //     it's ready when the user begins reflecting.
-//   - day/month/year (dead under Energy Audit): end+1 at day_start+30,
+//   - monthly: the first reflection_weekday on-or-after period_end (the
+//     user's "monthly day"), at day_start_minutes + 15 — quarter past the
+//     weekly job that fires the same morning, so the final weekly letter
+//     normally exists when the monthly synthesis composes over it.
+//   - day/year (dead under Energy Audit): end+1 at day_start+30,
 //     preserved for back-compat in case those paths are ever revived.
 func PeriodContaining(at time.Time, iana string, dayStartMinutes, reflectionWeekday int, pt domain.SummaryPeriod) (Period, error) {
 	if !domain.IsValidPeriod(string(pt)) {
@@ -87,20 +91,34 @@ func PeriodContaining(at time.Time, iana string, dayStartMinutes, reflectionWeek
 		Type:      pt,
 		Start:     start,
 		End:       end,
-		FireAtUTC: computeFireAt(pt, end, dayStartMinutes, loc),
+		FireAtUTC: computeFireAt(pt, end, dayStartMinutes, reflectionWeekday, loc),
 	}, nil
 }
 
 // computeFireAt resolves the absolute UTC moment a job for `pt` ending on
 // `end` (user-tz local midnight, inclusive) should fire. Weekly fires at
 // the START of period_end (reflection_weekday at day_start) so the
-// synthesis is ready as the user begins their reflection day. Other
+// synthesis is ready as the user begins their reflection day. Monthly
+// fires on the first reflection_weekday on-or-after period_end at
+// day_start + 15 — same morning as that week's weekly job, just after it,
+// so the monthly composes over a complete set of weekly letters. Other
 // period types use end+1 at day_start+30 (legacy convention).
-func computeFireAt(pt domain.SummaryPeriod, end time.Time, dayStartMinutes int, loc *time.Location) time.Time {
-	if pt == domain.PeriodWeek {
+func computeFireAt(pt domain.SummaryPeriod, end time.Time, dayStartMinutes, reflectionWeekday int, loc *time.Location) time.Time {
+	switch pt {
+	case domain.PeriodWeek:
 		fireLocal := time.Date(
 			end.Year(), end.Month(), end.Day(),
 			dayStartMinutes/60, dayStartMinutes%60, 0, 0, loc,
+		)
+		return fireLocal.UTC()
+	case domain.PeriodMonth:
+		// First reflection_weekday on-or-after the last day of the month
+		// (0 days ahead when month-end IS the reflection day).
+		daysUntilRefl := (reflectionWeekday - int(end.Weekday()) + 7) % 7
+		fireMinutes := dayStartMinutes + 15
+		fireLocal := time.Date(
+			end.Year(), end.Month(), end.Day()+daysUntilRefl,
+			fireMinutes/60, fireMinutes%60, 0, 0, loc,
 		)
 		return fireLocal.UTC()
 	}
@@ -167,7 +185,7 @@ func PeriodFromLocalStart(
 		Type:      pt,
 		Start:     start,
 		End:       end,
-		FireAtUTC: computeFireAt(pt, end, dayStartMinutes, loc),
+		FireAtUTC: computeFireAt(pt, end, dayStartMinutes, reflectionWeekday, loc),
 	}, nil
 }
 
@@ -185,12 +203,15 @@ func NextPeriod(p Period, iana string, dayStartMinutes, reflectionWeekday int) (
 }
 
 // AllPeriods returns the surviving periods containing `at`. Under the
-// Energy Audit pivot only the weekly summary fires; the daily / monthly
-// / yearly LLM summaries are retired.
+// Energy Audit pivot the weekly summary fires, plus the monthly synthesis
+// (re-admitted by the monthly reflection loop — it composes over weekly
+// artifacts, not raw entries); the daily / yearly LLM summaries stay
+// retired.
 func AllPeriods(at time.Time, iana string, dayStartMinutes, reflectionWeekday int) ([]Period, error) {
-	out := make([]Period, 0, 1)
+	out := make([]Period, 0, 2)
 	for _, pt := range []domain.SummaryPeriod{
 		domain.PeriodWeek,
+		domain.PeriodMonth,
 	} {
 		p, err := PeriodContaining(at, iana, dayStartMinutes, reflectionWeekday, pt)
 		if err != nil {
@@ -199,4 +220,29 @@ func AllPeriods(at time.Time, iana string, dayStartMinutes, reflectionWeekday in
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// MonthlyWeekFor reports whether the canonical reflection week ending on
+// `weekEnd` hosts a monthly reflection, and for which calendar month. A
+// week is the "monthly week" for month M when M's last day falls inside
+// [weekEnd-13, weekEnd]: the week containing month-end's first
+// on-or-after reflection day, plus ONE carry-over grace week for users who
+// miss it. Callers layer the monthly_reflections.completed_at check on
+// top — a completed month stops claiming weeks regardless of the window.
+//
+// weekEnd must be a canonical user-local midnight (a stored date — never
+// re-normalize it through LocalDate).
+func MonthlyWeekFor(weekEnd time.Time, loc *time.Location) (monthStart, monthEnd time.Time, ok bool) {
+	// The candidate month is the most recent month whose end is <= weekEnd:
+	// weekEnd's own month if weekEnd is its last day, else the month before.
+	firstOfWeekEndMonth := time.Date(weekEnd.Year(), weekEnd.Month(), 1, 0, 0, 0, 0, loc)
+	candEnd := firstOfWeekEndMonth.AddDate(0, 1, 0).AddDate(0, 0, -1) // end of weekEnd's month
+	if candEnd.After(weekEnd) {
+		candEnd = firstOfWeekEndMonth.AddDate(0, 0, -1) // end of previous month
+	}
+	if candEnd.Before(weekEnd.AddDate(0, 0, -13)) {
+		return time.Time{}, time.Time{}, false
+	}
+	monthStart = time.Date(candEnd.Year(), candEnd.Month(), 1, 0, 0, 0, 0, loc)
+	return monthStart, candEnd, true
 }

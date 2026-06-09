@@ -113,6 +113,42 @@ func (s *GoalStore) ListActive(
 	return out, rows.Err()
 }
 
+// ListTouchedInRange returns the month's goal ledger: every goal that was
+// alive during [from, to] (date overlap on [start_date, end_date]) or was
+// resolved inside it (ended_at within the window). Oldest-started first.
+// The monthly synthesis narrates this — what was set, what stuck, what
+// kept getting extended or was abandoned.
+//
+// from/to are canonical user-local midnights; toExclusive = to + 1 day
+// bounds the timestamptz ended_at comparison.
+func (s *GoalStore) ListTouchedInRange(
+	ctx context.Context, userID string, from, to time.Time,
+) ([]domain.Goal, error) {
+	toExclusive := to.AddDate(0, 0, 1)
+	const q = `SELECT ` + goalColumns + `
+	             FROM goals
+	            WHERE user_id = $1
+	              AND (
+	                    (start_date <= $3 AND end_date >= $2)
+	                 OR (ended_at IS NOT NULL AND ended_at >= $2 AND ended_at < $4)
+	              )
+	            ORDER BY start_date ASC, created_at ASC`
+	rows, err := s.DB.Query(ctx, q, userID, from, to, toExclusive)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.Goal, 0)
+	for rows.Next() {
+		g, err := scanGoal(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *g)
+	}
+	return out, rows.Err()
+}
+
 // ListAll returns every goal (active + historical) ordered newest-first.
 // Drives Zone 3 of the summary page.
 func (s *GoalStore) ListAll(ctx context.Context, userID string) ([]domain.Goal, error) {

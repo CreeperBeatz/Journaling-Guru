@@ -14,6 +14,8 @@ import {
   useThisWeekReflection,
 } from "./hooks";
 import { LetterCard } from "./cards/LetterCard";
+import { LifeCheckInCard } from "./cards/LifeCheckInCard";
+import { MonthlyLetterCard } from "./cards/MonthlyLetterCard";
 import { WeeklyChat } from "./WeeklyChat";
 import { WeeklySummary } from "./WeeklySummary";
 
@@ -76,6 +78,7 @@ export function WeeklyReflection() {
 function IdleScreen({ data }: { data: ReflectionResponse }) {
   const me = useMe();
   const start = useStartReflection();
+  const isMonthly = data.monthly != null;
   // Carry-over: today is past the reflection day but this week's
   // reflection hasn't been done. Swap the copy so the user understands
   // the dates shown are the missed week, not the trailing 7 days.
@@ -88,24 +91,35 @@ function IdleScreen({ data }: { data: ReflectionResponse }) {
     <div className="space-y-6">
       <header className="space-y-1">
         <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-          Weekly reflection
+          {isMonthly ? "Monthly reflection" : "Weekly reflection"}
         </p>
         <h1 className="font-serif text-h1">
-          {isCatchUp ? "Catching up on last week" : "This week, looking back"}
+          {isMonthly
+            ? "Closing out the month"
+            : isCatchUp
+              ? "Catching up on last week"
+              : "This week, looking back"}
         </h1>
         <p className="text-sm text-muted-foreground">
           {data.week_start} → {data.week_end} · {data.entry_count}{" "}
           {data.entry_count === 1 ? "logged day" : "logged days"}
+          {isMonthly ? ` · wraps up ${monthLabelFor(data.monthly!.month_start)}` : ""}
         </p>
       </header>
 
       <Card>
         <CardContent className="space-y-4 px-6 py-10 text-center">
           <p className="text-sm text-muted-foreground">
-            Journaling Guru has written a letter to you, summarizing how
-            your week looked like. You can then choose to reflect on your
-            week, and set something small to change for the next one.
-            Takes about 10 minutes of focused time.
+            {isMonthly
+              ? "This week's reflection also closes the month. Journaling " +
+                "Guru has written you two letters — one for the week, one " +
+                "looking back over the whole month — followed by a quick " +
+                "life check-in and a conversation about where things are " +
+                "heading. Takes about 15–20 minutes of focused time."
+              : "Journaling Guru has written a letter to you, summarizing how " +
+                "your week looked like. You can then choose to reflect on your " +
+                "week, and set something small to change for the next one. " +
+                "Takes about 10 minutes of focused time."}
           </p>
           <Button
             size="lg"
@@ -114,7 +128,11 @@ function IdleScreen({ data }: { data: ReflectionResponse }) {
             className="gap-2"
           >
             <Sparkles className="h-4 w-4" />
-            {start.isPending ? "Starting…" : "Start weekly reflection"}
+            {start.isPending
+              ? "Starting…"
+              : isMonthly
+                ? "Start monthly reflection"
+                : "Start weekly reflection"}
           </Button>
         </CardContent>
       </Card>
@@ -122,11 +140,30 @@ function IdleScreen({ data }: { data: ReflectionResponse }) {
   );
 }
 
+function monthLabelFor(monthStart: string): string {
+  const [y, m] = monthStart.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, {
+    month: "long",
+    timeZone: "UTC",
+  });
+}
+
 // ---------------- LetterReadingView ----------------
+
+// Reading-step sheets on a monthly week: weekly letter → monthly letter
+// → life check-in → chat. Local state only — `step` in the DB stays
+// 1..2; a refresh mid-reading re-shows the weekly sheet, which is
+// acceptable for a reading step and avoids a step-CHECK migration.
+type ReadingSheet = "weekly" | "monthly" | "checkin";
 
 function LetterReadingView({ data }: { data: ReflectionResponse }) {
   const patch = usePatchReflection();
   const [, setParams] = useSearchParams();
+  const [sheet, setSheet] = useState<ReadingSheet>("weekly");
+  const monthly = data.monthly;
+  // Skip the check-in sheet when the user already submitted ratings
+  // (refresh mid-flow, or replay — ratings survive replay by design).
+  const checkinDone = monthly?.ratings_set_at != null;
 
   const advance = async () => {
     try {
@@ -153,20 +190,73 @@ function LetterReadingView({ data }: { data: ReflectionResponse }) {
     );
   };
 
+  const eyebrow = monthly ? "Monthly reflection" : "Weekly reflection";
+  let title = "Your letter";
+  let metaLine = `${data.week_start} → ${data.week_end} · read it, then we'll talk it through`;
+  if (monthly && sheet === "weekly") {
+    metaLine = `${data.week_start} → ${data.week_end} · the week first, then the month`;
+  } else if (monthly && sheet === "monthly") {
+    title = "Your monthly letter";
+    metaLine = `${monthLabelFor(monthly.month_start)} · read it, then a quick check-in`;
+  } else if (monthly && sheet === "checkin") {
+    title = "A quick check-in";
+    metaLine = "30 seconds of sliders — then we'll talk it through";
+  }
+
   return (
     <div className="space-y-6">
       <header className="space-y-1">
         <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-          Weekly reflection
+          {eyebrow}
         </p>
-        <h1 className="font-serif text-h1">Your letter</h1>
-        <p className="text-sm text-muted-foreground">
-          {data.week_start} → {data.week_end} · read it, then we'll talk it
-          through
-        </p>
+        <h1 className="font-serif text-h1">{title}</h1>
+        <p className="text-sm text-muted-foreground">{metaLine}</p>
       </header>
 
-      <LetterCard data={data} saving={patch.isPending} onContinue={advance} />
+      {!monthly || sheet === "weekly" ? (
+        monthly ? (
+          <LetterCard
+            data={data}
+            saving={false}
+            onContinue={() => setSheet("monthly")}
+            continueLabel="Continue to your monthly letter"
+          />
+        ) : (
+          <LetterCard data={data} saving={patch.isPending} onContinue={advance} />
+        )
+      ) : null}
+
+      {monthly && sheet === "monthly" ? (
+        <div className="space-y-6">
+          <MonthlyLetterCard monthly={monthly} />
+          <div className="flex justify-between">
+            <Button variant="ghost" onClick={() => setSheet("weekly")}>
+              Back
+            </Button>
+            <Button
+              onClick={() => (checkinDone ? void advance() : setSheet("checkin"))}
+              disabled={patch.isPending}
+            >
+              {checkinDone
+                ? patch.isPending
+                  ? "Opening chat…"
+                  : "Continue to reflection"
+                : "Continue to check-in"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {monthly && sheet === "checkin" ? (
+        <div className="space-y-6">
+          <LifeCheckInCard monthly={monthly} onDone={() => void advance()} />
+          <div className="flex justify-start">
+            <Button variant="ghost" onClick={() => setSheet("monthly")}>
+              Back
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

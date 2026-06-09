@@ -6,11 +6,11 @@ import "time"
 // for "I'm done" affordance, ExtractionPending overlay, etc.) and the
 // system-prompt phase block (different instructions per phase).
 const (
-	ChatPhaseGreeting    = "greeting"
-	ChatPhaseExploring   = "exploring"
-	ChatPhaseWrappingUp  = "wrapping_up"
-	ChatPhaseFinalized   = "finalized"
-	ChatPhaseAbandoned   = "abandoned"
+	ChatPhaseGreeting   = "greeting"
+	ChatPhaseExploring  = "exploring"
+	ChatPhaseWrappingUp = "wrapping_up"
+	ChatPhaseFinalized  = "finalized"
+	ChatPhaseAbandoned  = "abandoned"
 )
 
 // Chat session mode. Voice is reserved for Phase 6b; same row, different
@@ -39,8 +39,9 @@ const (
 )
 
 // Chat extraction job + session status ENUM. Lifecycle:
-//   idle → pending (on finalize) → running (worker claims) →
-//     completed | failed.
+//
+//	idle → pending (on finalize) → running (worker claims) →
+//	  completed | failed.
 const (
 	ChatExtractionIdle      = "idle"
 	ChatExtractionPending   = "pending"
@@ -55,26 +56,31 @@ const (
 // session cookie already disambiguates ownership and we never want to
 // leak someone else's id by accident.
 type ChatSession struct {
-	ID                  string     `json:"id"`
-	UserID              string     `json:"-"`
-	LocalDate           string     `json:"local_date"`
+	ID        string `json:"id"`
+	UserID    string `json:"-"`
+	LocalDate string `json:"local_date"`
 	// Scope is "daily" (one session per user per local_date) or "weekly"
 	// (one session per user per week_start). For weekly rows LocalDate is
 	// set equal to PeriodStart so the existing as-of lookups keep working.
-	Scope               string     `json:"scope"`
+	Scope string `json:"scope"`
 	// PeriodStart is the week_start date for scope="weekly", NULL for daily.
-	PeriodStart         *string    `json:"period_start,omitempty"`
-	Mode                string     `json:"mode"`
-	Phase               string     `json:"phase"`
-	ChatModel           string     `json:"chat_model"`
-	ExtractionModel     string     `json:"extraction_model"`
-	OpenAISessionID     *string    `json:"openai_session_id,omitempty"`
-	StartedAt           time.Time  `json:"started_at"`
-	LastActivityAt      time.Time  `json:"last_activity_at"`
-	EndedAt             *time.Time `json:"ended_at,omitempty"`
-	FinalizedAt         *time.Time `json:"finalized_at,omitempty"`
-	ExtractionStatus    string     `json:"extraction_status"`
-	ExtractionError     *string    `json:"extraction_error,omitempty"`
+	PeriodStart *string `json:"period_start,omitempty"`
+	// MonthPeriodStart pins a weekly session as the COMBINED weekly+monthly
+	// reflection session (1st of the month it hosts). Set once at creation
+	// when the week is a monthly week; NULL otherwise. Stable for the
+	// session's lifetime so combined-ness never flaps mid-conversation.
+	MonthPeriodStart *string    `json:"month_period_start,omitempty"`
+	Mode             string     `json:"mode"`
+	Phase            string     `json:"phase"`
+	ChatModel        string     `json:"chat_model"`
+	ExtractionModel  string     `json:"extraction_model"`
+	OpenAISessionID  *string    `json:"openai_session_id,omitempty"`
+	StartedAt        time.Time  `json:"started_at"`
+	LastActivityAt   time.Time  `json:"last_activity_at"`
+	EndedAt          *time.Time `json:"ended_at,omitempty"`
+	FinalizedAt      *time.Time `json:"finalized_at,omitempty"`
+	ExtractionStatus string     `json:"extraction_status"`
+	ExtractionError  *string    `json:"extraction_error,omitempty"`
 	// CoveredQuestionIDs is the authoritative set written by the
 	// post-turn classifier; the FE renders coverage chips from it
 	// (initial value at page load, then live updates via the SSE
@@ -116,16 +122,16 @@ type ChatMessage struct {
 // Mirrors SummaryJob's shape — one River InsertOpts and the same
 // dispatcher claim semantics.
 type ChatExtractionJob struct {
-	ID         string     `json:"id"`
-	SessionID  string     `json:"session_id"`
-	UserID     string     `json:"-"`
-	FireAt     time.Time  `json:"fire_at"`
-	FiredAt    *time.Time `json:"fired_at,omitempty"`
-	Status     string     `json:"status"`
-	Attempts   int        `json:"attempts"`
-	LastError  *string    `json:"last_error,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID        string     `json:"id"`
+	SessionID string     `json:"session_id"`
+	UserID    string     `json:"-"`
+	FireAt    time.Time  `json:"fire_at"`
+	FiredAt   *time.Time `json:"fired_at,omitempty"`
+	Status    string     `json:"status"`
+	Attempts  int        `json:"attempts"`
+	LastError *string    `json:"last_error,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // IsValidChatPhase reports whether s is one of the five enum values. The
@@ -149,11 +155,12 @@ func IsValidChatPhase(s string) bool {
 // back to exploring so the user can keep talking.
 //
 // Allowed transitions:
-//   greeting    → exploring | wrapping_up | abandoned
-//   exploring   → wrapping_up | finalized
-//   wrapping_up → exploring | finalized | abandoned (resume by typing)
-//   finalized   → exploring | wrapping_up          (resume after extraction)
-//   abandoned   → exploring                        (rare — sweeper bailout)
+//
+//	greeting    → exploring | wrapping_up | abandoned
+//	exploring   → wrapping_up | finalized
+//	wrapping_up → exploring | finalized | abandoned (resume by typing)
+//	finalized   → exploring | wrapping_up          (resume after extraction)
+//	abandoned   → exploring                        (rare — sweeper bailout)
 //
 // finalized is reachable for legacy reasons (the worker briefly stamps
 // it inside the extraction tx); the worker then immediately advances

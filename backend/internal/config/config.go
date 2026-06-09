@@ -64,6 +64,11 @@ type Config struct {
 	// diversity; the combiner merges the strongest insights from each.
 	SummaryShotCount int `env:"SUMMARY_SHOT_COUNT" envDefault:"4"`
 
+	// DevForceFlags unlocks dev-only request escape hatches (currently
+	// ?force_month on the reflection endpoints, which makes the monthly
+	// flow testable on any calendar day). NEVER enable in prod.
+	DevForceFlags bool `env:"DEV_FORCE_FLAGS" envDefault:"false"`
+
 	OpenAIKey           string `env:"OPENAI_API_KEY"`
 	OpenAIRealtimeModel string `env:"OPENAI_REALTIME_MODEL" envDefault:"gpt-realtime"`
 

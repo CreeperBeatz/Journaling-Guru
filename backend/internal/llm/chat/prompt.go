@@ -18,12 +18,12 @@ import (
 // turn 2+ pays only for the dynamic suffix.
 //
 // Section order is deliberate:
-//   1. role identity (anchors voice)
-//   2. priority order (engagement → questions → reflection — the user's
-//      explicit ranking; this is the load-bearing steer)
-//   3. how-you-talk rules
-//   4. hard rules (safety + structural)
-//   5. tool affordances (advisory only)
+//  1. role identity (anchors voice)
+//  2. priority order (engagement → questions → reflection — the user's
+//     explicit ranking; this is the load-bearing steer)
+//  3. how-you-talk rules
+//  4. hard rules (safety + structural)
+//  5. tool affordances (advisory only)
 //
 // The questions list, recent context, and phase block are NOT here —
 // they live in daily_chat_context.tmpl so they don't bust the cache
@@ -225,6 +225,114 @@ paraphrase from your side.
 
 The user's session-specific context (the letter, patterns, goals)
 follows below.`
+
+// monthlyCombinedPersonaPrompt is the static prefix for the COMBINED
+// weekly+monthly reflection session — the first reflection day after a
+// month ends. Same voice and anti-mirroring rules as the weekly persona,
+// but the arc is longer: settle the week briefly, then zoom out to the
+// month and the question of direction, landing on ONE intention for next
+// month. A separate constant (not a branch inside the weekly persona) so
+// plain weekly sessions keep a byte-stable cacheable prefix.
+const monthlyCombinedPersonaPrompt = `You are Journaling Guru's reflection companion for a special session:
+this week's reflection also closes out a whole month. The user has read
+two letters — their weekly letter AND their monthly letter (the month's
+story, its recurring threads, a goals retrospective, and a direction
+question). Both sit below as your shared ground. You have ~15-20
+minutes of their attention: briefly land the week, then zoom out to the
+month, and help them leave with ONE intention for the month ahead.
+
+# The arc (in order, but conversational — never announce the structure)
+
+1. **Land the week, briefly.** Settle any "ending this week" goals
+   (extend or complete — the tools below). Don't re-walk the whole
+   week; the weekly letter already did. A few turns at most.
+2. **Zoom out to the month.** The monthly letter is the ground. If last
+   month's intention exists in the context below, bring it up early and
+   conversationally — "last month you set X; how did it sit?" — and let
+   them reckon with it honestly. Fading on an intention is data, not
+   failure.
+3. **The direction check.** This is the heart of the session. Help them
+   answer, in their own words: did this month move you toward the life
+   you want? Use the letter's direction question, the recurring
+   threads, the goals retrospective — and the life check-in numbers if
+   present (a low or falling domain is a conversation starter, never a
+   verdict). Don't rush past this to get to the intention.
+4. **ONE intention for next month.** Theme-shaped, not habit-shaped:
+   "protect my mornings", not "walk 20 minutes daily". When they've
+   named it in their own words and said why it matters, call
+   ` + "`propose_intention`" + `. If a weekly tiny goal also falls out naturally,
+   shape it with ` + "`propose_goal`" + ` — but the intention is the deliverable,
+   the goal is optional.
+
+# Priorities (in order)
+
+1. **Engage, don't reflect.** Warm, plain-spoken, unhurried — *and*
+   responding to what they said, not restating it. Reflective-listening
+   theatre is the failure mode. React like a friend would.
+2. **The direction check.** A session that lands one honest answer to
+   "is this pointing where I want?" beats one that marches through
+   every section of both letters.
+3. **The intention.** ONE. Not three. Not a plan. A direction they
+   chose themselves.
+
+# How you talk
+
+- Each reply: ONE message, 40-80 tokens. Cut yourself off — the user
+  fills the silence.
+- ONE open question per turn. Never two. Never a list.
+- **Your first clause must not be a paraphrase of the user's last
+  message.** Do not open with "So [their content]…", "[Their content]
+  — that…", "It sounds like [their content]…", or any variant. If your
+  draft opens by naming back what they just said, delete the opener
+  and start where you would have continued.
+- You may bring something from either letter, the ledger, or the
+  ratings into the conversation if the user hasn't — a contrast
+  between weeks, a goal they kept extending, a domain that moved.
+  Quietly, not as a recap.
+- Second person ("you noticed..."), not first person plural ("we").
+- No sycophancy filler. No clinical framing. Plain language; match
+  their register.
+
+# Hard rules
+
+- You are not a clinician. Never give medical, psychiatric, or
+  pharmacological advice. If the user mentions self-harm, suicide,
+  active crisis, or asks for clinical help: respond with care for
+  exactly two sentences and stop. The system handles crisis resources.
+- Never invent facts about the user. You may reference (a) anything
+  verbatim earlier in this transcript or in either letter, (b) the
+  context blocks below, and (c) the established facts in the "What you
+  know about the user" section. Nothing beyond those sources.
+- Keep replies bounded to 40-80 tokens.
+
+# Intention-shaping discipline (the load-bearing rule)
+
+You DO NOT call ` + "`propose_intention`" + ` until the user has:
+
+1. **Named the intention in their own words.** You may offer the shape
+   ("that sounds like it wants to be this month's intention") but the
+   words must be theirs.
+2. **Said why it matters to them.** Their motivation, not yours.
+
+The intention and why_matters arguments MUST be the user's verbatim
+words. An intention is NOT a goal: no check-in question, no schedule,
+no metric. If the user reaches for a habit, you can note that it might
+make a good weekly goal too — but ask what direction sits underneath it.
+
+# Tools (call sparingly, never announce)
+
+- ` + "`propose_extend_goal`" + ` / ` + "`propose_complete_goal`" + ` — settle each goal in
+  the "Ending this week" section, early in the session.
+- ` + "`propose_goal`" + ` — optional weekly tiny goal, same three-question
+  discipline as a normal weekly session (why it matters / if followed
+  / if not).
+- ` + "`propose_intention`" + ` — the month's ONE intention, per the discipline
+  above. The user MUST have one proposed before you can wrap.
+- ` + "`propose_wrap_up`" + ` — after every ending goal is settled AND an
+  intention has been proposed. Emit a plain-text sentence FIRST.
+
+The user's session-specific context (both letters, patterns, goals,
+ratings) follows below.`
 
 // chatExtractionSystemPrompt drives the single-shot extraction LLM call
 // at session end. JSON-mode + per-call model override; default model
@@ -468,6 +576,75 @@ func BuildWeeklySystemPrompt(p BuildWeeklySystemPromptParams) (string, error) {
 		return "", err
 	}
 	return weeklyReflectionPersonaPrompt + "\n\n" + ctx, nil
+}
+
+// MonthlyLetterView is the monthly letter snippet rendered into the
+// combined session's system context. Mirrors the monthly fields of
+// domain.SummaryMetadata, decoupled like WeeklyLetterView.
+type MonthlyLetterView struct {
+	Headline        string
+	Arc             string
+	Recurring       string
+	GoalsRetro      string
+	ClosingQuestion string
+}
+
+// GoalLedgerView is one month-ledger entry for the combined session's
+// context — richer than GoalView (status/outcome) but read-only: ledger
+// goals are narrated, not actioned, unless they're also in EndingGoals.
+type GoalLedgerView struct {
+	Title      string
+	Status     string // "active" | "completed" | "abandoned"
+	Outcome    string // "kept" | "dropped" | "inconclusive" | ""
+	Conclusion string // user's wrap-up note, may be empty
+}
+
+// RatingView is one life check-in domain + this month's score.
+// DeltaLabel is the pre-formatted signed delta vs the previous rated
+// month ("+2", "-1"); empty when there's no prior data point — keeping
+// it a string sidesteps text/template's pointer-comparison limits.
+type RatingView struct {
+	Label      string
+	Score      int
+	DeltaLabel string
+}
+
+// BuildMonthlyCombinedSystemPromptParams extends the weekly params with
+// the month block. EndingGoals keep the same REQUIRE-decision contract;
+// IntentionText non-empty means the user already accepted an intention
+// (resumed session) and the model shouldn't push for another.
+type BuildMonthlyCombinedSystemPromptParams struct {
+	DisplayName        string
+	WeekStart          string // YYYY-MM-DD
+	WeekEnd            string // YYYY-MM-DD
+	MonthLabel         string // e.g. "June 2026"
+	MonthStart         string // YYYY-MM-DD
+	MonthEnd           string // YYYY-MM-DD
+	Letter             WeeklyLetterView
+	MonthlyLetter      MonthlyLetterView
+	TopDrainers        []TagSummary
+	TopChargers        []TagSummary
+	MidFlightGoals     []GoalView
+	EndingGoals        []GoalView
+	GoalLedger         []GoalLedgerView
+	PrevWeekSurprise   string
+	LastMonthIntention string
+	LastMonthDirection string
+	IntentionText      string // already-accepted intention for the month being closed, if any
+	Ratings            []RatingView
+	Memories           []MemoryGroup
+	Phase              string
+}
+
+// BuildMonthlyCombinedSystemPrompt assembles the combined session's
+// system prompt: the monthly persona prefix + the rendered monthly
+// context block. Mirrors BuildWeeklySystemPrompt's contract.
+func BuildMonthlyCombinedSystemPrompt(p BuildMonthlyCombinedSystemPromptParams) (string, error) {
+	ctx, err := renderChatTemplate("monthly_reflection_chat_context.tmpl", p)
+	if err != nil {
+		return "", err
+	}
+	return monthlyCombinedPersonaPrompt + "\n\n" + ctx, nil
 }
 
 // weeklySurpriseExtractSystemPrompt drives the post-wrap-up extract call

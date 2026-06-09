@@ -10,15 +10,15 @@ import "time"
 // and "social media" can later be merged via Status='merged' +
 // MergedIntoTagID).
 type Tag struct {
-	ID               string    `json:"id"`
-	UserID           string    `json:"-"`
-	Label            string    `json:"label"`
-	NormalizedLabel  string    `json:"-"`
-	Valence          string    `json:"valence"` // "positive" | "negative" | "neutral"
-	Status           string    `json:"status"`  // "active" | "merged" | "archived"
-	MergedIntoTagID  *string   `json:"merged_into_tag_id,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	UserID          string    `json:"-"`
+	Label           string    `json:"label"`
+	NormalizedLabel string    `json:"-"`
+	Valence         string    `json:"valence"` // "positive" | "negative" | "neutral"
+	Status          string    `json:"status"`  // "active" | "merged" | "archived"
+	MergedIntoTagID *string   `json:"merged_into_tag_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // TagRole names which side of the day the tag is attached to. Mirrors

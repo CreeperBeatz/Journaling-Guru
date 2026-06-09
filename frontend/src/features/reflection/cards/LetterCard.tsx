@@ -9,6 +9,9 @@ interface Props {
   data: ReflectionResponse;
   onContinue: () => void;
   saving: boolean;
+  /** Override the continue button label — monthly weeks continue to the
+   * monthly letter sheet instead of straight to the chat. */
+  continueLabel?: string;
 }
 
 // LetterCard — first card of the weekly wizard. Shows the model's
@@ -16,7 +19,7 @@ interface Props {
 // with it before the rest of the reflection. Continue takes the user
 // to /weekly/chat where the model responds to the letter together with
 // the user.
-export function LetterCard({ data, onContinue, saving }: Props) {
+export function LetterCard({ data, onContinue, saving, continueLabel }: Props) {
   const regen = useRegenerateSummary();
   const letterReady =
     data.letter.trim() !== "" ||
@@ -40,7 +43,7 @@ export function LetterCard({ data, onContinue, saving }: Props) {
 
       <div className="flex justify-end">
         <Button onClick={onContinue} disabled={saving || !letterReady}>
-          {saving ? "Opening chat…" : "Continue to reflection"}
+          {saving ? "Opening chat…" : continueLabel ?? "Continue to reflection"}
         </Button>
       </div>
     </div>

@@ -16,11 +16,11 @@ import (
 // chat_extraction_jobs rows the dispatcher will then drain on the next
 // tick.
 type ChatIdleSweeper struct {
-	Sessions       *store.ChatSessionStore
-	Messages       *store.ChatMessageStore
-	Jobs           *store.ChatExtractionJobStore
-	IdleAfter      time.Duration
-	Logger         *slog.Logger
+	Sessions  *store.ChatSessionStore
+	Messages  *store.ChatMessageStore
+	Jobs      *store.ChatExtractionJobStore
+	IdleAfter time.Duration
+	Logger    *slog.Logger
 }
 
 // Sweep runs one pass: claims up to `limit` idle sessions, advances

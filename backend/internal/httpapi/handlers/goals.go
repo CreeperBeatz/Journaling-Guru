@@ -85,9 +85,9 @@ func (h *GoalHandler) List(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"goals":             goals,
-			"todays_check_ins":  checkins,
-			"local_date":        timezone.FormatDate(today),
+			"goals":            goals,
+			"todays_check_ins": checkins,
+			"local_date":       timezone.FormatDate(today),
 		})
 		return
 	}
@@ -102,18 +102,18 @@ func (h *GoalHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 type createGoalRequest struct {
-	Title           string  `json:"title"`
-	CheckInQuestion string  `json:"check_in_question"`
+	Title           string `json:"title"`
+	CheckInQuestion string `json:"check_in_question"`
 	// WhyMatters / IfFollowed / IfNotFollowed are the user's own words on
 	// why they chose this goal. Populated by the weekly reflection
 	// companion via the propose_goal tool; manual creators pass empty
 	// strings and the server stores ''.
-	WhyMatters      string  `json:"why_matters"`
-	IfFollowed      string  `json:"if_followed"`
-	IfNotFollowed   string  `json:"if_not_followed"`
-	EndDate         string  `json:"end_date"`        // YYYY-MM-DD; used only when duration_weeks omitted
-	DurationWeeks   *int    `json:"duration_weeks"`  // 1..52; preferred — server snaps end to next reflection_weekday
-	StartDate       *string `json:"start_date"`      // optional; defaults to today
+	WhyMatters    string  `json:"why_matters"`
+	IfFollowed    string  `json:"if_followed"`
+	IfNotFollowed string  `json:"if_not_followed"`
+	EndDate       string  `json:"end_date"`       // YYYY-MM-DD; used only when duration_weeks omitted
+	DurationWeeks *int    `json:"duration_weeks"` // 1..52; preferred — server snaps end to next reflection_weekday
+	StartDate     *string `json:"start_date"`     // optional; defaults to today
 }
 
 const maxGoalMotivationLen = 600
@@ -231,10 +231,10 @@ func (h *GoalHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateGoalRequest struct {
-	Action          string `json:"action"`           // "complete" | "abandon" | "extend"
-	Outcome         string `json:"outcome"`          // for complete: "kept" | "dropped" | "inconclusive"
-	ConclusionText  string `json:"conclusion_text"`
-	ExtendWeeks     int    `json:"extend_weeks"`     // for extend: 1..12 reflection_weekday hops
+	Action         string `json:"action"`  // "complete" | "abandon" | "extend"
+	Outcome        string `json:"outcome"` // for complete: "kept" | "dropped" | "inconclusive"
+	ConclusionText string `json:"conclusion_text"`
+	ExtendWeeks    int    `json:"extend_weeks"` // for extend: 1..12 reflection_weekday hops
 }
 
 // Update handles PATCH /api/goals/:id — wraps up an active goal. Two
@@ -454,7 +454,7 @@ func tagAggregatesToPatterns(rows []store.TagAggregate) []goals.TagPattern {
 // ---------- /goals/draft (SMART shaper) ----------
 
 type draftMessage struct {
-	Role    string `json:"role"`    // "user" | "assistant"
+	Role    string `json:"role"` // "user" | "assistant"
 	Content string `json:"content"`
 }
 

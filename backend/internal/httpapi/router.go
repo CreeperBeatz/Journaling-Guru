@@ -47,6 +47,7 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	chatMessages := store.NewChatMessageStore(db)
 	chatExtractionJobs := store.NewChatExtractionJobStore(db)
 	weeklyReflections := store.NewWeeklyReflectionStore(db)
+	monthlyReflections := store.NewMonthlyReflectionStore(db)
 	memories := store.NewMemoryStore(db)
 	memoryJobs := store.NewMemoryExtractionJobStore(db)
 
@@ -163,16 +164,18 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 		// chat-tier client; suggest uses the cheap classify-tier client.
 	}
 	summariesH := &handlers.SummaryHandler{
-		Summaries:         summaries,
-		Jobs:              summaryJobs,
-		Users:             users,
-		DailyInputs:       dailyInputs,
-		DailyEntryTags:    dailyEntryTags,
-		Goals:             goals,
-		CheckIns:          goalCheckIns,
-		WeeklyReflections: weeklyReflections,
-		ChatSessions:      chatSessions,
-		Logger:            logger,
+		Summaries:          summaries,
+		Jobs:               summaryJobs,
+		Users:              users,
+		DailyInputs:        dailyInputs,
+		DailyEntryTags:     dailyEntryTags,
+		Goals:              goals,
+		CheckIns:           goalCheckIns,
+		WeeklyReflections:  weeklyReflections,
+		MonthlyReflections: monthlyReflections,
+		ChatSessions:       chatSessions,
+		Logger:             logger,
+		DevForceMonth:      cfg.DevForceFlags,
 	}
 	pushH := &handlers.PushHandler{
 		Subs:        pushSubs,
@@ -198,28 +201,29 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 	// so dev environments without the key still serve text chat.
 	realtimeClient := realtime.New(cfg.OpenAIKey, cfg.OpenAIRealtimeModel)
 	chatH := &handlers.ChatHandler{
-		Sessions:          chatSessions,
-		Messages:          chatMessages,
-		Jobs:              chatExtractionJobs,
-		Questions:         questions,
-		Goals:             goals,
-		Users:             users,
-		DailyInputs:       dailyInputs,
-		WeeklyReflections: weeklyReflections,
-		Summaries:         summaries,
-		DailyEntryTags:    dailyEntryTags,
-		Memories:          memories,
-		ChatLLM:           chatLLM,
-		ClassifyLLM:       classifyLLM,
-		Realtime:          realtimeClient,
-		Logger:            logger,
-		ChatModel:         cfg.ChatModel,
-		ClassifyModel:     cfg.ClassifyModel,
-		RealtimeModel:     cfg.OpenAIRealtimeModel,
-		MaxTurns:          cfg.ChatMaxTurns,
-		HardCapMinutes:    cfg.ChatHardCapMinutes,
-		KeepLastN:         cfg.ChatTranscriptKeepLast,
-		ResourcesURL:      cfg.ChatCrisisResourcesURL,
+		Sessions:           chatSessions,
+		Messages:           chatMessages,
+		Jobs:               chatExtractionJobs,
+		Questions:          questions,
+		Goals:              goals,
+		Users:              users,
+		DailyInputs:        dailyInputs,
+		WeeklyReflections:  weeklyReflections,
+		MonthlyReflections: monthlyReflections,
+		Summaries:          summaries,
+		DailyEntryTags:     dailyEntryTags,
+		Memories:           memories,
+		ChatLLM:            chatLLM,
+		ClassifyLLM:        classifyLLM,
+		Realtime:           realtimeClient,
+		Logger:             logger,
+		ChatModel:          cfg.ChatModel,
+		ClassifyModel:      cfg.ClassifyModel,
+		RealtimeModel:      cfg.OpenAIRealtimeModel,
+		MaxTurns:           cfg.ChatMaxTurns,
+		HardCapMinutes:     cfg.ChatHardCapMinutes,
+		KeepLastN:          cfg.ChatTranscriptKeepLast,
+		ResourcesURL:       cfg.ChatCrisisResourcesURL,
 	}
 	// SMART shaper streams via the same chat-tier client. The model
 	// constant is the chat model unless a per-call override is added
@@ -312,6 +316,10 @@ func NewRouter(cfg *config.Config, db *pgxpool.Pool, logger *slog.Logger) http.H
 					r.Patch("/reflection/this-week", summariesH.PatchReflection)
 					r.Post("/reflection/this-week/complete", summariesH.CompleteReflection)
 					r.Post("/reflection/this-week/replay", summariesH.ReplayReflection)
+					// Monthly reflection — intention + life check-in for the
+					// month the current week hosts (404 on plain weeks).
+					r.Post("/reflection/this-month/intention", summariesH.SetMonthlyIntention)
+					r.Post("/reflection/this-month/ratings", summariesH.SetMonthlyRatings)
 					// History view edits — same partial-update shape, scoped
 					// to a specific past week.
 					r.Patch("/reflection/by-week/{week_start}", summariesH.PatchReflectionByWeek)

@@ -10,7 +10,7 @@ export type ProposalDecision =
   | { state: "open" };
 
 // Family ties a propose_* tool call to its accept/decline event pair.
-type Family = "goal" | "extend" | "complete";
+type Family = "goal" | "extend" | "complete" | "intention";
 
 function toolNameToFamily(name: string): Family | null {
   switch (name) {
@@ -20,6 +20,8 @@ function toolNameToFamily(name: string): Family | null {
       return "extend";
     case "propose_complete_goal":
       return "complete";
+    case "propose_intention":
+      return "intention";
     default:
       return null;
   }
@@ -44,6 +46,13 @@ function systemEventInfo(content: string): EventInfo | null {
       return { family: "complete", kind: "accepted" };
     case "user_declined_complete_goal":
       return { family: "complete", kind: "declined" };
+    // user_edited_intention is an accept with edited text — the card
+    // still flips to its saved state.
+    case "user_accepted_intention":
+    case "user_edited_intention":
+      return { family: "intention", kind: "accepted" };
+    case "user_declined_intention":
+      return { family: "intention", kind: "declined" };
     default:
       return null;
   }
@@ -74,6 +83,7 @@ export function resolveProposalDecisions(
     goal: [],
     extend: [],
     complete: [],
+    intention: [],
   };
 
   for (const m of messages) {
@@ -92,14 +102,23 @@ export function resolveProposalDecisions(
     if (queue.length === 0) continue;
 
     const metaGoalId = pickString(meta, "goal_id");
-    const metaGoalTitle = pickString(meta, "goal_title");
+    // Intentions carry their text in intention_text and have no goal_id;
+    // reuse the goalTitle slot so cards share one decision shape.
+    const metaGoalTitle =
+      evt.family === "intention"
+        ? pickString(meta, "intention_text")
+        : pickString(meta, "goal_title");
 
     let idx = -1;
     if (metaGoalId) {
       idx = queue.findIndex((p) => p.args.goal_id === metaGoalId);
     }
     if (idx === -1 && metaGoalTitle) {
-      idx = queue.findIndex((p) => p.args.title === metaGoalTitle);
+      idx = queue.findIndex((p) =>
+        evt.family === "intention"
+          ? p.args.intention === metaGoalTitle
+          : p.args.title === metaGoalTitle,
+      );
     }
     if (idx === -1) idx = 0; // FIFO fallback for legacy rows
     const open = queue[idx];

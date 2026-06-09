@@ -11,8 +11,8 @@ type Mailer interface {
 // Message carries everything a transport needs. HTML is optional but
 // strongly recommended for client compat; plaintext is the canonical body.
 type Message struct {
-	To       string
-	Subject  string
-	Text     string
-	HTML     string
+	To      string
+	Subject string
+	Text    string
+	HTML    string
 }

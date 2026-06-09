@@ -74,20 +74,21 @@ func mergedField(
 type ChatExtractionWorker struct {
 	river.WorkerDefaults[ChatExtractionArgs]
 
-	Sessions          *store.ChatSessionStore
-	Messages          *store.ChatMessageStore
-	Jobs              *store.ChatExtractionJobStore
-	Entries           *store.EntryStore
-	DailyInputs       *store.DailyInputStore
-	Tags              *store.TagStore
-	DailyEntryTags    *store.DailyEntryTagStore
-	Questions         *store.QuestionStore
-	Goals             *store.GoalStore
-	GoalCheckIns      *store.GoalCheckInStore
-	Users             *store.UserStore
-	WeeklyReflections *store.WeeklyReflectionStore // weekly-scope finalize path
-	Scheduler         *Scheduler                   // re-seeds summaries after extraction lands
-	MemoryScheduler   *MemoryScheduler             // arms the day's memory pass after extraction lands
+	Sessions           *store.ChatSessionStore
+	Messages           *store.ChatMessageStore
+	Jobs               *store.ChatExtractionJobStore
+	Entries            *store.EntryStore
+	DailyInputs        *store.DailyInputStore
+	Tags               *store.TagStore
+	DailyEntryTags     *store.DailyEntryTagStore
+	Questions          *store.QuestionStore
+	Goals              *store.GoalStore
+	GoalCheckIns       *store.GoalCheckInStore
+	Users              *store.UserStore
+	WeeklyReflections  *store.WeeklyReflectionStore  // weekly-scope finalize path
+	MonthlyReflections *store.MonthlyReflectionStore // combined-session finalize path
+	Scheduler          *Scheduler                    // re-seeds summaries after extraction lands
+	MemoryScheduler    *MemoryScheduler              // arms the day's memory pass after extraction lands
 	// LLM is the classify-tier client (CLASSIFY_MODEL default). Per-call
 	// model override comes from the session pin only — no env-level
 	// override beyond what the client constructor pinned.
@@ -259,13 +260,13 @@ func (w *ChatExtractionWorker) process(
 	}
 
 	if err := ApplyExtraction(ctx, ApplyDeps{
-		Sessions:       w.Sessions,
-		Entries:        w.Entries,
-		DailyInputs:    w.DailyInputs,
-		Tags:           w.Tags,
-		DailyEntryTags: w.DailyEntryTags,
-		Goals:          w.Goals,
-		GoalCheckIns:   w.GoalCheckIns,
+		Sessions:        w.Sessions,
+		Entries:         w.Entries,
+		DailyInputs:     w.DailyInputs,
+		Tags:            w.Tags,
+		DailyEntryTags:  w.DailyEntryTags,
+		Goals:           w.Goals,
+		GoalCheckIns:    w.GoalCheckIns,
 		LLM:             w.LLM,
 		Logger:          w.Logger,
 		Scheduler:       w.Scheduler,
@@ -297,11 +298,17 @@ func (w *ChatExtractionWorker) processWeekly(
 	}
 	// Empty / opener-only transcript → nothing to distil. Still complete
 	// the reflection so the row stops appearing in the idle sweeper and
-	// the user sees Done state on next /weekly load.
+	// the user sees Done state on next /weekly load. Combined sessions
+	// complete the monthly row too, for the same reason.
 	if !hasUsableTranscript(messages) {
 		if w.WeeklyReflections != nil {
 			if _, merr := w.WeeklyReflections.MarkCompletedBySession(ctx, session.ID); merr != nil {
 				w.Logger.Warn("mark reflection completed (weekly, empty)", "err", merr, "session_id", session.ID)
+			}
+		}
+		if w.MonthlyReflections != nil && session.MonthPeriodStart != nil {
+			if _, merr := w.MonthlyReflections.MarkCompletedBySession(ctx, session.ID); merr != nil {
+				w.Logger.Warn("mark monthly reflection completed (empty)", "err", merr, "session_id", session.ID)
 			}
 		}
 		_ = w.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionCompleted, nil)
@@ -331,6 +338,35 @@ func (w *ChatExtractionWorker) processWeekly(
 		}
 		if _, merr := w.WeeklyReflections.MarkCompletedBySession(ctx, session.ID); merr != nil {
 			w.Logger.Warn("mark reflection completed (weekly)", "err", merr, "session_id", session.ID)
+		}
+	}
+	// Combined session: distil the direction check (and a fallback
+	// intention if no card was accepted), then complete the monthly row.
+	// Mirrors the synchronous block in handlers/chat.go's Finalize —
+	// keep both in lockstep when changing either.
+	if w.MonthlyReflections != nil && session.MonthPeriodStart != nil {
+		if ms, perr := time.Parse("2006-01-02", *session.MonthPeriodStart); perr == nil {
+			res, derr := chat.ExtractMonthlyDirection(ctx, w.LLM, chat.ExtractMonthlyDirectionParams{
+				Model:    session.ExtractionModel,
+				Messages: messages,
+			})
+			if derr != nil {
+				w.Logger.Warn("monthly direction extract", "err", derr, "session_id", session.ID)
+			} else {
+				if _, serr := w.MonthlyReflections.SetDirection(ctx, session.UserID, ms, res.Direction); serr != nil {
+					w.Logger.Warn("set direction text", "err", serr, "session_id", session.ID)
+				}
+				if res.Intention != "" {
+					if current, _ := w.MonthlyReflections.GetByMonthStart(ctx, session.UserID, ms); current != nil && current.IntentionText == "" {
+						if _, ierr := w.MonthlyReflections.SetIntention(ctx, session.UserID, ms, res.Intention); ierr != nil {
+							w.Logger.Warn("set fallback intention", "err", ierr, "session_id", session.ID)
+						}
+					}
+				}
+			}
+			if _, merr := w.MonthlyReflections.MarkCompletedBySession(ctx, session.ID); merr != nil {
+				w.Logger.Warn("mark monthly reflection completed", "err", merr, "session_id", session.ID)
+			}
 		}
 	}
 	_ = w.Sessions.SetExtractionStatus(ctx, session.ID, domain.ChatExtractionCompleted, nil)

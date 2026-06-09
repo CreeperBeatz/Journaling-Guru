@@ -26,26 +26,31 @@ import (
 const (
 	weeklyStructuredMaxTokens = 600  // per_day_tags + themes
 	weeklyNarrativeMaxTokens  = 1500 // headline + 4 paragraphs + closing question
+	monthlyNarrativeMaxTokens = 1500 // headline + 3 paragraphs + direction question
 )
 
 // SummaryWorker handles SummaryArgs jobs. Under the Energy Audit pivot
-// only the weekly period survives; the daily / monthly / yearly LLM
-// paths are retired (CHECK constraint on summary_jobs.period_type
-// enforces this at the DB layer too).
+// the weekly period survives, plus the monthly synthesis (re-admitted by
+// the monthly reflection loop — it composes hierarchically over weekly
+// artifacts, never raw entries); the daily / yearly LLM paths stay
+// retired (CHECK constraint on summary_jobs.period_type enforces this
+// at the DB layer too).
 type SummaryWorker struct {
 	river.WorkerDefaults[SummaryArgs]
 
-	Summaries         *store.SummaryStore
-	Jobs              *store.SummaryJobStore
-	Entries           *store.EntryStore
-	DailyInputs       *store.DailyInputStore
-	DailyEntryTags    *store.DailyEntryTagStore
-	Tags              *store.TagStore
-	Users             *store.UserStore
-	WeeklyReflections *store.WeeklyReflectionStore
-	Scheduler         *Scheduler
-	LLM               *llm.OpenRouter
-	Logger            *slog.Logger
+	Summaries          *store.SummaryStore
+	Jobs               *store.SummaryJobStore
+	Entries            *store.EntryStore
+	DailyInputs        *store.DailyInputStore
+	DailyEntryTags     *store.DailyEntryTagStore
+	Tags               *store.TagStore
+	Users              *store.UserStore
+	WeeklyReflections  *store.WeeklyReflectionStore
+	MonthlyReflections *store.MonthlyReflectionStore
+	Goals              *store.GoalStore
+	Scheduler          *Scheduler
+	LLM                *llm.OpenRouter
+	Logger             *slog.Logger
 
 	// ShotCount is the number of parallel narrative shots in the
 	// weekly synthesis ensemble. <=1 means single-shot (skip the
@@ -111,15 +116,19 @@ func (w *SummaryWorker) process(ctx context.Context, job *domain.SummaryJob, use
 	if err != nil {
 		return fmt.Errorf("recompute period: %w", err)
 	}
-	if domain.SummaryPeriod(job.PeriodType) != domain.PeriodWeek {
-		// Defensive: post-pivot the DB CHECK only allows 'week', but if
-		// a stale row sneaks through (e.g. a paused job from before the
+	switch domain.SummaryPeriod(job.PeriodType) {
+	case domain.PeriodWeek:
+		return w.runWeekly(ctx, job, user, period)
+	case domain.PeriodMonth:
+		return w.runMonthly(ctx, job, user, period)
+	default:
+		// Defensive: the DB CHECK only allows 'week'/'month', but if a
+		// stale row sneaks through (e.g. a paused job from before the
 		// constraint tightened), skip it instead of failing.
 		w.Logger.Info("skipping retired period type",
 			"job_id", job.ID, "period", job.PeriodType)
 		return w.skip(ctx, job)
 	}
-	return w.runWeekly(ctx, job, user, period)
 }
 
 func (w *SummaryWorker) runWeekly(
@@ -299,6 +308,297 @@ func (w *SummaryWorker) runWeekly(
 		return fmt.Errorf("upsert summary: %w", err)
 	}
 	return w.complete(ctx, job)
+}
+
+// runMonthly synthesizes the monthly letter — hierarchically, from the
+// month's weekly letters + reflections + goal ledger + mood/ratings
+// trends, NEVER raw daily entries. One structured JSON call, no
+// ensemble: the inputs are already distilled, so N-shot diversity buys
+// little here.
+//
+// Fire ordering with the final weekly job (same morning, +15min) is
+// best-effort: a missing final weekly letter degrades the input set, it
+// never blocks. Don't add a wait-for-weekly loop.
+func (w *SummaryWorker) runMonthly(
+	ctx context.Context, job *domain.SummaryJob, user *domain.User, period timezone.Period,
+) error {
+	// The month's weekly letters: overlap (not period_start containment)
+	// because the final week of June can end on July 5.
+	allWeeklies, err := w.Summaries.ListOverlappingRange(
+		ctx, user.ID, string(domain.PeriodWeek), period.Start, period.End)
+	if err != nil {
+		return fmt.Errorf("list weeklies: %w", err)
+	}
+	weeklies := make([]domain.Summary, 0, len(allWeeklies))
+	for _, s := range allWeeklies {
+		if s.Metadata.HasLetterSynthesis() {
+			weeklies = append(weeklies, s)
+		}
+	}
+	// No weekly letters means nothing to compose at this altitude —
+	// weekly summaries auto-generate for any journaled week, so an empty
+	// set means an empty (or fully-skipped) month.
+	if len(weeklies) == 0 {
+		return w.skip(ctx, job)
+	}
+
+	// Weekly reflections in the month (their week_start can begin up to
+	// 6 days before month start) — surprise_texts are continuity notes.
+	var reflections []domain.WeeklyReflection
+	if w.WeeklyReflections != nil {
+		reflections, _ = w.WeeklyReflections.ListInRange(
+			ctx, user.ID, period.Start.AddDate(0, 0, -6), period.End)
+	}
+
+	// Goal ledger: everything alive or resolved during the month.
+	var ledger []domain.Goal
+	if w.Goals != nil {
+		ledger, _ = w.Goals.ListTouchedInRange(ctx, user.ID, period.Start, period.End)
+	}
+
+	// Mood trend: this month vs the prior month.
+	agg, err := w.DailyInputs.AggregateForRange(ctx, user.ID, period.Start, period.End)
+	if err != nil {
+		return fmt.Errorf("aggregate: %w", err)
+	}
+	prevAgg, _ := w.DailyInputs.AggregateForRange(
+		ctx, user.ID, period.Start.AddDate(0, -1, 0), period.Start.AddDate(0, 0, -1))
+
+	// Last month's intention + direction (continuity: the letter must
+	// reckon with the intention), and the prior ratings trend. The
+	// CURRENT month's ratings are never an input — the user rates after
+	// reading this letter.
+	var prior *domain.MonthlyReflection
+	var ratingsTrend []domain.MonthlyReflection
+	if w.MonthlyReflections != nil {
+		prior, _ = w.MonthlyReflections.LatestBefore(ctx, user.ID, period.Start)
+		ratingsTrend, _ = w.MonthlyReflections.ListRatingsInRange(
+			ctx, user.ID, period.Start.AddDate(-1, 0, 0), period.Start.AddDate(0, 0, -1))
+	}
+
+	userPrompt := buildMonthlySynthesisPrompt(
+		period, weeklies, reflections, ledger, agg, prevAgg, prior, ratingsTrend)
+
+	resp, err := w.LLM.Complete(ctx, llm.CompletionRequest{
+		System:    monthlyNarrativeSystemPrompt,
+		User:      userPrompt,
+		MaxTokens: monthlyNarrativeMaxTokens,
+		JSONMode:  true,
+	})
+	if err != nil {
+		return fmt.Errorf("monthly narrative: %w", err)
+	}
+	narrative := parseMonthlyNarrative(resp.Content, w.Logger, job.ID)
+
+	meta := domain.SummaryMetadata{
+		EntryCount:      agg.EntryCount,
+		MoodScore:       agg.MoodScore,
+		Arc:             narrative.Arc,
+		Recurring:       narrative.Recurring,
+		GoalsRetro:      narrative.GoalsRetro,
+		ClosingQuestion: narrative.ClosingQuestion,
+	}
+	if agg.MoodScore != nil {
+		rounded := int(math.Round(*agg.MoodScore))
+		meta.MoodLabel = domain.MoodLabel(&rounded)
+	}
+
+	if _, err := w.Summaries.Upsert(
+		ctx, user.ID, string(domain.PeriodMonth),
+		period.Start, period.End,
+		narrative.Headline, meta,
+		resp.Model, resp.PromptTokens, resp.CompletionTokens,
+	); err != nil {
+		return fmt.Errorf("upsert summary: %w", err)
+	}
+	return w.complete(ctx, job)
+}
+
+// monthlyNarrativeRaw is the JSON envelope the monthly synthesis emits.
+type monthlyNarrativeRaw struct {
+	Headline        string `json:"headline"`
+	Arc             string `json:"arc"`
+	Recurring       string `json:"recurring"`
+	GoalsRetro      string `json:"goals_retro"`
+	ClosingQuestion string `json:"closing_question"`
+}
+
+// parsedMonthlyNarrative is the worker-side normalized view. Paragraphs
+// may be empty — the prompt explicitly allows "" over padding.
+type parsedMonthlyNarrative struct {
+	Headline        string
+	Arc             string
+	Recurring       string
+	GoalsRetro      string
+	ClosingQuestion string
+}
+
+// parseMonthlyNarrative mirrors parseWeeklyNarrative's degradation: on
+// malformed JSON the raw content becomes the Arc paragraph with a
+// first-sentence headline, so a misbehaving call still renders.
+func parseMonthlyNarrative(raw string, logger *slog.Logger, jobID string) parsedMonthlyNarrative {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return parsedMonthlyNarrative{}
+	}
+	var rawParsed monthlyNarrativeRaw
+	if err := json.Unmarshal([]byte(trimmed), &rawParsed); err != nil {
+		logger.Warn("monthly narrative JSON parse failed; degrading",
+			"job_id", jobID, "err", err)
+		return parsedMonthlyNarrative{
+			Headline: firstSentence(trimmed),
+			Arc:      trimmed,
+		}
+	}
+	out := parsedMonthlyNarrative{
+		Headline:        strings.TrimSpace(rawParsed.Headline),
+		Arc:             strings.TrimSpace(rawParsed.Arc),
+		Recurring:       strings.TrimSpace(rawParsed.Recurring),
+		GoalsRetro:      strings.TrimSpace(rawParsed.GoalsRetro),
+		ClosingQuestion: strings.TrimSpace(rawParsed.ClosingQuestion),
+	}
+	if out.Headline == "" {
+		switch {
+		case out.Arc != "":
+			out.Headline = firstSentence(out.Arc)
+		case out.Recurring != "":
+			out.Headline = firstSentence(out.Recurring)
+		case out.GoalsRetro != "":
+			out.Headline = firstSentence(out.GoalsRetro)
+		}
+	}
+	return out
+}
+
+// buildMonthlySynthesisPrompt assembles the user-message body for the
+// monthly synthesis call. Everything here is week-altitude or above —
+// the system prompt forbids inventing day-level specifics, so none are
+// provided.
+func buildMonthlySynthesisPrompt(
+	period timezone.Period,
+	weeklies []domain.Summary,
+	reflections []domain.WeeklyReflection,
+	ledger []domain.Goal,
+	agg, prevAgg *store.AggregatedMetadata,
+	prior *domain.MonthlyReflection,
+	ratingsTrend []domain.MonthlyReflection,
+) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Month: %s (%s to %s).\n\n",
+		period.Start.Format("January 2006"),
+		period.Start.Format("2006-01-02"), period.End.Format("2006-01-02"))
+
+	if agg != nil && agg.MoodScore != nil {
+		fmt.Fprintf(&b, "Average mood this month (-2..+2 scale): %+.2f over %d logged day(s).\n",
+			*agg.MoodScore, agg.EntryCount)
+	} else {
+		b.WriteString("Average mood this month: not enough data.\n")
+	}
+	if prevAgg != nil && prevAgg.MoodScore != nil {
+		fmt.Fprintf(&b, "Average mood the month before: %+.2f over %d logged day(s).\n",
+			*prevAgg.MoodScore, prevAgg.EntryCount)
+	}
+	b.WriteString("\n")
+
+	// Surprise texts keyed by week_start so each week block can carry its
+	// own reflection note.
+	surpriseByWeek := make(map[string]string, len(reflections))
+	for _, r := range reflections {
+		if s := strings.TrimSpace(r.SurpriseText); s != "" {
+			surpriseByWeek[r.WeekStart] = s
+		}
+	}
+
+	b.WriteString("## The month's weekly letters (oldest first)\n")
+	b.WriteString("Each block is one week's synthesis, written at the time.\n\n")
+	for i, s := range weeklies {
+		fmt.Fprintf(&b, "### Week %d: %s to %s\n", i+1, s.PeriodStart, s.PeriodEnd)
+		if s.Metadata.MoodScore != nil {
+			fmt.Fprintf(&b, "  mood: %+.2f\n", *s.Metadata.MoodScore)
+		}
+		if s.Body != "" {
+			fmt.Fprintf(&b, "  headline: %s\n", truncateForPrompt(s.Body, 300))
+		}
+		for _, p := range []struct{ label, text string }{
+			{"charged", s.Metadata.Charged},
+			{"drained", s.Metadata.Drained},
+			{"grateful", s.Metadata.Grateful},
+			{"insights", s.Metadata.Insights},
+			{"letter", s.Metadata.Letter}, // legacy rows only
+		} {
+			if p.text != "" {
+				fmt.Fprintf(&b, "  %s: %s\n", p.label, truncateForPrompt(p.text, 900))
+			}
+		}
+		if len(s.Metadata.Themes) > 0 {
+			names := make([]string, 0, len(s.Metadata.Themes))
+			for _, t := range s.Metadata.Themes {
+				names = append(names, t.Name)
+			}
+			fmt.Fprintf(&b, "  themes: %s\n", strings.Join(names, ", "))
+		}
+		if surprise, ok := surpriseByWeek[s.PeriodStart]; ok {
+			fmt.Fprintf(&b, "  the user's own reflection note that week: %s\n",
+				truncateForPrompt(surprise, 600))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("## Goal ledger this month\n")
+	if len(ledger) == 0 {
+		b.WriteString("  (no goals were alive or resolved this month)\n")
+	} else {
+		for _, g := range ledger {
+			line := fmt.Sprintf("  - %q (%s to %s, status: %s", g.Title, g.StartDate, g.EndDate, g.Status)
+			if g.Outcome != nil {
+				line += ", outcome: " + *g.Outcome
+			}
+			line += ")"
+			b.WriteString(line + "\n")
+			if why := strings.TrimSpace(g.WhyMatters); why != "" {
+				fmt.Fprintf(&b, "      why it mattered to them: %s\n", truncateForPrompt(why, 300))
+			}
+			if concl := strings.TrimSpace(g.ConclusionText); concl != "" {
+				fmt.Fprintf(&b, "      their wrap-up note: %s\n", truncateForPrompt(concl, 300))
+			}
+		}
+	}
+	b.WriteString("\n")
+
+	if prior != nil {
+		fmt.Fprintf(&b, "## Last month's reflection (month starting %s)\n", prior.MonthStart)
+		if intention := strings.TrimSpace(prior.IntentionText); intention != "" {
+			fmt.Fprintf(&b, "  Their intention for THIS month, set back then: %s\n",
+				truncateForPrompt(intention, 300))
+			b.WriteString("  The arc paragraph must reckon with this intention honestly.\n")
+		}
+		if direction := strings.TrimSpace(prior.DirectionText); direction != "" {
+			fmt.Fprintf(&b, "  Their direction note from back then: %s\n",
+				truncateForPrompt(direction, 600))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(ratingsTrend) > 0 {
+		b.WriteString("## Life check-in ratings from PRIOR months (0-10 per domain)\n")
+		b.WriteString("These are satisfaction sliders from past monthly reflections. Only\n")
+		b.WriteString("treat a move of 2+ points as movement; ±1 is noise.\n\n")
+		for _, mr := range ratingsTrend {
+			parts := make([]string, 0, len(mr.Ratings))
+			for _, d := range domain.LifeDomains {
+				if score, ok := mr.Ratings[d.Key]; ok {
+					parts = append(parts, fmt.Sprintf("%s %d", d.Label, score))
+				}
+			}
+			fmt.Fprintf(&b, "  - %s: %s\n", mr.MonthStart, strings.Join(parts, ", "))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString(
+		"Now emit the JSON object exactly per the schema in the system " +
+			"prompt. Do not include any prose outside the JSON object.")
+	return b.String()
 }
 
 // dayNeedingExtraction is one day in the week that has user-written

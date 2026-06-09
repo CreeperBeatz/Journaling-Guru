@@ -34,6 +34,7 @@ const chatSessionColumns = `id, user_id,
     to_char(local_date, 'YYYY-MM-DD') AS local_date,
     scope,
     to_char(period_start, 'YYYY-MM-DD') AS period_start,
+    to_char(month_period_start, 'YYYY-MM-DD') AS month_period_start,
     mode, phase, chat_model, extraction_model, openai_session_id,
     started_at, last_activity_at, ended_at, finalized_at,
     extraction_status, extraction_error, covered_question_ids,
@@ -44,6 +45,7 @@ func scanChatSession(row pgx.Row) (*domain.ChatSession, error) {
 	var s domain.ChatSession
 	if err := row.Scan(
 		&s.ID, &s.UserID, &s.LocalDate, &s.Scope, &s.PeriodStart,
+		&s.MonthPeriodStart,
 		&s.Mode, &s.Phase,
 		&s.ChatModel, &s.ExtractionModel, &s.OpenAISessionID,
 		&s.StartedAt, &s.LastActivityAt, &s.EndedAt, &s.FinalizedAt,
@@ -92,6 +94,7 @@ func (s *ChatSessionStore) CreateOrResume(
 	var inserted bool
 	if err := row.Scan(
 		&sess.ID, &sess.UserID, &sess.LocalDate, &sess.Scope, &sess.PeriodStart,
+		&sess.MonthPeriodStart,
 		&sess.Mode, &sess.Phase,
 		&sess.ChatModel, &sess.ExtractionModel, &sess.OpenAISessionID,
 		&sess.StartedAt, &sess.LastActivityAt, &sess.EndedAt, &sess.FinalizedAt,
@@ -111,27 +114,36 @@ func (s *ChatSessionStore) CreateOrResume(
 // week_start so existing "as-of" lookups (active goals at that date,
 // prompt context) keep working through the same column.
 //
+// monthPeriodStart (nullable) pins the session as the COMBINED
+// weekly+monthly reflection session for the month starting on that date.
+// On conflict-resume the pin is COALESCE-updated: a session created
+// before the monthly flag was computable can still be pinned, but an
+// existing pin is never cleared or moved.
+//
 // Idempotent via the partial unique on (user_id, period_start) WHERE
 // scope='weekly'. Returns (session, created bool, error).
 func (s *ChatSessionStore) CreateOrResumeWeekly(
 	ctx context.Context,
 	userID string,
 	weekStart time.Time,
+	monthPeriodStart *time.Time,
 	chatModel, extractionModel string,
 ) (*domain.ChatSession, bool, error) {
 	const q = `
 		INSERT INTO chat_sessions
-		    (user_id, local_date, scope, period_start, chat_model, extraction_model)
-		VALUES ($1, $2, 'weekly', $2, $3, $4)
+		    (user_id, local_date, scope, period_start, month_period_start, chat_model, extraction_model)
+		VALUES ($1, $2, 'weekly', $2, $3, $4, $5)
 		ON CONFLICT (user_id, period_start) WHERE scope = 'weekly' DO UPDATE
-		   SET updated_at = chat_sessions.updated_at  -- no-op to RETURN existing row
+		   SET month_period_start = COALESCE(chat_sessions.month_period_start, EXCLUDED.month_period_start),
+		       updated_at         = now()
 		RETURNING ` + chatSessionColumns + `,
 		         (xmax = 0) AS inserted`
-	row := s.DB.QueryRow(ctx, q, userID, weekStart, chatModel, extractionModel)
+	row := s.DB.QueryRow(ctx, q, userID, weekStart, monthPeriodStart, chatModel, extractionModel)
 	var sess domain.ChatSession
 	var inserted bool
 	if err := row.Scan(
 		&sess.ID, &sess.UserID, &sess.LocalDate, &sess.Scope, &sess.PeriodStart,
+		&sess.MonthPeriodStart,
 		&sess.Mode, &sess.Phase,
 		&sess.ChatModel, &sess.ExtractionModel, &sess.OpenAISessionID,
 		&sess.StartedAt, &sess.LastActivityAt, &sess.EndedAt, &sess.FinalizedAt,

@@ -16,6 +16,8 @@ import {
   patchReflection,
   patchReflectionByWeek,
   replayReflection,
+  setMonthlyIntention,
+  setMonthlyRatings,
   startReflection,
 } from "./api";
 
@@ -92,6 +94,32 @@ export function useCompleteReflection() {
       // reflection_pending lives on /api/me — refetch so the Weekly nav
       // button hides right away on carry-over days.
       qc.invalidateQueries({ queryKey: ME_KEY });
+    },
+  });
+}
+
+// ----- Monthly reflection hooks -----
+
+// useSetMonthlyIntention persists the month's intention (accepted or
+// edited from the ProposeIntentionCard, or typed on the Summary tab).
+// The response is the full ReflectionResponse — swap the cache.
+export function useSetMonthlyIntention() {
+  const qc = useQueryClient();
+  return useMutation<ReflectionResponse, Error, string>({
+    mutationFn: setMonthlyIntention,
+    onSuccess: (data) => {
+      qc.setQueryData(REFLECTION_THIS_WEEK_KEY, data);
+    },
+  });
+}
+
+// useSetMonthlyRatings persists the life check-in sliders.
+export function useSetMonthlyRatings() {
+  const qc = useQueryClient();
+  return useMutation<ReflectionResponse, Error, Record<string, number>>({
+    mutationFn: setMonthlyRatings,
+    onSuccess: (data) => {
+      qc.setQueryData(REFLECTION_THIS_WEEK_KEY, data);
     },
   });
 }

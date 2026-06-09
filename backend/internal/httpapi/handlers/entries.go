@@ -190,11 +190,11 @@ func (h *EntryHandler) Heatmap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"from":                     timezone.FormatDate(from),
-		"to":                       timezone.FormatDate(to),
-		"today":                    timezone.FormatDate(today),
-		"days":                     rows,
-		"weekly_reflection_dates":  reflectionDates,
+		"from":                    timezone.FormatDate(from),
+		"to":                      timezone.FormatDate(to),
+		"today":                   timezone.FormatDate(today),
+		"days":                    rows,
+		"weekly_reflection_dates": reflectionDates,
 	})
 }
 

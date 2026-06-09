@@ -33,26 +33,30 @@ import (
 // model overrides still flow through StreamRequest/CompletionRequest, so
 // session pins on chat_sessions take precedence over the env defaults.
 type ChatHandler struct {
-	Sessions       *store.ChatSessionStore
-	Messages       *store.ChatMessageStore
-	Jobs           *store.ChatExtractionJobStore
-	Questions      *store.QuestionStore
-	Goals          *store.GoalStore
-	Users          *store.UserStore
-	DailyInputs    *store.DailyInputStore
+	Sessions    *store.ChatSessionStore
+	Messages    *store.ChatMessageStore
+	Jobs        *store.ChatExtractionJobStore
+	Questions   *store.QuestionStore
+	Goals       *store.GoalStore
+	Users       *store.UserStore
+	DailyInputs *store.DailyInputStore
 	// WeeklyReflections, Summaries, and DailyEntryTags are populated for
 	// the weekly reflection chat (scope='weekly') — used to seed the
 	// system prompt with the letter + patterns and to mark the wizard
 	// completed at wrap-up. Nil for callers that only need daily chat
 	// (legacy), but the router wires them all.
 	WeeklyReflections *store.WeeklyReflectionStore
-	Summaries         *store.SummaryStore
-	DailyEntryTags    *store.DailyEntryTagStore
+	// MonthlyReflections backs the COMBINED weekly+monthly session on
+	// monthly weeks (month state, intention, ratings, direction).
+	// Nil-safe: when unset the weekly chat never goes combined.
+	MonthlyReflections *store.MonthlyReflectionStore
+	Summaries          *store.SummaryStore
+	DailyEntryTags     *store.DailyEntryTagStore
 	// Memories feeds the "What you know about the user" block in both
 	// chat scopes. Nil-safe: skipped when unset.
-	Memories       *store.MemoryStore
-	ChatLLM        *llm.OpenRouter
-	ClassifyLLM    *llm.OpenRouter
+	Memories    *store.MemoryStore
+	ChatLLM     *llm.OpenRouter
+	ClassifyLLM *llm.OpenRouter
 	// Realtime is the OpenAI Realtime API client used by /voice/start.
 	// Nil-tolerant: when OPENAI_API_KEY is unset the field is non-nil
 	// but its APIKey is empty, so MintEphemeralSecret returns
@@ -88,8 +92,8 @@ const (
 // — session row + transcript. The frontend reads both atomically so it
 // never has to render a stale transcript against a fresh session.
 type chatSessionEnvelope struct {
-	Session  *domain.ChatSession   `json:"session"`
-	Messages []domain.ChatMessage  `json:"messages"`
+	Session  *domain.ChatSession  `json:"session"`
+	Messages []domain.ChatMessage `json:"messages"`
 }
 
 // ---------- helpers ----------
@@ -296,7 +300,7 @@ func (h *ChatHandler) CreateOrResumeWeekly(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	weekStart, weekEnd, _, err := h.resolveCurrentWeek(r, sess.UserID)
+	weekStart, weekEnd, user, err := h.resolveCurrentWeek(r, sess.UserID)
 	if err != nil {
 		h.Logger.Error("resolve current week", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "could not resolve week")
@@ -308,8 +312,13 @@ func (h *ChatHandler) CreateOrResumeWeekly(w http.ResponseWriter, r *http.Reques
 			h.Logger.Warn("ensure reflection row (weekly chat)", "err", err)
 		}
 	}
+	// Monthly week detection: when this week hosts a monthly reflection
+	// (and the month isn't completed yet), pin the session as COMBINED
+	// via month_period_start and lazy-create the monthly row. The pin is
+	// set once and never flaps mid-session (COALESCE on conflict-resume).
+	monthPeriodStart := h.resolveMonthlyWeek(r.Context(), sess.UserID, user, weekStart, weekEnd)
 	session, created, err := h.Sessions.CreateOrResumeWeekly(
-		r.Context(), sess.UserID, weekStart, h.ChatModel, h.ClassifyModel,
+		r.Context(), sess.UserID, weekStart, monthPeriodStart, h.ChatModel, h.ClassifyModel,
 	)
 	if err != nil {
 		h.Logger.Error("create weekly chat session", "err", err)
@@ -321,13 +330,22 @@ func (h *ChatHandler) CreateOrResumeWeekly(w http.ResponseWriter, r *http.Reques
 			h.Logger.Warn("set chat_session_id on reflection", "err", err)
 		}
 	}
+	if h.MonthlyReflections != nil && monthPeriodStart != nil {
+		if _, err := h.MonthlyReflections.SetChatSession(r.Context(), sess.UserID, *monthPeriodStart, session.ID); err != nil {
+			h.Logger.Warn("set chat_session_id on monthly reflection", "err", err)
+		}
+	}
 
 	// Seed the letter as the first assistant turn so the user can SEE
 	// the letter while the chat asks them about it. The closing question
 	// lives at the bottom of the bubble so the model's first prompt is
 	// already in the transcript — no separate streamed opener needed.
+	// On combined sessions a short bridge to the monthly letter follows.
 	if created {
 		body := h.composeWeeklyLetterOpener(r.Context(), sess.UserID, weekStart)
+		if body != "" && session.MonthPeriodStart != nil {
+			body += h.composeMonthlyOpenerAddendum(r.Context(), sess.UserID, *session.MonthPeriodStart)
+		}
 		if body != "" {
 			if _, aerr := h.Messages.Append(r.Context(), store.AppendInput{
 				SessionID: session.ID,
@@ -397,6 +415,63 @@ func (h *ChatHandler) composeWeeklyLetterOpener(
 		parts = append(parts, m.ClosingQuestion)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// resolveMonthlyWeek returns the month_period_start to pin onto a weekly
+// session when the canonical week [weekStart, weekEnd] hosts a monthly
+// reflection — i.e. the MonthlyWeekFor window matches AND that month's
+// reflection isn't completed yet. Nil on a plain weekly week. Also
+// lazy-creates the monthly_reflections row (idempotent upsert) so every
+// downstream FK/SetX call has a target.
+func (h *ChatHandler) resolveMonthlyWeek(
+	ctx context.Context, userID string, user *domain.User, weekStart, weekEnd time.Time,
+) *time.Time {
+	if h.MonthlyReflections == nil || user == nil {
+		return nil
+	}
+	loc, err := time.LoadLocation(user.Timezone)
+	if err != nil || loc == nil {
+		loc = time.UTC
+	}
+	monthStart, monthEnd, ok := timezone.MonthlyWeekFor(weekEnd, loc)
+	if !ok {
+		return nil
+	}
+	existing, err := h.MonthlyReflections.GetByMonthStart(ctx, userID, monthStart)
+	if err != nil {
+		h.Logger.Warn("get monthly reflection", "err", err, "user_id", userID)
+		return nil
+	}
+	if existing != nil && existing.CompletedAt != nil {
+		return nil
+	}
+	if _, err := h.MonthlyReflections.Start(ctx, userID, monthStart, monthEnd, weekStart); err != nil {
+		h.Logger.Warn("ensure monthly reflection row", "err", err, "user_id", userID)
+		return nil
+	}
+	return &monthStart
+}
+
+// composeMonthlyOpenerAddendum returns the short bridge appended to the
+// seeded weekly-letter opener on combined sessions: it tells the user
+// this week also closes the month and plants the direction question.
+// Empty when the month label can't be derived (never blocks the opener).
+func (h *ChatHandler) composeMonthlyOpenerAddendum(
+	ctx context.Context, userID string, monthPeriodStart string,
+) string {
+	monthStart, err := time.Parse("2006-01-02", monthPeriodStart)
+	if err != nil {
+		return ""
+	}
+	label := monthStart.Format("January")
+	addendum := fmt.Sprintf("\n\nThis week also closes out %s. You've read your monthly letter — when you're ready, we'll zoom out and look at the month together.", label)
+	if h.Summaries != nil {
+		if monthSummary, _ := h.Summaries.GetByPeriod(ctx, userID, string(domain.PeriodMonth), monthStart); monthSummary != nil &&
+			monthSummary.Metadata.ClosingQuestion != "" {
+			addendum += "\n\n" + monthSummary.Metadata.ClosingQuestion
+		}
+	}
+	return addendum
 }
 
 // ThisWeekChat handles GET /api/reflection/this-week/chat. Returns the
@@ -490,6 +565,9 @@ var allowedSystemEvents = map[string]struct{}{
 	"user_declined_extend_goal":   {},
 	"user_accepted_complete_goal": {},
 	"user_declined_complete_goal": {},
+	"user_accepted_intention":     {},
+	"user_declined_intention":     {},
+	"user_edited_intention":       {},
 }
 
 // allowedSystemEventMetaKeys is the closed set of meta keys the FE may
@@ -497,10 +575,11 @@ var allowedSystemEvents = map[string]struct{}{
 // future FE bump doesn't 400 on older servers. Values are capped at
 // 200 chars to keep the LLM-visible event-line compact.
 var allowedSystemEventMetaKeys = map[string]struct{}{
-	"goal_id":    {},
-	"goal_title": {},
-	"outcome":    {},
-	"weeks":      {},
+	"goal_id":        {},
+	"goal_title":     {},
+	"outcome":        {},
+	"weeks":          {},
+	"intention_text": {},
 }
 
 const maxSystemEventMetaValueLen = 200
@@ -828,6 +907,41 @@ func (h *ChatHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 				h.Logger.Warn("mark reflection completed", "err", err, "session_id", session.ID)
 			}
 		}
+		// Combined session: distil the direction check (and a fallback
+		// intention if no card was accepted), then complete the monthly
+		// row. Mirrors ChatExtractionWorker.processWeekly — keep both in
+		// lockstep when changing either.
+		if session.MonthPeriodStart != nil && h.MonthlyReflections != nil {
+			if ms, perr := time.Parse("2006-01-02", *session.MonthPeriodStart); perr == nil {
+				if h.ClassifyLLM != nil {
+					if transcript, lerr := h.Messages.ListBySession(r.Context(), session.ID); lerr == nil {
+						res, derr := chat.ExtractMonthlyDirection(r.Context(), h.ClassifyLLM, chat.ExtractMonthlyDirectionParams{
+							Model:    session.ExtractionModel,
+							Messages: transcript,
+						})
+						if derr != nil {
+							h.Logger.Warn("monthly direction extract", "err", derr, "session_id", session.ID)
+						} else {
+							if _, serr := h.MonthlyReflections.SetDirection(r.Context(), session.UserID, ms, res.Direction); serr != nil {
+								h.Logger.Warn("set direction text", "err", serr, "session_id", session.ID)
+							}
+							// Fallback intention: only when the user never
+							// accepted a propose_intention card.
+							if res.Intention != "" {
+								if current, _ := h.MonthlyReflections.GetByMonthStart(r.Context(), session.UserID, ms); current != nil && current.IntentionText == "" {
+									if _, ierr := h.MonthlyReflections.SetIntention(r.Context(), session.UserID, ms, res.Intention); ierr != nil {
+										h.Logger.Warn("set fallback intention", "err", ierr, "session_id", session.ID)
+									}
+								}
+							}
+						}
+					}
+				}
+				if _, merr := h.MonthlyReflections.MarkCompletedBySession(r.Context(), session.ID); merr != nil {
+					h.Logger.Warn("mark monthly reflection completed", "err", merr, "session_id", session.ID)
+				}
+			}
+		}
 		// Set extraction_status completed so the FE polling loop closes
 		// out (we reuse the same envelope shape as daily finalize).
 		_ = h.Sessions.SetExtractionStatus(r.Context(), session.ID, domain.ChatExtractionCompleted, nil)
@@ -859,20 +973,20 @@ func (h *ChatHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"session_id":         session.ID,
-		"extraction_status":  domain.ChatExtractionPending,
-		"phase":              session.Phase,
-		"poll_status_url":    fmt.Sprintf("/api/chat/sessions/%s/extraction/status", session.ID),
+		"session_id":        session.ID,
+		"extraction_status": domain.ChatExtractionPending,
+		"phase":             session.Phase,
+		"poll_status_url":   fmt.Sprintf("/api/chat/sessions/%s/extraction/status", session.ID),
 	})
 }
 
 // ---------- /sessions/:id/extraction/status ----------
 
 type extractionStatusResponse struct {
-	Status      string  `json:"status"`
-	Error       *string `json:"error,omitempty"`
+	Status      string     `json:"status"`
+	Error       *string    `json:"error,omitempty"`
 	FinalizedAt *time.Time `json:"finalized_at,omitempty"`
-	Phase       string  `json:"phase"`
+	Phase       string     `json:"phase"`
 }
 
 // ExtractionStatus handles GET /api/chat/sessions/:id/extraction/status.
@@ -942,6 +1056,9 @@ func (h *ChatHandler) Reset(w http.ResponseWriter, r *http.Request) {
 	if session.Scope == domain.ChatScopeWeekly && session.PeriodStart != nil {
 		if weekStart, perr := time.Parse("2006-01-02", *session.PeriodStart); perr == nil {
 			body := h.composeWeeklyLetterOpener(r.Context(), session.UserID, weekStart)
+			if body != "" && session.MonthPeriodStart != nil {
+				body += h.composeMonthlyOpenerAddendum(r.Context(), session.UserID, *session.MonthPeriodStart)
+			}
 			if body != "" {
 				row, aerr := h.Messages.Append(r.Context(), store.AppendInput{
 					SessionID: session.ID,
@@ -973,17 +1090,17 @@ func (h *ChatHandler) Reset(w http.ResponseWriter, r *http.Request) {
 // covering pass over any uncovered topics and propose wrap-up.
 //
 // Wire shape:
-//   1. Persist a system_event chat_message ("user_wrap_up") so the
-//      LLM transcript includes the signal verbatim and the audit log
-//      shows what triggered the closing turn.
-//   2. Persist a visible user chat_message ("Let's wrap it up") so the
-//      transcript reads as a real user-driven close — the assistant's
-//      reply is then a response to the user, not a self-initiated wrap.
-//   3. Advance session phase to wrapping_up. The persona prompt's
-//      wrapping_up branch instructs the model to ask one final
-//      optional question and call propose_wrap_up.
-//   4. Stream a single assistant turn via runStream. The FE consumes
-//      it with the same SSE handler as a normal message turn.
+//  1. Persist a system_event chat_message ("user_wrap_up") so the
+//     LLM transcript includes the signal verbatim and the audit log
+//     shows what triggered the closing turn.
+//  2. Persist a visible user chat_message ("Let's wrap it up") so the
+//     transcript reads as a real user-driven close — the assistant's
+//     reply is then a response to the user, not a self-initiated wrap.
+//  3. Advance session phase to wrapping_up. The persona prompt's
+//     wrapping_up branch instructs the model to ask one final
+//     optional question and call propose_wrap_up.
+//  4. Stream a single assistant turn via runStream. The FE consumes
+//     it with the same SSE handler as a normal message turn.
 //
 // Idempotent against re-clicks: a second wrap-up just appends another
 // system_event + user message (cheap), re-runs runStream, and the
@@ -1129,10 +1246,10 @@ func (h *ChatHandler) CancelWrapUp(w http.ResponseWriter, r *http.Request) {
 // ---------- /sessions/:id/voice/start ----------
 
 type startVoiceResponse struct {
-	ClientSecret string `json:"client_secret"`
-	ExpiresAt    int64  `json:"expires_at"`
-	Model        string `json:"model"`
-	SessionID    string `json:"session_id"`
+	ClientSecret    string `json:"client_secret"`
+	ExpiresAt       int64  `json:"expires_at"`
+	Model           string `json:"model"`
+	SessionID       string `json:"session_id"`
 	OpenAISessionID string `json:"openai_session_id"`
 }
 
@@ -1425,10 +1542,7 @@ func (h *ChatHandler) runStream(
 	if session.ChatModel != "" && session.ChatModel != h.RealtimeModel {
 		model = session.ChatModel
 	}
-	tools := chat.AssistantTools
-	if session.Scope == domain.ChatScopeWeekly {
-		tools = chat.WeeklyAssistantTools
-	}
+	tools := toolsForSession(session)
 	chunks, err := h.ChatLLM.CompleteStream(r.Context(), llm.StreamRequest{
 		Model:           model,
 		System:          systemPrompt,
@@ -1514,6 +1628,7 @@ func (h *ChatHandler) runStream(
 	emptyTurn := finalContent == ""
 	var skippedGoals []chat.GoalView
 	var undecidedEndingGoals []chat.GoalView
+	missingIntention := false
 	if toolIsWrapUp {
 		if session.Scope == domain.ChatScopeWeekly {
 			// Weekly chat doesn't gate on "every goal raised in plain
@@ -1521,11 +1636,17 @@ func (h *ChatHandler) runStream(
 			// ENDING goal has a decision tool call." So skipped-goals
 			// is only computed for daily.
 			undecidedEndingGoals = endingGoalsWithoutDecision(endingGoals, transcript)
+			// Combined sessions additionally require a propose_intention
+			// call (or an accepted-intention system event) in the
+			// transcript before wrap-up.
+			if session.MonthPeriodStart != nil {
+				missingIntention = !intentionInTranscript(transcript)
+			}
 		} else {
 			skippedGoals = unaddressedGoals(activeGoals, transcript)
 		}
 	}
-	if toolIsWrapUp && (emptyTurn || len(skippedGoals) > 0 || len(undecidedEndingGoals) > 0) {
+	if toolIsWrapUp && (emptyTurn || len(skippedGoals) > 0 || len(undecidedEndingGoals) > 0 || missingIntention) {
 		var parts []string
 		parts = append(parts, "Your previous propose_wrap_up call was rejected. Re-do this turn now.")
 		if emptyTurn {
@@ -1545,17 +1666,25 @@ func (h *ChatHandler) runStream(
 			}
 			parts = append(parts, "Issue: these ENDING-THIS-WEEK goal(s) lack a propose_extend_goal OR propose_complete_goal tool call in this transcript. You MUST surface one of those tools (with the user's decision) before you can call propose_wrap_up:\n"+strings.Join(lines, "\n"))
 		}
+		if missingIntention {
+			parts = append(parts, "Issue: this session closes a MONTH, and no propose_intention call exists in the transcript. The user must land ONE intention for next month (in their own words, with why it matters) before wrap-up.")
+		}
 		if session.Scope == domain.ChatScopeWeekly {
-			parts = append(parts, "Action: emit a SHORT warm plain-text reply that asks ONE focused open question about the single most pressing missing item. If an ending goal is undecided, ask the user whether they want to extend it or call it done — when they answer clearly, call propose_extend_goal or propose_complete_goal (not propose_wrap_up). Do NOT call propose_wrap_up in this retry; the user is not done.")
+			action := "Action: emit a SHORT warm plain-text reply that asks ONE focused open question about the single most pressing missing item. If an ending goal is undecided, ask the user whether they want to extend it or call it done — when they answer clearly, call propose_extend_goal or propose_complete_goal (not propose_wrap_up)."
+			if missingIntention {
+				action += " If the missing item is the monthly intention, invite the user to name a direction for next month in their own words — when they do, and they've said why it matters, call propose_intention."
+			}
+			action += " Do NOT call propose_wrap_up in this retry; the user is not done."
+			parts = append(parts, action)
 		} else {
 			parts = append(parts, "Action: emit a SHORT warm plain-text reply that asks ONE focused open question about the single most pressing missing item. Tiebreak: any unanswered goal > drained > charged > grateful. If a goal is unanswered, ask about that goal in plain conversation using the check-in question's own words — do not list multiple goals. Do NOT call propose_wrap_up in this retry; the user is not done.")
 		}
 		retryNote := strings.Join(parts, "\n\n")
 		retryMsgs := append([]llm.Message{}, llmMsgs...)
 		retryMsgs = append(retryMsgs, llm.Message{Role: "system", Content: retryNote})
-		retryContent, retryToolCalls, retryDone, retryErr := h.streamAssistantOnce(r, w, rc, model, systemPrompt, retryMsgs, maxTokens, session.Scope)
+		retryContent, retryToolCalls, retryDone, retryErr := h.streamAssistantOnce(r, w, rc, model, systemPrompt, retryMsgs, maxTokens, session)
 		if retryErr != nil {
-			h.Logger.Warn("wrap-up retry failed", "err", retryErr, "session_id", session.ID, "skipped_goals", len(skippedGoals), "undecided_ending", len(undecidedEndingGoals))
+			h.Logger.Warn("wrap-up retry failed", "err", retryErr, "session_id", session.ID, "skipped_goals", len(skippedGoals), "undecided_ending", len(undecidedEndingGoals), "missing_intention", missingIntention)
 			// Fall through with the safety-net text below.
 		} else {
 			finalContent = retryContent
@@ -1813,6 +1942,36 @@ type heldToolCall struct {
 	Args map[string]any
 }
 
+// toolsForSession picks the tool list by session shape: daily, plain
+// weekly, or combined weekly+monthly (month_period_start pinned). Each
+// list is a stable distinct slice so prompt caching stays effective per
+// session kind.
+func toolsForSession(session *domain.ChatSession) []llm.ToolDef {
+	if session.Scope != domain.ChatScopeWeekly {
+		return chat.AssistantTools
+	}
+	if session.MonthPeriodStart != nil {
+		return chat.MonthlyAssistantTools
+	}
+	return chat.WeeklyAssistantTools
+}
+
+// intentionInTranscript reports whether the combined session has shaped
+// an intention: a propose_intention tool call on an assistant row, or a
+// user_accepted_intention system event (belt-and-braces — the event
+// implies a prior tool call). Used to gate propose_wrap_up.
+func intentionInTranscript(transcript []domain.ChatMessage) bool {
+	for _, m := range transcript {
+		if m.Role == domain.ChatRoleAssistant && m.ToolName != nil && *m.ToolName == chat.ToolProposeIntention {
+			return true
+		}
+		if m.Role == domain.ChatRoleSystemEvent && m.Content == "user_accepted_intention" {
+			return true
+		}
+	}
+	return false
+}
+
 // streamAssistantOnce runs a single LLM completion stream and
 // surfaces token deltas as SSE token frames the same way the inline
 // loop in runStream does. Returns the accumulated content, tool
@@ -1828,12 +1987,9 @@ func (h *ChatHandler) streamAssistantOnce(
 	model, systemPrompt string,
 	messages []llm.Message,
 	maxTokens int,
-	scope string,
+	session *domain.ChatSession,
 ) (string, []heldToolCall, *llm.StreamDone, error) {
-	tools := chat.AssistantTools
-	if scope == domain.ChatScopeWeekly {
-		tools = chat.WeeklyAssistantTools
-	}
+	tools := toolsForSession(session)
 	chunks, err := h.ChatLLM.CompleteStream(r.Context(), llm.StreamRequest{
 		Model:           model,
 		System:          systemPrompt,
@@ -2156,6 +2312,27 @@ func (h *ChatHandler) buildWeeklySystemPrompt(
 		}
 	}
 
+	// Combined weekly+monthly session: swap in the monthly persona +
+	// context (both letters, ledger, ratings, last month's intention).
+	// Same goal slices flow back so the wrap-up gate stays uniform.
+	if session.MonthPeriodStart != nil {
+		prompt, err := h.buildMonthlyCombinedPrompt(ctx, user, session, monthlyCombinedInputs{
+			displayName:  displayName,
+			weekStart:    weekStart,
+			weekEnd:      weekEnd,
+			letter:       letter,
+			topDrainers:  topDrainers,
+			topChargers:  topChargers,
+			midGoals:     midGoals,
+			endingGoals:  endingGoals,
+			prevSurprise: prevSurprise,
+		})
+		if err != nil {
+			return "", nil, nil, err
+		}
+		return prompt, allActive, endingGoals, nil
+	}
+
 	prompt, err := chat.BuildWeeklySystemPrompt(chat.BuildWeeklySystemPromptParams{
 		DisplayName:      displayName,
 		WeekStart:        timezone.FormatDate(weekStart),
@@ -2173,4 +2350,114 @@ func (h *ChatHandler) buildWeeklySystemPrompt(
 		return "", nil, nil, err
 	}
 	return prompt, allActive, endingGoals, nil
+}
+
+// monthlyCombinedInputs carries the already-loaded weekly context into
+// the combined prompt builder so nothing is fetched twice.
+type monthlyCombinedInputs struct {
+	displayName  string
+	weekStart    time.Time
+	weekEnd      time.Time
+	letter       chat.WeeklyLetterView
+	topDrainers  []chat.TagSummary
+	topChargers  []chat.TagSummary
+	midGoals     []chat.GoalView
+	endingGoals  []chat.GoalView
+	prevSurprise string
+}
+
+// buildMonthlyCombinedPrompt loads the month-scoped context (monthly
+// letter, monthly reflection row, last month's intention/direction, the
+// goal ledger, the just-submitted life check-in ratings with deltas) and
+// renders the combined system prompt. Every month-scoped load is
+// best-effort: a missing piece degrades the context, never fails the
+// turn.
+func (h *ChatHandler) buildMonthlyCombinedPrompt(
+	ctx context.Context, user *domain.User, session *domain.ChatSession, in monthlyCombinedInputs,
+) (string, error) {
+	monthStart, err := time.Parse("2006-01-02", *session.MonthPeriodStart)
+	if err != nil {
+		return "", fmt.Errorf("parse month_period_start: %w", err)
+	}
+	monthEnd := monthStart.AddDate(0, 1, 0).AddDate(0, 0, -1)
+
+	var monthlyLetter chat.MonthlyLetterView
+	if h.Summaries != nil {
+		if s, _ := h.Summaries.GetByPeriod(ctx, user.ID, string(domain.PeriodMonth), monthStart); s != nil {
+			monthlyLetter = chat.MonthlyLetterView{
+				Headline:        s.Body,
+				Arc:             s.Metadata.Arc,
+				Recurring:       s.Metadata.Recurring,
+				GoalsRetro:      s.Metadata.GoalsRetro,
+				ClosingQuestion: s.Metadata.ClosingQuestion,
+			}
+		}
+	}
+
+	intentionText := ""
+	lastMonthIntention, lastMonthDirection := "", ""
+	var ratings []chat.RatingView
+	if h.MonthlyReflections != nil {
+		current, _ := h.MonthlyReflections.GetByMonthStart(ctx, user.ID, monthStart)
+		prior, _ := h.MonthlyReflections.LatestBefore(ctx, user.ID, monthStart)
+		if current != nil {
+			intentionText = current.IntentionText
+		}
+		if prior != nil {
+			lastMonthIntention = prior.IntentionText
+			lastMonthDirection = prior.DirectionText
+		}
+		if current != nil && len(current.Ratings) > 0 {
+			var prevRatings map[string]int
+			if prior != nil {
+				prevRatings = prior.Ratings
+			}
+			for _, d := range domain.LifeDomains {
+				score, ok := current.Ratings[d.Key]
+				if !ok {
+					continue
+				}
+				view := chat.RatingView{Label: d.Label, Score: score}
+				if prev, ok := prevRatings[d.Key]; ok {
+					view.DeltaLabel = fmt.Sprintf("%+d", score-prev)
+				}
+				ratings = append(ratings, view)
+			}
+		}
+	}
+
+	var ledger []chat.GoalLedgerView
+	if h.Goals != nil {
+		rows, _ := h.Goals.ListTouchedInRange(ctx, user.ID, monthStart, monthEnd)
+		for _, g := range rows {
+			view := chat.GoalLedgerView{Title: g.Title, Status: g.Status, Conclusion: g.ConclusionText}
+			if g.Outcome != nil {
+				view.Outcome = *g.Outcome
+			}
+			ledger = append(ledger, view)
+		}
+	}
+
+	return chat.BuildMonthlyCombinedSystemPrompt(chat.BuildMonthlyCombinedSystemPromptParams{
+		DisplayName:        in.displayName,
+		WeekStart:          timezone.FormatDate(in.weekStart),
+		WeekEnd:            timezone.FormatDate(in.weekEnd),
+		MonthLabel:         monthStart.Format("January 2006"),
+		MonthStart:         timezone.FormatDate(monthStart),
+		MonthEnd:           timezone.FormatDate(monthEnd),
+		Letter:             in.letter,
+		MonthlyLetter:      monthlyLetter,
+		TopDrainers:        in.topDrainers,
+		TopChargers:        in.topChargers,
+		MidFlightGoals:     in.midGoals,
+		EndingGoals:        in.endingGoals,
+		GoalLedger:         ledger,
+		PrevWeekSurprise:   in.prevSurprise,
+		LastMonthIntention: lastMonthIntention,
+		LastMonthDirection: lastMonthDirection,
+		IntentionText:      intentionText,
+		Ratings:            ratings,
+		Memories:           h.loadMemoryGroups(ctx, user.ID),
+		Phase:              session.Phase,
+	})
 }

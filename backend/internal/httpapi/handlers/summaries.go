@@ -27,19 +27,28 @@ import (
 // bars reflect whatever the user just typed, without waiting for the
 // next morning's daily summary to fire.
 type SummaryHandler struct {
-	Summaries          *store.SummaryStore
-	Jobs               *store.SummaryJobStore
-	Users              *store.UserStore
-	DailyInputs        *store.DailyInputStore
-	DailyEntryTags     *store.DailyEntryTagStore
-	Goals              *store.GoalStore
-	CheckIns           *store.GoalCheckInStore
-	WeeklyReflections  *store.WeeklyReflectionStore
+	Summaries         *store.SummaryStore
+	Jobs              *store.SummaryJobStore
+	Users             *store.UserStore
+	DailyInputs       *store.DailyInputStore
+	DailyEntryTags    *store.DailyEntryTagStore
+	Goals             *store.GoalStore
+	CheckIns          *store.GoalCheckInStore
+	WeeklyReflections *store.WeeklyReflectionStore
+	// MonthlyReflections backs the monthly block on monthly weeks
+	// (intention, ratings, direction, the monthly letter). Nil-tolerant:
+	// when unset the reflection response never carries a monthly block.
+	MonthlyReflections *store.MonthlyReflectionStore
 	// ChatSessions is optional: when set, ReplayReflection rewinds the
 	// linked weekly chat session's phase from finalized → exploring so
 	// the user can keep talking after a replay. Nil-tolerant.
-	ChatSessions       *store.ChatSessionStore
-	Logger             *slog.Logger
+	ChatSessions *store.ChatSessionStore
+	Logger       *slog.Logger
+	// DevForceMonth (DEV_FORCE_FLAGS=true) honors ?force_month=YYYY-MM-01
+	// on GET /api/reflection/this-week so the monthly flow is testable
+	// outside the ~2 weeks/month the window naturally matches. Never set
+	// in prod.
+	DevForceMonth bool
 }
 
 const (
@@ -275,31 +284,31 @@ const baselineDays = 14
 // headline insight (one sentence), active goal status (first goal +
 // kept/total tally on its date range so far).
 type Zone1Response struct {
-	WindowDays      int                          `json:"window_days"`
-	BaselineDaysReq int                          `json:"baseline_days_required"`
-	HasBaseline     bool                         `json:"has_baseline"`
-	Mood            []store.DailyMoodPoint       `json:"mood"`
-	MoodAvg7d       *float64                     `json:"mood_avg_7d"`
-	MoodAvgPrior7d  *float64                     `json:"mood_avg_prior_7d"`
-	Headline        *string                      `json:"headline"`
-	HeadlineFallback string                      `json:"headline_fallback"`
-	ActiveGoals     []Zone1GoalStatus            `json:"active_goals"`
+	WindowDays       int                    `json:"window_days"`
+	BaselineDaysReq  int                    `json:"baseline_days_required"`
+	HasBaseline      bool                   `json:"has_baseline"`
+	Mood             []store.DailyMoodPoint `json:"mood"`
+	MoodAvg7d        *float64               `json:"mood_avg_7d"`
+	MoodAvgPrior7d   *float64               `json:"mood_avg_prior_7d"`
+	Headline         *string                `json:"headline"`
+	HeadlineFallback string                 `json:"headline_fallback"`
+	ActiveGoals      []Zone1GoalStatus      `json:"active_goals"`
 }
 
 type Zone1GoalStatus struct {
-	ID              string `json:"id"`
-	Title           string `json:"title"`
-	StartDate       string `json:"start_date"`
-	EndDate         string `json:"end_date"`
-	DayIndex        int    `json:"day_index"`         // 1-based; today is day N of M
-	TotalDays       int    `json:"total_days"`
-	KeptCount       int    `json:"kept_count"`
-	AnsweredCount   int    `json:"answered_count"`
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	StartDate     string `json:"start_date"`
+	EndDate       string `json:"end_date"`
+	DayIndex      int    `json:"day_index"` // 1-based; today is day N of M
+	TotalDays     int    `json:"total_days"`
+	KeptCount     int    `json:"kept_count"`
+	AnsweredCount int    `json:"answered_count"`
 	// Motivation captured at creation — surfaced read-only on the weekly
 	// reflection so the user re-encounters their own "why" each week.
-	WhyMatters      string `json:"why_matters"`
-	IfFollowed      string `json:"if_followed"`
-	IfNotFollowed   string `json:"if_not_followed"`
+	WhyMatters    string `json:"why_matters"`
+	IfFollowed    string `json:"if_followed"`
+	IfNotFollowed string `json:"if_not_followed"`
 }
 
 // Zone1 handles GET /api/summary/zone1.
@@ -455,9 +464,9 @@ func (h *SummaryHandler) headlineFallback(
 // alongside. Low-confidence flagging is a frontend concern (renders a
 // faint badge for tags with appearances < 7).
 type Zone2Response struct {
-	WindowDays int                     `json:"window_days"`
-	Drainers   []store.TagAggregate    `json:"drainers"`
-	Chargers   []store.TagAggregate    `json:"chargers"`
+	WindowDays int                  `json:"window_days"`
+	Drainers   []store.TagAggregate `json:"drainers"`
+	Chargers   []store.TagAggregate `json:"chargers"`
 }
 
 func (h *SummaryHandler) Zone2(w http.ResponseWriter, r *http.Request) {
@@ -522,17 +531,17 @@ func (h *SummaryHandler) Zone3(w http.ResponseWriter, r *http.Request) {
 // user's reflection_weekday, plus the wizard state (started/step/done)
 // and the persisted surprise + per-mid-flight-goal notes.
 type ReflectionResponse struct {
-	WeekStart       string                  `json:"week_start"`
-	WeekEnd         string                  `json:"week_end"`
-	PriorWeekStart  string                  `json:"prior_week_start"`
-	PriorWeekEnd    string                  `json:"prior_week_end"`
-	MoodAvg         *float64                `json:"mood_avg"`
-	MoodAvgPrior    *float64                `json:"mood_avg_prior"`
-	EntryCount      int                     `json:"entry_count"`
-	Drainers        []ReflectionTagRow      `json:"drainers"`
-	Chargers        []ReflectionTagRow      `json:"chargers"`
-	GratitudeItems  []ReflectionGratitude   `json:"gratitude_items"`
-	ActiveGoals     []Zone1GoalStatus       `json:"active_goals"`
+	WeekStart      string                `json:"week_start"`
+	WeekEnd        string                `json:"week_end"`
+	PriorWeekStart string                `json:"prior_week_start"`
+	PriorWeekEnd   string                `json:"prior_week_end"`
+	MoodAvg        *float64              `json:"mood_avg"`
+	MoodAvgPrior   *float64              `json:"mood_avg_prior"`
+	EntryCount     int                   `json:"entry_count"`
+	Drainers       []ReflectionTagRow    `json:"drainers"`
+	Chargers       []ReflectionTagRow    `json:"chargers"`
+	GratitudeItems []ReflectionGratitude `json:"gratitude_items"`
+	ActiveGoals    []Zone1GoalStatus     `json:"active_goals"`
 
 	// Weekly synthesis — populated from the `summaries` row for this
 	// week if one exists with the new metadata fields. When the row is
@@ -560,16 +569,47 @@ type ReflectionResponse struct {
 	GoalNotes    map[string]string `json:"goal_notes"`
 	NewGoalIDs   []string          `json:"new_goal_ids"`
 	CompletedAt  *time.Time        `json:"completed_at"`
+
+	// Monthly — non-nil when this week hosts a monthly reflection (the
+	// first reflection day on-or-after a calendar month end, plus one
+	// carry-over grace week). nil on plain weeks; is_monthly ⇔ non-nil.
+	Monthly *MonthlyReflectionBlock `json:"monthly"`
+}
+
+// MonthlyReflectionBlock is the month half of a combined reflection
+// week: the monthly letter (from the period_type='month' summaries row),
+// the month state (intention / direction / completion), and the life
+// check-in ratings.
+type MonthlyReflectionBlock struct {
+	MonthStart string `json:"month_start"`
+	MonthEnd   string `json:"month_end"`
+
+	// Monthly letter.
+	Headline         string `json:"headline"`
+	Arc              string `json:"arc"`
+	Recurring        string `json:"recurring"`
+	GoalsRetro       string `json:"goals_retro"`
+	ClosingQuestion  string `json:"closing_question"`
+	SynthesisPending bool   `json:"synthesis_pending"`
+
+	// Month state.
+	IntentionText      string         `json:"intention_text"`
+	DirectionText      string         `json:"direction_text"`
+	LastMonthIntention string         `json:"last_month_intention"`
+	Ratings            map[string]int `json:"ratings"`      // nil until the check-in is submitted
+	PrevRatings        map[string]int `json:"prev_ratings"` // last completed month's, for slider ghost dots
+	RatingsSetAt       *time.Time     `json:"ratings_set_at"`
+	CompletedAt        *time.Time     `json:"completed_at"`
 }
 
 // ReflectionTagRow extends TagAggregate with a delta against the prior
 // week so the FE can show ▲/▼ next to each label.
 type ReflectionTagRow struct {
-	TagID       string   `json:"tag_id"`
-	Label       string   `json:"label"`
-	Appearances int      `json:"appearances"`
-	AvgMood     *float64 `json:"avg_mood"`
-	DeltaVsPrior int     `json:"delta_vs_prior"` // appearances change vs the prior week
+	TagID        string   `json:"tag_id"`
+	Label        string   `json:"label"`
+	Appearances  int      `json:"appearances"`
+	AvgMood      *float64 `json:"avg_mood"`
+	DeltaVsPrior int      `json:"delta_vs_prior"` // appearances change vs the prior week
 }
 
 type ReflectionGratitude struct {
@@ -590,11 +630,22 @@ func (h *SummaryHandler) WeeklyReflection(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, true)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, true, true)
 	if err != nil {
 		h.Logger.Error("build reflection (this week)", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
 		return
+	}
+	// Dev escape hatch (DEV_FORCE_FLAGS=true): ?force_month=YYYY-MM-01
+	// pretends the current week hosts that month's reflection so the
+	// monthly flow is testable on any calendar day.
+	if h.DevForceMonth {
+		if forced := strings.TrimSpace(r.URL.Query().Get("force_month")); forced != "" {
+			if monthStart, perr := time.Parse("2006-01-02", forced); perr == nil {
+				monthEnd := monthStart.AddDate(0, 1, 0).AddDate(0, 0, -1)
+				resp.Monthly = h.buildMonthlyBlock(r.Context(), sess.UserID, monthStart, monthEnd, weekStart, true)
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -615,7 +666,7 @@ func (h *SummaryHandler) ReflectionByWeek(w http.ResponseWriter, r *http.Request
 		return
 	}
 	weekEnd := weekStart.AddDate(0, 0, 6)
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, true)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, true, false)
 	if err != nil {
 		h.Logger.Error("build reflection (by week)", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
@@ -635,10 +686,16 @@ func (h *SummaryHandler) ReflectionByWeek(w http.ResponseWriter, r *http.Request
 // pass false so the natural lifecycle handles things — re-arming an
 // in-flight current-week job would force the LLM to synthesize mid-
 // week.
+//
+// `currentWeek` distinguishes the canonical this-week callers from the
+// History by-week path: only the current week derives the monthly block
+// from the MonthlyWeekFor window (with lazy row creation + letter
+// backfill); history populates it read-only from an existing
+// monthly_reflections row anchored to that week.
 func (h *SummaryHandler) buildReflection(
 	ctx context.Context, userID string,
 	weekStart, weekEnd time.Time,
-	includeWizardState, triggerBackfill bool,
+	includeWizardState, triggerBackfill, currentWeek bool,
 ) (*ReflectionResponse, error) {
 	priorEnd := weekStart.AddDate(0, 0, -1)
 	priorStart := priorEnd.AddDate(0, 0, -6)
@@ -798,7 +855,7 @@ func (h *SummaryHandler) buildReflection(
 		// actionable empty state instead of a misleading "arriving"
 		// banner that never resolves.
 		if triggerBackfill {
-			resp.SynthesisPending = h.enqueueSynthesisBackfill(ctx, userID, weekStart)
+			resp.SynthesisPending = h.enqueueSynthesisBackfill(ctx, userID, string(domain.PeriodWeek), weekStart)
 		} else if summary == nil {
 			// Current-week with no summary row yet — the lazy-seed
 			// will have queued a job for the week-end; mark pending
@@ -806,7 +863,112 @@ func (h *SummaryHandler) buildReflection(
 			resp.SynthesisPending = true
 		}
 	}
+
+	// Monthly block: non-nil when this week hosts a monthly reflection.
+	resp.Monthly = h.resolveMonthlyBlock(ctx, userID, weekStart, weekEnd, currentWeek)
 	return resp, nil
+}
+
+// resolveMonthlyBlock decides whether [weekStart, weekEnd] hosts a
+// monthly reflection and builds the block. Current week: derived from
+// the MonthlyWeekFor window; a COMPLETED month keeps rendering on its
+// own hosting week (Done view) but never claims the carry-over grace
+// week. History: read-only from the row anchored to weekStart.
+func (h *SummaryHandler) resolveMonthlyBlock(
+	ctx context.Context, userID string, weekStart, weekEnd time.Time, currentWeek bool,
+) *MonthlyReflectionBlock {
+	if h.MonthlyReflections == nil {
+		return nil
+	}
+	if !currentWeek {
+		mr, _ := h.MonthlyReflections.GetByWeekStart(ctx, userID, weekStart)
+		if mr == nil {
+			return nil
+		}
+		monthStart, err1 := time.Parse("2006-01-02", mr.MonthStart)
+		monthEnd, err2 := time.Parse("2006-01-02", mr.MonthEnd)
+		if err1 != nil || err2 != nil {
+			return nil
+		}
+		return h.buildMonthlyBlock(ctx, userID, monthStart, monthEnd, weekStart, false)
+	}
+	user, err := h.Users.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil
+	}
+	loc, err := time.LoadLocation(user.Timezone)
+	if err != nil || loc == nil {
+		loc = time.UTC
+	}
+	monthStart, monthEnd, ok := timezone.MonthlyWeekFor(weekEnd, loc)
+	if !ok {
+		return nil
+	}
+	existing, err := h.MonthlyReflections.GetByMonthStart(ctx, userID, monthStart)
+	if err != nil {
+		h.Logger.Warn("get monthly reflection", "err", err, "user_id", userID)
+		return nil
+	}
+	if existing != nil && existing.CompletedAt != nil &&
+		(existing.WeekStart == nil || *existing.WeekStart != timezone.FormatDate(weekStart)) {
+		// Completed in an earlier (hosting) week — the grace week goes
+		// back to being a plain weekly.
+		return nil
+	}
+	return h.buildMonthlyBlock(ctx, userID, monthStart, monthEnd, weekStart, true)
+}
+
+// buildMonthlyBlock assembles the monthly block for one month. Current-
+// week callers lazy-create the monthly_reflections row (re-anchoring
+// week_start on carry-over) and may enqueue a letter backfill; history
+// callers read what exists.
+func (h *SummaryHandler) buildMonthlyBlock(
+	ctx context.Context, userID string,
+	monthStart, monthEnd, weekStart time.Time,
+	currentWeek bool,
+) *MonthlyReflectionBlock {
+	var row *domain.MonthlyReflection
+	var err error
+	if currentWeek {
+		row, err = h.MonthlyReflections.Start(ctx, userID, monthStart, monthEnd, weekStart)
+		if err != nil {
+			h.Logger.Warn("ensure monthly reflection row", "err", err, "user_id", userID)
+			return nil
+		}
+	} else {
+		row, err = h.MonthlyReflections.GetByMonthStart(ctx, userID, monthStart)
+		if err != nil || row == nil {
+			return nil
+		}
+	}
+
+	block := &MonthlyReflectionBlock{
+		MonthStart:    timezone.FormatDate(monthStart),
+		MonthEnd:      timezone.FormatDate(monthEnd),
+		IntentionText: row.IntentionText,
+		DirectionText: row.DirectionText,
+		Ratings:       row.Ratings,
+		RatingsSetAt:  row.RatingsSetAt,
+		CompletedAt:   row.CompletedAt,
+	}
+
+	summary, _ := h.Summaries.GetByPeriod(ctx, userID, string(domain.PeriodMonth), monthStart)
+	if summary != nil {
+		block.Headline = summary.Body
+		block.Arc = summary.Metadata.Arc
+		block.Recurring = summary.Metadata.Recurring
+		block.GoalsRetro = summary.Metadata.GoalsRetro
+		block.ClosingQuestion = summary.Metadata.ClosingQuestion
+	}
+	if (summary == nil || !summary.Metadata.HasMonthlySynthesis()) && currentWeek {
+		block.SynthesisPending = h.enqueueSynthesisBackfill(ctx, userID, string(domain.PeriodMonth), monthStart)
+	}
+
+	if prior, _ := h.MonthlyReflections.LatestBefore(ctx, userID, monthStart); prior != nil {
+		block.LastMonthIntention = prior.IntentionText
+		block.PrevRatings = prior.Ratings
+	}
+	return block
 }
 
 // enqueueSynthesisBackfill ensures a pending summary_jobs row exists for
@@ -827,22 +989,26 @@ func (h *SummaryHandler) buildReflection(
 //
 // On any DB error past ReArm we return false so the caller does not
 // promise the FE a job that may not be running.
+//
+// periodType-generic: the weekly letter backfills at week_start, the
+// monthly letter at month_start. All three job-store calls are already
+// period-agnostic.
 func (h *SummaryHandler) enqueueSynthesisBackfill(
-	ctx context.Context, userID string, weekStart time.Time,
+	ctx context.Context, userID, periodType string, periodStart time.Time,
 ) bool {
 	now := time.Now().UTC()
-	rearmed, err := h.Jobs.ReArm(ctx, userID, string(domain.PeriodWeek), weekStart, now)
+	rearmed, err := h.Jobs.ReArm(ctx, userID, periodType, periodStart, now)
 	if err != nil {
 		h.Logger.Warn("synthesis backfill re-arm failed",
-			"err", err, "user_id", userID, "week_start", weekStart)
+			"err", err, "user_id", userID, "period", periodType, "period_start", periodStart)
 	}
 	if rearmed {
 		return true
 	}
-	existing, err := h.Jobs.LatestForPeriod(ctx, userID, string(domain.PeriodWeek), weekStart)
+	existing, err := h.Jobs.LatestForPeriod(ctx, userID, periodType, periodStart)
 	if err != nil && !errors.Is(err, store.ErrSummaryJobNotFound) {
 		h.Logger.Warn("synthesis backfill lookup failed",
-			"err", err, "user_id", userID, "week_start", weekStart)
+			"err", err, "user_id", userID, "period", periodType, "period_start", periodStart)
 		return false
 	}
 	if existing != nil {
@@ -850,9 +1016,9 @@ func (h *SummaryHandler) enqueueSynthesisBackfill(
 		// survives is pending or claimed — already in flight.
 		return existing.Status == "pending" || existing.Status == "claimed"
 	}
-	if _, err := h.Jobs.Schedule(ctx, userID, string(domain.PeriodWeek), weekStart, now); err != nil {
+	if _, err := h.Jobs.Schedule(ctx, userID, periodType, periodStart, now); err != nil {
 		h.Logger.Warn("synthesis backfill schedule failed",
-			"err", err, "user_id", userID, "week_start", weekStart)
+			"err", err, "user_id", userID, "period", periodType, "period_start", periodStart)
 		return false
 	}
 	return true
@@ -878,7 +1044,7 @@ func (h *SummaryHandler) StartReflection(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusInternalServerError, "start failed")
 		return
 	}
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, true)
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, true, true)
 	if err != nil {
 		h.Logger.Error("build reflection after start", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
@@ -915,7 +1081,7 @@ func (h *SummaryHandler) PatchReflection(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	h.applyReflectionPatch(w, r, sess.UserID, weekStart, weekEnd)
+	h.applyReflectionPatch(w, r, sess.UserID, weekStart, weekEnd, true)
 }
 
 // PatchReflectionByWeek handles PATCH /api/reflection/by-week/{week_start}.
@@ -936,7 +1102,7 @@ func (h *SummaryHandler) PatchReflectionByWeek(w http.ResponseWriter, r *http.Re
 		return
 	}
 	weekEnd := weekStart.AddDate(0, 0, 6)
-	h.applyReflectionPatch(w, r, sess.UserID, weekStart, weekEnd)
+	h.applyReflectionPatch(w, r, sess.UserID, weekStart, weekEnd, false)
 }
 
 // applyReflectionPatch is the shared body of PatchReflection and
@@ -944,7 +1110,7 @@ func (h *SummaryHandler) PatchReflectionByWeek(w http.ResponseWriter, r *http.Re
 // needed, apply each provided field, and return the rebuilt
 // ReflectionResponse.
 func (h *SummaryHandler) applyReflectionPatch(
-	w http.ResponseWriter, r *http.Request, userID string, weekStart, weekEnd time.Time,
+	w http.ResponseWriter, r *http.Request, userID string, weekStart, weekEnd time.Time, currentWeek bool,
 ) {
 	var req patchReflectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1011,7 +1177,7 @@ func (h *SummaryHandler) applyReflectionPatch(
 			}
 		}
 	}
-	resp, err := h.buildReflection(r.Context(), userID, weekStart, weekEnd, true, false)
+	resp, err := h.buildReflection(r.Context(), userID, weekStart, weekEnd, true, false, currentWeek)
 	if err != nil {
 		h.Logger.Error("build reflection after patch", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
@@ -1056,7 +1222,19 @@ func (h *SummaryHandler) ReplayReflection(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, false)
+	// Monthly week: rewind the month too — clear completed_at and the
+	// derived direction_text, but PRESERVE intention_text and ratings
+	// (user artifacts, like the kept transcript).
+	if h.MonthlyReflections != nil {
+		if mr, _ := h.MonthlyReflections.GetByWeekStart(r.Context(), sess.UserID, weekStart); mr != nil {
+			if monthStart, perr := time.Parse("2006-01-02", mr.MonthStart); perr == nil {
+				if _, rerr := h.MonthlyReflections.ReplayClear(r.Context(), sess.UserID, monthStart); rerr != nil {
+					h.Logger.Warn("replay: clear monthly reflection", "err", rerr, "user_id", sess.UserID)
+				}
+			}
+		}
+	}
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, false, true)
 	if err != nil {
 		h.Logger.Error("build reflection after replay", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
@@ -1089,11 +1267,163 @@ func (h *SummaryHandler) CompleteReflection(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusInternalServerError, "complete failed")
 		return
 	}
-	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, false)
+	// Monthly week: the manual complete must match the chat-finalize
+	// path — complete the month row too (no direction extract here; the
+	// user skipped or abandoned the chat path).
+	if h.MonthlyReflections != nil {
+		if mr, _ := h.MonthlyReflections.GetByWeekStart(r.Context(), sess.UserID, weekStart); mr != nil {
+			if monthStart, perr := time.Parse("2006-01-02", mr.MonthStart); perr == nil {
+				if _, merr := h.MonthlyReflections.MarkCompleted(r.Context(), sess.UserID, monthStart); merr != nil {
+					h.Logger.Warn("mark monthly complete", "err", merr, "user_id", sess.UserID)
+				}
+			}
+		}
+	}
+	resp, err := h.buildReflection(r.Context(), sess.UserID, weekStart, weekEnd, true, false, true)
 	if err != nil {
 		h.Logger.Error("build reflection after complete", "err", err)
 		writeJSONError(w, http.StatusInternalServerError, "load failed")
 		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ----- Monthly reflection endpoints -----
+
+const maxIntentionTextLen = 300
+
+type setIntentionRequest struct {
+	IntentionText string `json:"intention_text"`
+}
+
+// SetMonthlyIntention handles POST /api/reflection/this-month/intention.
+// Persists the user's accepted (or edited) intention for the month the
+// current week hosts. 404 when the current week isn't a monthly week.
+// Returns the full ReflectionResponse so the FE swaps its cache in one
+// motion.
+func (h *SummaryHandler) SetMonthlyIntention(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req setIntentionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	text := strings.TrimSpace(req.IntentionText)
+	if text == "" {
+		writeJSONError(w, http.StatusBadRequest, "intention_text required")
+		return
+	}
+	if len(text) > maxIntentionTextLen {
+		writeJSONError(w, http.StatusBadRequest, "intention_text too long")
+		return
+	}
+	h.applyMonthlyMutation(w, r, sess.UserID, func(ctx context.Context, monthStart time.Time) error {
+		_, err := h.MonthlyReflections.SetIntention(ctx, sess.UserID, monthStart, text)
+		return err
+	})
+}
+
+type setRatingsRequest struct {
+	Ratings map[string]int `json:"ratings"`
+}
+
+// SetMonthlyRatings handles POST /api/reflection/this-month/ratings.
+// Persists the life check-in sliders (PWI-format, 0..10 per domain).
+// Validation rejects unknown domain keys and out-of-range scores;
+// `belonging` (and any other domain) may simply be omitted.
+func (h *SummaryHandler) SetMonthlyRatings(w http.ResponseWriter, r *http.Request) {
+	sess := middleware.SessionFromCtx(r.Context())
+	if sess == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req setRatingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := domain.ValidateRatings(req.Ratings); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.applyMonthlyMutation(w, r, sess.UserID, func(ctx context.Context, monthStart time.Time) error {
+		_, err := h.MonthlyReflections.SetRatings(ctx, sess.UserID, monthStart, req.Ratings)
+		return err
+	})
+}
+
+// applyMonthlyMutation resolves the current week's hosted month, ensures
+// the monthly row exists, runs `mutate` against it, and responds with
+// the rebuilt ReflectionResponse. 404 when the current week hosts no
+// monthly reflection.
+func (h *SummaryHandler) applyMonthlyMutation(
+	w http.ResponseWriter, r *http.Request, userID string,
+	mutate func(ctx context.Context, monthStart time.Time) error,
+) {
+	if h.MonthlyReflections == nil {
+		writeJSONError(w, http.StatusNotFound, "monthly reflection unavailable")
+		return
+	}
+	weekStart, weekEnd, ok := h.resolveCurrentWeek(w, r, userID)
+	if !ok {
+		return
+	}
+	user, err := h.Users.GetByID(r.Context(), userID)
+	if err != nil || user == nil {
+		writeJSONError(w, http.StatusInternalServerError, "user lookup failed")
+		return
+	}
+	loc, lerr := time.LoadLocation(user.Timezone)
+	if lerr != nil || loc == nil {
+		loc = time.UTC
+	}
+	monthStart, monthEnd, isMonthly := timezone.MonthlyWeekFor(weekEnd, loc)
+	if !isMonthly {
+		// Dev escape hatch matches the GET: force_month pretends any
+		// week is the monthly week.
+		forced := ""
+		if h.DevForceMonth {
+			forced = strings.TrimSpace(r.URL.Query().Get("force_month"))
+		}
+		if forced == "" {
+			writeJSONError(w, http.StatusNotFound, "current week hosts no monthly reflection")
+			return
+		}
+		ms, perr := time.Parse("2006-01-02", forced)
+		if perr != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid force_month")
+			return
+		}
+		monthStart = ms
+		monthEnd = ms.AddDate(0, 1, 0).AddDate(0, 0, -1)
+	}
+	if _, err := h.MonthlyReflections.Start(r.Context(), userID, monthStart, monthEnd, weekStart); err != nil {
+		h.Logger.Error("ensure monthly reflection row", "err", err, "user_id", userID)
+		writeJSONError(w, http.StatusInternalServerError, "save failed")
+		return
+	}
+	if err := mutate(r.Context(), monthStart); err != nil {
+		h.Logger.Error("monthly mutation", "err", err, "user_id", userID)
+		writeJSONError(w, http.StatusInternalServerError, "save failed")
+		return
+	}
+	resp, err := h.buildReflection(r.Context(), userID, weekStart, weekEnd, true, false, true)
+	if err != nil {
+		h.Logger.Error("build reflection after monthly mutation", "err", err)
+		writeJSONError(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	if h.DevForceMonth && resp.Monthly == nil {
+		if forced := strings.TrimSpace(r.URL.Query().Get("force_month")); forced != "" {
+			if ms, perr := time.Parse("2006-01-02", forced); perr == nil {
+				me := ms.AddDate(0, 1, 0).AddDate(0, 0, -1)
+				resp.Monthly = h.buildMonthlyBlock(r.Context(), userID, ms, me, weekStart, true)
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

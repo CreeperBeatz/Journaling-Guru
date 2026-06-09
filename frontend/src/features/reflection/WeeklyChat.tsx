@@ -28,6 +28,10 @@ import {
   ProposeGoalCard,
   type ProposeGoalArgs,
 } from "./components/ProposeGoalCard";
+import {
+  ProposeIntentionCard,
+  type ProposeIntentionArgs,
+} from "./components/ProposeIntentionCard";
 import { WeeklyChatFirstTimeHint } from "./components/WeeklyChatFirstTimeHint";
 import {
   useCreateOrResumeWeeklyChat,
@@ -52,7 +56,8 @@ function weeklyVisibleMessages(messages: ChatMessage[]): ChatMessage[] {
     return (
       m.tool_name === "propose_goal" ||
       m.tool_name === "propose_extend_goal" ||
-      m.tool_name === "propose_complete_goal"
+      m.tool_name === "propose_complete_goal" ||
+      m.tool_name === "propose_intention"
     );
   });
 }
@@ -237,6 +242,14 @@ export function WeeklyChat({ onFinished }: Props = {}) {
             />
           );
         }
+        case "propose_intention":
+          return (
+            <ProposeIntentionCard
+              sessionId={session.id}
+              args={args as ProposeIntentionArgs}
+              decision={decision}
+            />
+          );
         default:
           return null;
       }
@@ -308,6 +321,9 @@ export function WeeklyChat({ onFinished }: Props = {}) {
   const userTurnCount = visibleMsgs.filter((m) => m.role === "user").length;
   const hasUserTurns = userTurnCount > 0;
   const wrappedUp = session.phase === "wrapping_up";
+  // Combined weekly+monthly session — adjusts finish copy only; the
+  // server owns the actual combined behavior via month_period_start.
+  const isMonthly = reflectionQuery.data?.monthly != null;
 
   return (
     <div
@@ -346,7 +362,10 @@ export function WeeklyChat({ onFinished }: Props = {}) {
             {modelProposedWrapUp && !stream.state.crisis ? (
               <Card className="mt-4 border-accent/30 bg-accent/5">
                 <CardContent className="flex flex-col gap-2 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                  <p>That feels like a good stopping point. Ready to finish your weekly reflection?</p>
+                  <p>
+                    That feels like a good stopping point. Ready to finish your{" "}
+                    {isMonthly ? "monthly" : "weekly"} reflection?
+                  </p>
                   <Button onClick={handleFinalize} disabled={finalize.isPending}>
                     {finalize.isPending ? (
                       <span className="inline-flex items-center gap-2">
@@ -354,7 +373,7 @@ export function WeeklyChat({ onFinished }: Props = {}) {
                         Finishing…
                       </span>
                     ) : (
-                      "Finish weekly reflection"
+                      `Finish ${isMonthly ? "monthly" : "weekly"} reflection`
                     )}
                   </Button>
                 </CardContent>

@@ -11,10 +11,10 @@ import (
 // MagicLinkConfig captures the policy knobs that govern issue/verify. All
 // values are required (defaults live in config package).
 type MagicLinkConfig struct {
-	TTL          time.Duration
-	PerEmail15m  int
-	PerEmailDay  int
-	PerIPHour    int
+	TTL         time.Duration
+	PerEmail15m int
+	PerEmailDay int
+	PerIPHour   int
 }
 
 // MagicLinkService issues and verifies one-time login links. It carries no

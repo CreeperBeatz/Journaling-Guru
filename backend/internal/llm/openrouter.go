@@ -177,7 +177,7 @@ func (c *OpenRouter) applyAuthHeaders(req *http.Request) {
 // per chunk. Empty Delta="" with all others nil is a keepalive (the
 // caller should not flush a token frame for it).
 type StreamChunk struct {
-	Delta    string         // text token(s); send to client as-is
+	Delta    string          // text token(s); send to client as-is
 	ToolCall *StreamToolCall // model emitted a complete tool call
 	Done     *StreamDone     // terminal success
 	Err      error           // terminal failure (channel closes after)
@@ -358,10 +358,10 @@ func decodeStream(ctx context.Context, body io.ReadCloser, out chan<- StreamChun
 
 	pending := map[int]*pendingToolCall{}
 	var (
-		modelName    string
-		promptTok    int
+		modelName     string
+		promptTok     int
 		completionTok int
-		finishReason string
+		finishReason  string
 	)
 
 	flushChunk := func(ch StreamChunk) bool {

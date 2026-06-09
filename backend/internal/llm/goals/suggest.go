@@ -47,11 +47,11 @@ Each candidate is JSON:
 // handler fills it from the same store calls the WeeklyReflection
 // endpoint uses.
 type SuggestionInput struct {
-	TopDrainers    []TagPattern
-	TopChargers    []TagPattern
-	MoodAvg        *float64
-	ActiveGoals    []string // titles, so the LLM avoids dupes
-	WeekDays       int
+	TopDrainers []TagPattern
+	TopChargers []TagPattern
+	MoodAvg     *float64
+	ActiveGoals []string // titles, so the LLM avoids dupes
+	WeekDays    int
 }
 
 type TagPattern struct {

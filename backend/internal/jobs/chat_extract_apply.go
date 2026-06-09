@@ -19,13 +19,13 @@ import (
 // worker. Merge semantics: LLM-merge for non-empty conflicts, otherwise
 // insert.
 type ApplyDeps struct {
-	Sessions       *store.ChatSessionStore
-	Entries        *store.EntryStore
-	DailyInputs    *store.DailyInputStore
-	Tags           *store.TagStore
-	DailyEntryTags *store.DailyEntryTagStore
-	Goals          *store.GoalStore        // optional; nil disables goal_check_ins writes
-	GoalCheckIns   *store.GoalCheckInStore // paired with Goals
+	Sessions        *store.ChatSessionStore
+	Entries         *store.EntryStore
+	DailyInputs     *store.DailyInputStore
+	Tags            *store.TagStore
+	DailyEntryTags  *store.DailyEntryTagStore
+	Goals           *store.GoalStore        // optional; nil disables goal_check_ins writes
+	GoalCheckIns    *store.GoalCheckInStore // paired with Goals
 	LLM             *llm.OpenRouter
 	Logger          *slog.Logger
 	Scheduler       *Scheduler       // optional; nil-safe

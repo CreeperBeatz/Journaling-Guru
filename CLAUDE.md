@@ -87,6 +87,17 @@ User-entered mood/emotions/notes (`daily_inputs`) and manually written entries (
 
 So a manual edit *during* the extraction window is never clobbered. The daily LLM prompt only generates `{body, topics}` — it does **not** infer mood/emotions; those come from `daily_inputs`.
 
+### Monthly reflection loop (rides the weekly rails)
+
+The monthly loop reuses the weekly machinery — read these rules before touching either:
+
+- **"Monthly week" is derived, never stored**: a canonical reflection week hosts month M iff M's last day ∈ `[weekEnd-13, weekEnd]` (hosting week + ONE carry-over grace week) AND `monthly_reflections.completed_at IS NULL`. Single source: `timezone.MonthlyWeekFor`. A completed month still renders on its own hosting week but never claims the grace week.
+- **One combined chat session**, pinned via `chat_sessions.month_period_start` (set once at `CreateOrResumeWeekly`, COALESCE on resume — never flaps mid-conversation). Combined sessions get their own static persona (`monthlyCombinedPersonaPrompt`) + tool list (`MonthlyAssistantTools`, adds `propose_intention`) — do NOT branch inside the weekly persona/tools; both prefixes must stay byte-stable for prompt caching.
+- **Monthly letter** (`summaries` row, `period_type='month'`, metadata `arc/recurring/goals_retro` + `closing_question` = direction question) synthesizes HIERARCHICALLY from the month's weekly letters + reflections + goal ledger + mood/ratings trends — never raw daily entries, and never the current month's just-submitted ratings. Fires on the first reflection_weekday on-or-after month end at `day_start+15` (15 min after that morning's weekly job); `runMonthly` degrades on a missing final weekly letter — never add a wait loop.
+- **Finalize lockstep**: the combined-session additions (direction extract, fallback intention, monthly `MarkCompletedBySession`) live in BOTH `handlers/chat.go::Finalize` and `chat_extract_worker.go::processWeekly`. Change one, change both.
+- **Life check-in**: `monthly_reflections.ratings` jsonb, keys from `domain.LifeDomains` (PWI format, 0–10, global `life_overall` first — order and keys are STABLE, the future yearly chart depends on them). Replay preserves `intention_text` + `ratings` (user artifacts) while clearing `completed_at`/`direction_text`.
+- **Dev escape hatch**: `DEV_FORCE_FLAGS=true` + `?force_month=YYYY-MM-01` on the reflection endpoints makes the monthly flow testable on any calendar day.
+
 ### Chat SSE (Phase 6a)
 
 `/api/chat/*` mounts under chi **without `chimw.Timeout`** — the Timeout middleware's wrapper does not implement `http.Flusher`, which kills SSE streaming. The other `/api/*` group keeps a 30s Timeout; chat relies on client-disconnect (request context) for cancellation. Don't reintroduce a global Timeout.

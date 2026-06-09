@@ -200,6 +200,36 @@ func (s *SummaryStore) ListInRange(
 	return s.listInRange(ctx, userID, periodType, since, until)
 }
 
+// ListOverlappingRange returns summaries of `periodType` whose
+// [period_start, period_end] overlaps [from, to], oldest first. The
+// monthly synthesis uses this to collect the month's weekly letters:
+// weeks straddle month boundaries (the final week of June can end on
+// July 5), so a period_start-only filter would drop the edges.
+func (s *SummaryStore) ListOverlappingRange(
+	ctx context.Context,
+	userID, periodType string,
+	from, to time.Time,
+) ([]domain.Summary, error) {
+	const q = `SELECT ` + summaryColumns + ` FROM summaries
+	           WHERE user_id = $1 AND period_type = $2
+	             AND period_start <= $4 AND period_end >= $3
+	        ORDER BY period_start ASC`
+	rows, err := s.DB.Query(ctx, q, userID, periodType, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.Summary, 0)
+	for rows.Next() {
+		summary, err := scanSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *summary)
+	}
+	return out, rows.Err()
+}
+
 func (s *SummaryStore) listInRange(
 	ctx context.Context,
 	userID, periodType string,

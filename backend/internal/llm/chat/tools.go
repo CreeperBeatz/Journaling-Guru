@@ -11,10 +11,11 @@ import "github.com/cosmosthrace/journai/backend/internal/llm"
 // a post-turn classifier (see chat.Classify) writes the authoritative
 // covered set after each assistant reply.
 const (
-	ToolProposeWrapUp        = "propose_wrap_up"
-	ToolProposeGoal          = "propose_goal"
-	ToolProposeExtendGoal    = "propose_extend_goal"
-	ToolProposeCompleteGoal  = "propose_complete_goal"
+	ToolProposeWrapUp       = "propose_wrap_up"
+	ToolProposeGoal         = "propose_goal"
+	ToolProposeExtendGoal   = "propose_extend_goal"
+	ToolProposeCompleteGoal = "propose_complete_goal"
+	ToolProposeIntention    = "propose_intention"
 )
 
 // AssistantTools is the list of tool defs sent to the LLM on every
@@ -162,6 +163,63 @@ var WeeklyAssistantTools = []llm.ToolDef{
 			"GATE: only call this once every goal in the 'Ending this week' section has " +
 			"received a propose_extend_goal OR propose_complete_goal tool call earlier in the " +
 			"transcript. If any ending goal is still open, ask about that goal instead. " +
+			"You MUST emit at least one short plain-text sentence BEFORE the tool call.",
+		Parameters: map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{},
+			"additionalProperties": false,
+		},
+	},
+}
+
+// MonthlyAssistantTools is the tool list for COMBINED weekly+monthly
+// reflection sessions (chat_sessions.month_period_start set). It is the
+// weekly list plus propose_intention, with propose_wrap_up's gate
+// extended to also require an intention. A separate slice — never mutate
+// WeeklyAssistantTools — so plain weekly sessions keep a byte-identical
+// tool list for prompt caching.
+var MonthlyAssistantTools = []llm.ToolDef{
+	WeeklyAssistantTools[0], // propose_goal
+	WeeklyAssistantTools[1], // propose_extend_goal
+	WeeklyAssistantTools[2], // propose_complete_goal
+	{
+		Name: ToolProposeIntention,
+		Description: "Propose the user's ONE intention/theme for next month. Broader than a " +
+			"weekly tiny goal — a direction, not a habit (e.g. 'Protect my mornings', 'Say yes " +
+			"to invitations'). Only call once the user has named the intention in their own " +
+			"words AND spoken to why it matters. Both fields go VERBATIM from the user's " +
+			"words — don't invent or polish them. You MUST emit at least one short plain-text " +
+			"sentence BEFORE the tool call. The UI surfaces an editable confirmation card; the " +
+			"user accepts, edits, or declines. Call at most once unless the user changes their " +
+			"mind after declining.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"intention": map[string]any{
+					"type":        "string",
+					"description": "The intention, near-verbatim from the user (1..200 chars). Theme-shaped, not habit-shaped.",
+					"minLength":   1,
+					"maxLength":   200,
+				},
+				"why_matters": map[string]any{
+					"type":        "string",
+					"description": "Verbatim from user: why this direction matters to them. ≤300 chars — quote the load-bearing phrase.",
+					"minLength":   1,
+					"maxLength":   300,
+				},
+			},
+			"required":             []string{"intention", "why_matters"},
+			"additionalProperties": false,
+		},
+	},
+	{
+		Name: ToolProposeWrapUp,
+		Description: "Signal that the combined weekly+monthly reflection is winding down. " +
+			"GATE: only call this once (1) every goal in the 'Ending this week' section has " +
+			"received a propose_extend_goal OR propose_complete_goal tool call earlier in the " +
+			"transcript, AND (2) a propose_intention call exists earlier in the transcript. " +
+			"If an ending goal is still open, ask about that goal; if no intention has been " +
+			"shaped yet, steer there instead. " +
 			"You MUST emit at least one short plain-text sentence BEFORE the tool call.",
 		Parameters: map[string]any{
 			"type":                 "object",

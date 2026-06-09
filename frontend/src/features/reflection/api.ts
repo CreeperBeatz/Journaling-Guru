@@ -68,7 +68,60 @@ export interface ReflectionResponse {
   // page split between "Active" (carried over) and "New" (this week).
   new_goal_ids: string[];
   completed_at: string | null;
+
+  // Monthly — non-null when this week hosts a monthly reflection (the
+  // first reflection day on-or-after a calendar month end, plus one
+  // carry-over grace week). The wizard gains a monthly-letter sheet and
+  // a life check-in step; the chat zooms out to the month.
+  monthly: MonthlyReflectionBlock | null;
 }
+
+// MonthlyReflectionBlock mirrors handlers/summaries.go::MonthlyReflectionBlock.
+export interface MonthlyReflectionBlock {
+  month_start: string;
+  month_end: string;
+
+  // Monthly letter (period_type='month' summaries row).
+  headline: string;
+  arc: string;
+  recurring: string;
+  goals_retro: string;
+  closing_question: string;
+  synthesis_pending: boolean;
+
+  // Month state.
+  intention_text: string;
+  direction_text: string;
+  last_month_intention: string;
+  ratings: Record<string, number> | null;      // null until the check-in is submitted
+  prev_ratings: Record<string, number> | null; // last completed month's, for ghost dots
+  ratings_set_at: string | null;
+  completed_at: string | null;
+}
+
+// LIFE_DOMAINS mirrors backend/internal/domain/life_domains.go — keys
+// are stable (they live inside monthly_reflections.ratings jsonb and
+// the yearly chart depends on them); labels are display-only. Order
+// matters: the global item renders first (PWI/OECD ordering), the
+// optional Belonging item last, collapsed by default.
+export interface LifeDomain {
+  key: string;
+  label: string;
+  question: string;
+  optional?: boolean;
+}
+
+export const LIFE_DOMAINS: LifeDomain[] = [
+  { key: "life_overall", label: "Life as a whole", question: "Taking everything together — how satisfied are you with your life as a whole these days?" },
+  { key: "health_energy", label: "Health & energy", question: "Your health, and how your body feels day to day?" },
+  { key: "mind_inner", label: "Mind & inner life", question: "How you've been feeling inside — your mood, calm, and self-kindness?" },
+  { key: "relationships", label: "Close relationships", question: "Your relationships with the people closest to you?" },
+  { key: "work_purpose", label: "Work & purpose", question: "What you spend your days doing, and what you're working toward?" },
+  { key: "money_security", label: "Money & security", question: "Your finances, and how secure you feel about the future?" },
+  { key: "play_rest", label: "Play & rest", question: "The time you get for fun, rest, and things you enjoy?" },
+  { key: "growth_learning", label: "Growth & learning", question: "How you're growing — learning, creating, becoming who you want to be?" },
+  { key: "belonging", label: "Belonging", question: "Feeling part of something beyond yourself — community, nature, or spirituality?", optional: true },
+];
 
 export function getThisWeekReflection(): Promise<ReflectionResponse> {
   return api("/api/reflection/this-week");
@@ -116,6 +169,30 @@ export function replayReflection(): Promise<ReflectionResponse> {
   return api("/api/reflection/this-week/replay", { method: "POST" });
 }
 
+// ----- Monthly reflection -----
+
+// setMonthlyIntention persists the user's intention for the month the
+// current week hosts (404 on plain weeks). Returns the rebuilt
+// ReflectionResponse so the cache swaps in one motion.
+export function setMonthlyIntention(intentionText: string): Promise<ReflectionResponse> {
+  return api("/api/reflection/this-month/intention", {
+    method: "POST",
+    body: { intention_text: intentionText },
+  });
+}
+
+// setMonthlyRatings persists the life check-in sliders (0..10 per
+// domain key from LIFE_DOMAINS). Partial maps are fine — Belonging is
+// opt-in.
+export function setMonthlyRatings(
+  ratings: Record<string, number>,
+): Promise<ReflectionResponse> {
+  return api("/api/reflection/this-month/ratings", {
+    method: "POST",
+    body: { ratings },
+  });
+}
+
 // ----- Weekly reflection chat -----
 
 // getThisWeekChat returns the weekly-scoped chat envelope; `session` is
@@ -145,7 +222,10 @@ export type SystemEventContent =
   | "user_accepted_extend_goal"
   | "user_declined_extend_goal"
   | "user_accepted_complete_goal"
-  | "user_declined_complete_goal";
+  | "user_declined_complete_goal"
+  | "user_accepted_intention"
+  | "user_declined_intention"
+  | "user_edited_intention";
 
 // SystemEventMeta is the closed-key payload the FE may attach to a
 // system_event. Lets the assistant see which goal a decision applied
@@ -158,6 +238,7 @@ export interface SystemEventMeta {
   goal_title?: string;
   outcome?: "kept" | "dropped" | "inconclusive";
   weeks?: string; // string for symmetry with the server's map[string]string
+  intention_text?: string;
 }
 
 export function postSystemEvent(

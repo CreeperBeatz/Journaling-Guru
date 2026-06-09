@@ -37,3 +37,8 @@ Thumbs.db
 # Local volumes
 .docker/
 postgres-data/
+
+# stray go build outputs
+backend/api
+backend/worker
+backend/migrate

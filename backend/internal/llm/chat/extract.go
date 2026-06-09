@@ -21,15 +21,15 @@ import (
 // TagStore.UpsertByLabel before writing daily_entry_tags rows. Labels
 // here are pre-normalization — the store owns the dedup rule.
 type ExtractionResult struct {
-	Mood                  *int              // signed -2..2 or nil
-	DrainedText           string            // ≤ 1000 chars
-	ChargedText           string            // ≤ 1000 chars
-	GratitudeText         string            // ≤ 1000 chars
-	ReflectionText        string            // ≤ 4000 chars
-	DrainedTagProposals   []string          // ≤ 5 short labels for negative tags
-	ChargedTagProposals   []string          // ≤ 5 short labels for positive tags
-	Answers               map[string]string // question_id → text; omitted-keys absent
-	GoalCheckIns          []GoalCheckInExtraction
+	Mood                *int              // signed -2..2 or nil
+	DrainedText         string            // ≤ 1000 chars
+	ChargedText         string            // ≤ 1000 chars
+	GratitudeText       string            // ≤ 1000 chars
+	ReflectionText      string            // ≤ 4000 chars
+	DrainedTagProposals []string          // ≤ 5 short labels for negative tags
+	ChargedTagProposals []string          // ≤ 5 short labels for positive tags
+	Answers             map[string]string // question_id → text; omitted-keys absent
+	GoalCheckIns        []GoalCheckInExtraction
 }
 
 // GoalCheckInExtraction is one yes/no answer to a goal's daily check-in
@@ -251,6 +251,104 @@ func truncate(s string, max int) string {
 // weeklySurpriseMaxChars caps the distilled continuity paragraph.
 // Matches the JSON schema in weeklySurpriseExtractSystemPrompt.
 const weeklySurpriseMaxChars = 1200
+
+// monthlyDirectionExtractSystemPrompt drives the combined-session
+// finalize extract: distill the direction check (and, as a fallback
+// when no propose_intention card was accepted, the intention) from the
+// transcript. Second person — the user re-reads this next month. Empty
+// strings are valid results.
+const monthlyDirectionExtractSystemPrompt = `You read a reflection conversation in which a person looked back over a
+whole month and considered their direction in life. Return ONE JSON
+object — no prose, no fences:
+
+{
+  "direction": <string ≤ 1000 chars>,
+  "intention": <string ≤ 200 chars>
+}
+
+# direction — the direction check, distilled
+
+- 2–4 sentences capturing how the person answered (in substance, not
+  verbatim Q&A): did this month move them toward the life they want?
+  What did they say felt on-course, and what felt off-course?
+- Address them directly as "you" — they are the reader, next month.
+  Mirror their own words where they were specific. Never quote the
+  companion. Never invent.
+- Warm, plain, honest. If they said the month drifted, say it drifted.
+- Empty string when the conversation never actually faced the
+  direction question. Don't synthesize an answer they didn't give.
+
+# intention — fallback only
+
+- The ONE intention/theme the person settled on for next month, in
+  their words, ≤ 200 chars (e.g. "Protect my mornings").
+- Empty string when they never landed on one. Do NOT promote a vague
+  wish into an intention.`
+
+// ExtractMonthlyDirectionParams bundles the inputs for the combined-
+// session finalize extract.
+type ExtractMonthlyDirectionParams struct {
+	Model    string
+	Messages []domain.ChatMessage
+}
+
+// ExtractMonthlyDirectionResult carries the distilled direction text
+// and the fallback intention (used only when the user never accepted a
+// propose_intention card).
+type ExtractMonthlyDirectionResult struct {
+	Direction string
+	Intention string
+}
+
+// ExtractMonthlyDirection runs the combined-session finalize extract.
+// Empty fields are valid results; errors only for transport/parse
+// failures. Mirrors ExtractWeeklySurprise's contract.
+func ExtractMonthlyDirection(
+	ctx context.Context,
+	client *llm.OpenRouter,
+	params ExtractMonthlyDirectionParams,
+) (ExtractMonthlyDirectionResult, error) {
+	lines := TranscriptLinesFromMessages(params.Messages)
+	if len(lines) == 0 {
+		return ExtractMonthlyDirectionResult{}, nil
+	}
+	var sb strings.Builder
+	for _, l := range lines {
+		sb.WriteString(strings.ToUpper(l.Role[:1]))
+		sb.WriteString(l.Role[1:])
+		sb.WriteString(": ")
+		sb.WriteString(l.Content)
+		sb.WriteString("\n")
+	}
+	resp, err := client.Complete(ctx, llm.CompletionRequest{
+		Model:     params.Model,
+		System:    monthlyDirectionExtractSystemPrompt,
+		User:      sb.String(),
+		MaxTokens: 600,
+		JSONMode:  true,
+	})
+	if err != nil {
+		return ExtractMonthlyDirectionResult{}, fmt.Errorf("monthly direction extract: %w", err)
+	}
+	var parsed struct {
+		Direction string `json:"direction"`
+		Intention string `json:"intention"`
+	}
+	if err := json.Unmarshal([]byte(stripFences(resp.Content)), &parsed); err != nil {
+		return ExtractMonthlyDirectionResult{}, fmt.Errorf("parse monthly direction: %w (content: %s)", err, truncate(resp.Content, 200))
+	}
+	out := ExtractMonthlyDirectionResult{
+		Direction: strings.TrimSpace(parsed.Direction),
+		Intention: strings.TrimSpace(parsed.Intention),
+	}
+	if len(out.Direction) > 1000 {
+		out.Direction = out.Direction[:999] + "…"
+	}
+	if len(out.Intention) > 200 {
+		out.Intention = out.Intention[:199] + "…"
+	}
+	return out, nil
+}
 
 // ExtractWeeklySurpriseParams bundles the inputs for the post-wrap-up
 // continuity extract. Model defaults to the OpenRouter client's default

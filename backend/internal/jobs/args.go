@@ -28,4 +28,3 @@ func (SummaryArgs) InsertOpts() river.InsertOpts {
 		MaxAttempts: 5,
 	}
 }
-
