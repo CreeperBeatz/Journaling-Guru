@@ -61,11 +61,11 @@ export function NavMenu({ layoutId, onNavigate }: Props) {
           onClick={onNavigate}
           className={({ isActive }) =>
             cn(
-              "relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              "group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
               item.primary
                 ? isActive
                   ? "text-primary-foreground"
-                  : "text-primary hover:text-primary-foreground"
+                  : "text-primary"
                 : isActive
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
@@ -88,7 +88,7 @@ export function NavMenu({ layoutId, onNavigate }: Props) {
                   }
                 />
               ) : item.primary ? (
-                <span className="absolute inset-0 rounded-md bg-primary/10 ring-1 ring-inset ring-primary/30" />
+                <span className="absolute inset-0 rounded-md bg-primary/10 ring-1 ring-inset ring-primary/30 transition-colors group-hover:bg-primary/20 group-hover:ring-primary/50" />
               ) : null}
               <item.icon className="relative h-4 w-4" />
               <span className="relative">{item.label}</span>
