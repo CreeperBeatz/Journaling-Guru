@@ -6,7 +6,7 @@ Source of truth for visual + motion + interaction decisions. Update this file wh
 
 **Warm, not utilitarian.** The journal should feel like *ink on paper* — a cream sheet under desk lamp light, or a leather notebook in a candlelit study — not a SaaS dashboard. The default dark mode should feel like dim warm wood, never blue-slate Slack-night. The light mode should feel like aged paper, never gray-100.
 
-Cool primary (ink-violet) against warm neutrals (paper) is the central tension: *cool ink on warm page*. Don't unify them.
+The palette is **ember**: a warm burnt-orange primary ("fired ink") on peach-cream paper, with a deep-teal accent as the cool counterpoint. The page and the ink are both warm; the *accent* carries the cool tension. Don't cool the page down.
 
 ## Stack
 
@@ -19,81 +19,69 @@ Cool primary (ink-violet) against warm neutrals (paper) is the central tension: 
 
 ## Tokens
 
-All HSL triplets. Defined in `frontend/src/styles/index.css`. Each palette declares both modes via `:root[data-palette="<name>"]` (light) and `.dark[data-palette="<name>"]` (dark). The unqualified `:root` and `.dark` blocks are aliased to **paper** so the default palette works without the attribute being set.
+All HSL triplets. Defined in `frontend/src/styles/index.css` — the bare `:root` (light) and `.dark` blocks are the only token source. The app ships a **single palette, ember** (peach cream + burnt orange + deep teal); the old multi-palette `data-palette` system (paper / forest / ocean / slate) was removed when we settled on ember.
 
-Shadows derive their tint from a per-palette `--shadow-tint` var, so a single shadow declaration covers every palette.
+Shadows derive their tint from `--shadow-tint`, so the shadow declarations stay palette-agnostic.
 
-### Light — paper / cream
+### Light — peach cream
 
 | Token | Value | Intent |
 |---|---|---|
-| `--background` | `39 38% 96%` | Warm cream paper. Never `#FFF`. |
-| `--foreground` | `30 12% 14%` | Soft charcoal — long-write friendly. |
-| `--muted` | `36 22% 92%` | Hover wash, secondary surfaces. |
-| `--muted-foreground` | `30 8% 42%` | Pencil grey. |
-| `--border` | `36 18% 84%` | Visible without harshness. |
-| `--input` | `36 22% 90%` | Recessed from page. |
-| `--ring` | `252 70% 56%` | Focus halo. |
-| `--primary` | `252 70% 50%` | Ink-violet ("journal pen"). |
-| `--primary-foreground` | `39 38% 98%` | |
-| `--secondary` | `36 24% 88%` | Low-emphasis surfaces. |
-| `--secondary-foreground` | `30 12% 14%` | |
-| `--accent` | `18 70% 52%` | Terracotta — margin pen, today-pill, sparing emphasis. |
-| `--accent-foreground` | `39 38% 98%` | |
+| `--background` | `24 44% 95%` | Peach-cream paper. Never `#FFF`. |
+| `--foreground` | `22 18% 13%` | Soft warm charcoal — long-write friendly. |
+| `--muted` | `24 26% 90%` | Hover wash, secondary surfaces. |
+| `--muted-foreground` | `22 10% 40%` | Pencil grey. |
+| `--border` | `24 22% 82%` | Visible without harshness. |
+| `--input` | `24 26% 88%` | Recessed from page. |
+| `--ring` | `22 78% 50%` | Focus halo. |
+| `--primary` | `22 80% 44%` | Burnt orange ("fired ink"). |
+| `--primary-foreground` | `24 50% 97%` | |
+| `--secondary` | `24 28% 87%` | Low-emphasis surfaces. |
+| `--secondary-foreground` | `22 18% 13%` | |
+| `--accent` | `190 60% 36%` | Deep teal — margin pen, today-pill, sparing emphasis. |
+| `--accent-foreground` | `24 50% 97%` | |
 | `--destructive` | `0 65% 48%` | |
-| `--card` | `39 44% 98%` | Fresh sheet on the desk — brighter than page. |
-| `--paper-sheet` | `39 50% 99%` | Single-sheet surface (PaperPage) — one notch brighter than `--card`. |
-| `--popover` | `39 44% 98%` | |
+| `--card` | `24 50% 97%` | Fresh sheet on the desk — brighter than page. |
+| `--paper-sheet` | `24 56% 99%` | Single-sheet surface (PaperPage) — one notch brighter than `--card`. |
+| `--popover` | `24 50% 97%` | |
 | `--success` | `152 50% 38%` | Moss. |
 | `--warning` | `36 84% 44%` | Amber. |
 
 ### Dark — warm near-black, ember undertone
 
-Hue 30° (warm) for neutrals — *not* the previous 240° cool slate. Foreground also warmed.
+Hue 22°-24° (warm) for neutrals — never cool slate. Foreground also warmed.
 
 | Token | Value | Intent |
 |---|---|---|
-| `--background` | `30 8% 6%` | Warm near-black. |
-| `--foreground` | `36 12% 92%` | Warm white. |
-| `--muted` | `30 6% 11%` | |
-| `--muted-foreground` | `36 6% 62%` | |
-| `--border` | `30 5% 16%` | |
-| `--input` | `30 5% 14%` | |
-| `--ring` | `252 90% 72%` | |
-| `--primary` | `252 88% 72%` | Ink-violet, saturation reduced from 100%. |
-| `--primary-foreground` | `30 10% 8%` | |
-| `--secondary` | `30 5% 13%` | |
-| `--secondary-foreground` | `36 12% 92%` | |
-| `--accent` | `18 78% 64%` | Terracotta, lifted for dark. |
-| `--accent-foreground` | `30 10% 8%` | |
+| `--background` | `22 14% 7%` | Warm near-black. |
+| `--foreground` | `24 14% 92%` | Warm white. |
+| `--muted` | `22 10% 12%` | |
+| `--muted-foreground` | `24 10% 60%` | |
+| `--border` | `22 8% 18%` | |
+| `--input` | `22 8% 15%` | |
+| `--ring` | `22 90% 64%` | |
+| `--primary` | `22 90% 62%` | Burnt orange, lifted for dark. |
+| `--primary-foreground` | `22 14% 7%` | |
+| `--secondary` | `22 8% 14%` | |
+| `--secondary-foreground` | `24 14% 92%` | |
+| `--accent` | `190 70% 60%` | Deep teal, lifted for dark. |
+| `--accent-foreground` | `22 14% 7%` | |
 | `--destructive` | `0 70% 60%` | |
-| `--card` | `30 7% 9%` | |
-| `--paper-sheet` | `30 8% 11%` | Single-sheet surface (PaperPage), one notch brighter than `--card`. |
-| `--popover` | `30 7% 9%` | |
+| `--card` | `22 12% 10%` | |
+| `--paper-sheet` | `22 14% 12%` | Single-sheet surface (PaperPage), one notch brighter than `--card`. |
+| `--popover` | `22 12% 10%` | |
 | `--success` | `152 55% 56%` | |
 | `--warning` | `36 84% 62%` | |
 
-### Palettes
+### Palette
 
-The user picks a palette in **Settings → General → Appearance**. Selection is persisted to `localStorage["journai.palette"]` and applied to `<html data-palette="...">` by an anti-flash script in `index.html` *before* React hydrates, so first paint matches.
+Single palette — **ember**: peach cream page `24 44% 95%`, burnt-orange primary `22 80% 44%`, deep-teal accent `190 60% 36%`. Embers in candlelight — fired earth, warm hearth. The page hue stays warm (24°), never cool 180°-260° space; the teal accent carries the cool counterpoint on small elements (question heading bars, link underlines, the `text-accent` mood label).
 
-Both halves — light/dark mode and palette — live on `<html>`: `class="dark"` (driven by next-themes) crosses with `data-palette="..."` (driven by `usePalette()` in `src/lib/palette.ts`). Every palette ships both halves.
-
-| Palette | Page | Ink (primary) | Accent | Feel |
-|---|---|---|---|---|
-| **paper** *(default)* | warm cream `39 38% 96%` | ink-violet `252 70% 50%` | terracotta `18 70% 52%` | canonical journal — paper under lamplight |
-| **ember** | peach cream `24 44% 95%` | burnt orange `22 80% 44%` | deep teal `190 60% 36%` | embers in candlelight — fired earth, warm hearth |
-| **forest** | honey sand `50 26% 94%` | deep moss `152 55% 30%` | cranberry `352 60% 46%` | leather notebook in a warm study |
-| **ocean** | warm sand `32 32% 94%` | deep teal `195 75% 32%` | sun gold `42 90% 46%` | beach light, calm sea |
-| **slate** | warm clay `36 14% 93%` | ink-violet `252 70% 50%` | magenta `330 72% 52%` | modern, saturated — paper with sharper teeth |
-
-Every palette is warm — the *page* hue lives in 24°-50° (peach / cream / sand / clay), never in cool 180°-260° space. Identity comes from the primary/accent pairing, not from a cold page. Accents are spread around the wheel (18° / 190° / 352° / 42° / 330°) so palettes read as distinct on small accented elements (question heading bars, link underlines, the `text-accent` mood label). Ember is the only palette where the *primary* itself is a warm orange (22°); every other palette uses a cool primary (moss / teal / ink-violet) against the warm page — the canonical *cool ink on warm page* tension.
-
-Dark modes likewise unify on warm near-black (hue 28°-36°), never the cool 215°-222° range. Identity in dark mode comes from primary/accent only — the page is always dim warm wood.
+Dark mode unifies on warm near-black (hue 22°-24°), never the cool 215°-222° range — the page is always dim warm wood.
 
 **Primary vs accent in components.** Use `--primary` for the dominant interactive ink — buttons, slider Range/Thumb, focus ring. Use `--accent` for sparing flourishes (margin-pen left bars, link underlines, today-pill). Don't lean on accent for large filled surfaces; it's the spice, not the dish.
 
-Each palette also defines `--theme-color` (an `R G B` triplet) which `syncThemeColorMeta()` reads and writes into the single `<meta name="theme-color">` on every palette/mode change. Old dual `media`-keyed metas were replaced because we need the chrome to follow the *user-selected* palette, not the OS preference alone.
+`--theme-color` (an `R G B` triplet) is read by `syncThemeColorMeta()` (`src/lib/palette.ts`) and written into the single `<meta name="theme-color">` on every light/dark change, so iOS PWA chrome follows the resolved mode. The anti-flash script in `index.html` seeds the same values before hydration — keep its hex constants in sync with the CSS.
 
 ### Radius
 
@@ -114,7 +102,7 @@ The history heatmap is **binary** — a day has an entry or it doesn't. We expec
 | (filled) | `hsl(var(--primary))` | Day has at least one journal entry OR a substantive chat (≥3 turns). |
 | `--heat-mood` | `hsl(var(--accent))` | Inset 1px ring on cells where `daily_inputs.mood_score >= 7` (top tertile of the 1-10 scale). |
 
-The filled color is `--primary` directly — no intermediate `--heat-l*` tokens. Cells re-skin automatically on palette switch because the fill is a `--primary` reference.
+The filled color is `--primary` directly — no intermediate `--heat-l*` tokens; the fill follows the token automatically.
 
 ## Typography
 
@@ -168,7 +156,11 @@ springTactile   = { type: 'spring', stiffness: 380, damping: 30 }
 
 ### Reduced motion
 
-Every variant goes through `useReducedMotion()` from `motion/react`. Falls back to opacity-only — no y-translate, no stagger. Sonner respects natively.
+Every variant goes through `useReducedMotion()` from `motion/react`. Falls back to opacity-only — no y-translate, no rotate/scale, no stagger; `layoutId` morphs get `transition={{ duration: 0 }}`. This is mandatory on **all** motion primitives, not just route transitions. CSS animations use the `motion-reduce:` Tailwind variant (the `Skeleton` shimmer does this). Sonner respects natively.
+
+### Loading skeletons
+
+Every loading state echoes the **shape** of the content it replaces (header bars, card stacks, table rows) using the `Skeleton` primitive (`components/ui/skeleton.tsx`) — never a bare "Loading…" line or a generic empty card. Shape parity is what prevents layout shift on the pending → loaded swap. Route-level Suspense skeletons live beside their route (e.g. `DailyEntrySkeleton`); in-component pending branches reuse the same skeleton rather than inventing a second one.
 
 ### Theme switch
 
@@ -296,7 +288,7 @@ The old "By question" view is **gone from History**. It moves to `/summary` → 
 ### Anti-patterns
 
 Don't:
-- Color cells with hardcoded hex or per-palette steps. The `--heat-l*` tokens derive from `--primary` so palette switches re-skin automatically.
+- Color cells with hardcoded hex. The fill is a `--primary` reference so token changes re-skin automatically.
 - Show absolute counts inside cells. The cell IS the count.
 - Render a date rail above the grid in year view — the grid carries the time axis.
 
@@ -315,15 +307,15 @@ Don't:
 
 - All interactive elements keyboard-focusable with visible ring.
 - Aria-labels on icon-only buttons.
-- Verify accent contrast at AA — terracotta `18 70% 52%` on cream is ~4.0:1 (passes large-text only). Bump to `18 75% 42%` if used for small body text.
+- Verify accent contrast at AA — deep teal `190 60% 36%` on peach cream passes for normal text; re-verify if the accent ever changes.
 - Reduced-motion path verified per pattern.
-- iOS PWA chrome via two `<meta theme-color>` with `media="(prefers-color-scheme:...)"`.
+- iOS PWA chrome via the single `<meta name="theme-color">`, kept in sync by `syncThemeColorMeta()` on mode change.
 
 ## Anti-patterns
 
 Don't:
-- Hardcode any color value in components — all colors flow through CSS vars (`bg-background`, `text-foreground`, `border-border`, etc.) so palette switches stay coherent. The only colors in JS are the palette-picker swatches in `src/lib/palette.ts`.
-- Add another palette without a clear identity. Each existing palette has a warm page hue (cream / peach / sand / clay, all 24°-50°) plus a deliberate ink/accent pairing — don't ship a near-duplicate, and don't ship one with a cool (180°-260°) page.
+- Hardcode any color value in components — all colors flow through CSS vars (`bg-background`, `text-foreground`, `border-border`, etc.). No color values live in JS; the only hex constants are the anti-flash theme-color seeds in `index.html`.
+- Re-introduce a palette picker / multi-palette system — we settled on ember. One palette, both modes, tokens only.
 - Animate via `style={{ background: ... }}` through motion — always go through CSS vars so theme-swap remains instant.
 - Re-render the shell on theme toggle — colocate `useTheme()` into the toggle, not the shell.
 - Add inline status text on save (`"Saving…"/"Saved"/"Unsaved"`) — cache update is the feedback; reserve the textual indicator for the >300ms slow-network path.
@@ -357,7 +349,7 @@ The streaming itself is the effect — no synthetic typewriter delay layered on 
 - Each chunk batch arrives via SSE → `partial` state grows → React re-renders `<StreamingMessage>` with the running string.
 - The bubble itself uses `motion.div` with `initial={{opacity:0, y:6}}, animate={{opacity:1, y:0}}, transition={{duration:0.18, ease:easeStandard}}`.
 - A blinking caret (`<span className="motion-safe:animate-pulse">`) marks the live tail.
-- A 3-dot terracotta loader pulses below the bubble while streaming; opacity-stagger via three `motion.span` with `delay: i * 0.15`. Reduced-motion: replace with the static text "thinking…".
+- A 3-dot accent-colored loader pulses below the bubble while streaming; opacity-stagger via three `motion.span` with `delay: i * 0.15`. Reduced-motion: replace with the static text "thinking…".
 - When the `done` SSE frame lands, `useStreamingChat` sets `status='done'`, clears `partial`, and invalidates `chatSessionKey()`. The persisted assistant row replaces the streaming bubble on the next render.
 
 ### Coverage chips (post-turn classifier)
@@ -486,7 +478,7 @@ Tabbed surface at `/settings`. Four tabs, in order: **General · Questions · No
 
 ### General
 
-- **Appearance** — palette picker (paper / ember / forest / ocean / slate) + light/dark mode toggle. Wireframes don't show this but it stays. Swatches are the only place where palette colors are hardcoded in JS (in `src/lib/palette.ts`).
+- **Appearance** — light/dark mode toggle. (The palette picker was removed when we settled on ember as the only palette.)
 - **Voice & Tone** — segmented chip `strict | warm | quiet`, default `warm`. Persisted to `users.guru_tone`. **Affects both chat AND summary letters** so the guru's voice is coherent across surfaces. The chosen tone is prepended as a `SystemCacheable` preamble on `CHAT_MODEL` and `SUMMARY_MODEL` so prompt-cache stays warm per-tone. Don't split this between General and Notifications — it's an identity setting, not a delivery setting.
 - **Day start** — existing `day_start_minutes` slider (default 360 = 6am). Helper copy explaining late-night cutoff.
 - **Timezone** — Radix Select with type-to-filter.

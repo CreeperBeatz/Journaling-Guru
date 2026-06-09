@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { PaperPage, PaperPageProse } from "@/components/ui/paper-page";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 import { useMe } from "@/features/auth/useAuth";
@@ -72,6 +73,15 @@ export function WeeklyLetter({ summary, loading }: WeeklyLetterProps) {
         meta="loading"
       >
         <p className="text-sm text-muted-foreground">Composing this week&apos;s letter…</p>
+        <div className="mt-4 space-y-5" aria-hidden="true">
+          {[0, 1, 2].map((para) => (
+            <div key={para} className="space-y-2">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-11/12" />
+              <Skeleton className="h-4 w-4/5" />
+            </div>
+          ))}
+        </div>
       </PaperPage>
     );
   }

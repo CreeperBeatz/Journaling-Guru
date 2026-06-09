@@ -9,9 +9,8 @@ import { cn } from "@/lib/utils";
 //   ●——————————————————●——————●
 //   1  2  3  4  5  6  7  8  9  10
 //
-// Range + thumb use --primary (ink) so the slider visibly reflects the
-// active palette: violet on Paper/Slate, deep moss on Forest, deep teal
-// on Ocean. Accent is reserved for small margin-pen flourishes elsewhere.
+// Range + thumb use --primary (ink) — burnt orange on ember. Accent is
+// reserved for small margin-pen flourishes elsewhere.
 
 interface Props
   extends React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> {

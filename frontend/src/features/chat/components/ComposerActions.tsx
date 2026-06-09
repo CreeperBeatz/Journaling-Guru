@@ -42,7 +42,8 @@ export function WrapUpButton({ pending, disabled, wrappedUp, onWrapUp }: WrapUpB
         "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
         wrappedUp
           ? "border-border bg-muted text-muted-foreground"
-          : "border-accent/40 bg-accent/10 text-accent hover:bg-accent/20",
+          : "border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 active:bg-accent/30",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background",
         "disabled:opacity-60",
       )}
     >
@@ -232,6 +233,7 @@ function MenuItem({
       className={cn(
         "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
         "hover:bg-secondary disabled:opacity-50",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         destructive ? "text-destructive" : "text-foreground",
       )}
     >

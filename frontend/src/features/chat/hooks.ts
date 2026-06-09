@@ -37,6 +37,11 @@ export const chatSessionKey = (date?: string) =>
 export const chatExtractionStatusKey = (sessionId: string) =>
   ["chat", "extraction-status", sessionId] as const;
 
+// Stable identity for the default `cacheKey` params below — the key is a
+// useCallback/useEffect dep, so a fresh array each render would churn the
+// memoized callbacks.
+const defaultChatCacheKey = chatSessionKey();
+
 // Stats key — local copy so we don't pull the entire summaries module.
 const STATS_KEY = (days: number) => ["summaries", "stats", days] as const;
 
@@ -126,7 +131,7 @@ export interface UseStreamingChatResult {
 // (weeklyChatKey) so writes don't leak across scopes.
 export function useStreamingChat(
   sessionId: string | null,
-  cacheKey: readonly unknown[] = chatSessionKey(),
+  cacheKey: readonly unknown[] = defaultChatCacheKey,
 ): UseStreamingChatResult {
   const qc = useQueryClient();
   const [state, setState] = useState<StreamingState>(initialStreamState);
@@ -219,7 +224,7 @@ export function useStreamingChat(
         toast.error("Couldn't reach the assistant", { description: msg });
       }
     },
-    [qc],
+    [qc, cacheKey],
   );
 
   const sendMessage = useCallback(
@@ -347,7 +352,7 @@ export interface FinalizeArgs {
   sessionId: string;
 }
 
-export function useFinalizeChat(cacheKey: readonly unknown[] = chatSessionKey()) {
+export function useFinalizeChat(cacheKey: readonly unknown[] = defaultChatCacheKey) {
   const qc = useQueryClient();
   return useMutation<FinalizeResponse, ApiError, FinalizeArgs>({
     mutationFn: ({ sessionId }) => finalizeSession(sessionId),
@@ -379,7 +384,7 @@ export function useFinalizeChat(cacheKey: readonly unknown[] = chatSessionKey())
 export function useExtractionStatus(
   sessionId: string | null,
   enabled: boolean,
-  cacheKey: readonly unknown[] = chatSessionKey(),
+  cacheKey: readonly unknown[] = defaultChatCacheKey,
 ) {
   const qc = useQueryClient();
   const seenCompleted = useRef(false);
@@ -420,7 +425,7 @@ export function useExtractionStatus(
           "Try again, or switch to Manual to edit by hand.",
       });
     }
-  }, [query.data?.status, query.data?.error, sessionId, qc]);
+  }, [query.data?.status, query.data?.error, sessionId, qc, cacheKey]);
 
   return query;
 }
@@ -430,7 +435,7 @@ export function useExtractionStatus(
 // after clicking "Wrap up". Optimistically patches the cached session
 // phase so the WrapUpButton + affordance update without waiting for a
 // session refetch.
-export function useCancelWrapUp(cacheKey: readonly unknown[] = chatSessionKey()) {
+export function useCancelWrapUp(cacheKey: readonly unknown[] = defaultChatCacheKey) {
   const qc = useQueryClient();
   return useMutation<{ phase: ChatPhase }, ApiError, string>({
     mutationFn: (sessionId) => cancelWrapUp(sessionId),
@@ -453,7 +458,7 @@ export function useCancelWrapUp(cacheKey: readonly unknown[] = chatSessionKey())
 // confirmation dialog (ChatHeader) before calling. On success, the
 // session envelope returns to greeting phase with no messages and the
 // opener auto-streams again.
-export function useResetChat(cacheKey: readonly unknown[] = chatSessionKey()) {
+export function useResetChat(cacheKey: readonly unknown[] = defaultChatCacheKey) {
   const qc = useQueryClient();
   return useMutation<ChatSessionEnvelope, ApiError, string>({
     mutationFn: (sessionId) => resetSession(sessionId),

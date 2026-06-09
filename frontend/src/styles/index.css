@@ -21,76 +21,13 @@
 
 
   /* Token system: HSL triplets (no hsl() wrapper) so we can compose alpha at
-     consumption sites. The bare :root and .dark blocks below define the
-     default "paper" palette. Alternate palettes override via [data-palette]
-     and .dark[data-palette] selectors further down. */
-
-  /* ---------- PAPER (default) — warm cream + ink violet ---------- */
-
-  :root,
-  :root[data-palette="paper"] {
-    --background: 39 38% 96%;
-    --foreground: 30 12% 14%;
-    --muted: 36 22% 92%;
-    --muted-foreground: 30 8% 42%;
-    --border: 36 18% 84%;
-    --input: 36 22% 90%;
-    --ring: 252 70% 56%;
-    --primary: 252 70% 50%;
-    --primary-foreground: 39 38% 98%;
-    --secondary: 36 24% 88%;
-    --secondary-foreground: 30 12% 14%;
-    --accent: 18 70% 52%;
-    --accent-foreground: 39 38% 98%;
-    --destructive: 0 65% 48%;
-    --destructive-foreground: 39 38% 98%;
-    --card: 39 44% 98%;
-    --card-foreground: 30 12% 14%;
-    --paper-sheet: 39 50% 99%;
-    --popover: 39 44% 98%;
-    --popover-foreground: 30 12% 14%;
-    --success: 152 50% 38%;
-    --warning: 36 84% 44%;
-
-    /* iOS PWA chrome — palette-aware via JS but defaulted here for SSR/no-JS. */
-    --theme-color: 245 239 226;
-
-    /* Real drop shadows — paper has weight. Tinted with foreground hue. */
-    --shadow-tint: 30 12% 14%;
-  }
-
-  .dark,
-  .dark[data-palette="paper"] {
-    --background: 30 8% 6%;
-    --foreground: 36 12% 92%;
-    --muted: 30 6% 11%;
-    --muted-foreground: 36 6% 62%;
-    --border: 30 5% 16%;
-    --input: 30 5% 14%;
-    --ring: 252 90% 72%;
-    --primary: 252 88% 72%;
-    --primary-foreground: 30 10% 8%;
-    --secondary: 30 5% 13%;
-    --secondary-foreground: 36 12% 92%;
-    --accent: 18 78% 64%;
-    --accent-foreground: 30 10% 8%;
-    --destructive: 0 70% 60%;
-    --destructive-foreground: 36 12% 92%;
-    --card: 30 7% 9%;
-    --card-foreground: 36 12% 92%;
-    --paper-sheet: 30 8% 11%;
-    --popover: 30 7% 9%;
-    --popover-foreground: 36 12% 92%;
-    --success: 152 55% 56%;
-    --warning: 36 84% 62%;
-
-    --theme-color: 16 14 11;
-    --shadow-tint: 36 12% 92%;
-  }
+     consumption sites. Single palette — ember. The bare :root and .dark
+     blocks below are the only token source; the old multi-palette
+     [data-palette] system was removed when we settled on ember. */
 
   /* ---------- EMBER — peach cream + burnt orange + deep teal ---------- */
 
-  :root[data-palette="ember"] {
+  :root {
     --background: 24 44% 95%;
     --foreground: 22 18% 13%;
     --muted: 24 26% 90%;
@@ -113,11 +50,16 @@
     --popover-foreground: 22 18% 13%;
     --success: 152 50% 38%;
     --warning: 36 84% 44%;
+
+    /* iOS PWA chrome color (R G B). Seeded pre-hydration by the anti-flash
+       script in index.html — keep that script's hex values in sync. */
     --theme-color: 248 241 237;
+
+    /* Real drop shadows — paper has weight. Tinted with foreground hue. */
     --shadow-tint: 22 18% 13%;
   }
 
-  .dark[data-palette="ember"] {
+  .dark {
     --background: 22 14% 7%;
     --foreground: 24 14% 92%;
     --muted: 22 10% 12%;
@@ -144,180 +86,10 @@
     --shadow-tint: 24 14% 92%;
   }
 
-  /* ---------- FOREST — honey sand + deep moss + cranberry ---------- */
+  /* ---------- Shared ---------- */
 
-  :root[data-palette="forest"] {
-    --background: 50 26% 94%;
-    --foreground: 30 14% 12%;
-    --muted: 48 20% 89%;
-    --muted-foreground: 30 10% 38%;
-    --border: 48 18% 80%;
-    --input: 48 20% 88%;
-    --ring: 152 55% 36%;
-    --primary: 152 55% 30%;
-    --primary-foreground: 50 34% 97%;
-    --secondary: 48 22% 86%;
-    --secondary-foreground: 30 14% 12%;
-    --accent: 352 60% 46%;
-    --accent-foreground: 50 34% 97%;
-    --destructive: 0 65% 46%;
-    --destructive-foreground: 50 34% 97%;
-    --card: 50 34% 97%;
-    --card-foreground: 30 14% 12%;
-    --paper-sheet: 50 40% 99%;
-    --popover: 50 34% 97%;
-    --popover-foreground: 30 14% 12%;
-    --success: 152 55% 32%;
-    --warning: 36 80% 40%;
-    --theme-color: 244 240 224;
-    --shadow-tint: 30 14% 12%;
-  }
-
-  .dark[data-palette="forest"] {
-    --background: 30 10% 6%;
-    --foreground: 36 12% 92%;
-    --muted: 30 8% 11%;
-    --muted-foreground: 36 8% 60%;
-    --border: 30 6% 17%;
-    --input: 30 6% 14%;
-    --ring: 152 60% 64%;
-    --primary: 152 60% 58%;
-    --primary-foreground: 30 14% 6%;
-    --secondary: 30 6% 13%;
-    --secondary-foreground: 36 12% 92%;
-    --accent: 352 70% 64%;
-    --accent-foreground: 30 14% 6%;
-    --destructive: 0 70% 60%;
-    --destructive-foreground: 36 12% 92%;
-    --card: 30 10% 9%;
-    --card-foreground: 36 12% 92%;
-    --paper-sheet: 30 12% 11%;
-    --popover: 30 10% 9%;
-    --popover-foreground: 36 12% 92%;
-    --success: 152 60% 56%;
-    --warning: 36 80% 60%;
-    --theme-color: 16 15 12;
-    --shadow-tint: 36 12% 92%;
-  }
-
-  /* ---------- OCEAN — warm sand + deep teal + sun gold ---------- */
-
-  :root[data-palette="ocean"] {
-    --background: 32 32% 94%;
-    --foreground: 28 22% 14%;
-    --muted: 32 24% 89%;
-    --muted-foreground: 28 14% 40%;
-    --border: 32 22% 80%;
-    --input: 32 24% 87%;
-    --ring: 195 70% 38%;
-    --primary: 195 75% 32%;
-    --primary-foreground: 32 40% 97%;
-    --secondary: 32 26% 86%;
-    --secondary-foreground: 28 22% 14%;
-    --accent: 42 90% 46%;
-    --accent-foreground: 28 22% 10%;
-    --destructive: 0 65% 48%;
-    --destructive-foreground: 32 40% 97%;
-    --card: 32 40% 97%;
-    --card-foreground: 28 22% 14%;
-    --paper-sheet: 32 46% 99%;
-    --popover: 32 40% 97%;
-    --popover-foreground: 28 22% 14%;
-    --success: 162 55% 36%;
-    --warning: 36 84% 44%;
-    --theme-color: 244 238 226;
-    --shadow-tint: 28 22% 14%;
-  }
-
-  .dark[data-palette="ocean"] {
-    --background: 28 14% 7%;
-    --foreground: 36 14% 92%;
-    --muted: 28 10% 12%;
-    --muted-foreground: 36 10% 62%;
-    --border: 28 8% 18%;
-    --input: 28 8% 15%;
-    --ring: 195 80% 64%;
-    --primary: 195 80% 60%;
-    --primary-foreground: 28 14% 7%;
-    --secondary: 28 8% 14%;
-    --secondary-foreground: 36 14% 92%;
-    --accent: 42 95% 60%;
-    --accent-foreground: 28 14% 7%;
-    --destructive: 0 70% 60%;
-    --destructive-foreground: 36 14% 92%;
-    --card: 28 12% 10%;
-    --card-foreground: 36 14% 92%;
-    --paper-sheet: 28 14% 12%;
-    --popover: 28 12% 10%;
-    --popover-foreground: 36 14% 92%;
-    --success: 162 60% 56%;
-    --warning: 36 84% 62%;
-    --theme-color: 19 17 14;
-    --shadow-tint: 36 14% 92%;
-  }
-
-  /* ---------- SLATE — warm clay + ink violet + magenta (saturated paper) ---------- */
-
-  :root[data-palette="slate"] {
-    --background: 36 14% 93%;
-    --foreground: 30 22% 12%;
-    --muted: 36 12% 88%;
-    --muted-foreground: 30 12% 42%;
-    --border: 36 12% 80%;
-    --input: 36 12% 87%;
-    --ring: 252 70% 56%;
-    --primary: 252 70% 50%;
-    --primary-foreground: 36 28% 98%;
-    --secondary: 36 12% 86%;
-    --secondary-foreground: 30 22% 12%;
-    --accent: 330 72% 52%;
-    --accent-foreground: 36 28% 98%;
-    --destructive: 0 65% 48%;
-    --destructive-foreground: 36 28% 98%;
-    --card: 36 28% 97%;
-    --card-foreground: 30 22% 12%;
-    --paper-sheet: 36 34% 99%;
-    --popover: 36 28% 97%;
-    --popover-foreground: 30 22% 12%;
-    --success: 152 50% 38%;
-    --warning: 36 84% 44%;
-    --theme-color: 240 235 226;
-    --shadow-tint: 30 22% 12%;
-  }
-
-  .dark[data-palette="slate"] {
-    --background: 30 12% 7%;
-    --foreground: 36 14% 92%;
-    --muted: 30 10% 13%;
-    --muted-foreground: 36 10% 62%;
-    --border: 30 8% 18%;
-    --input: 30 8% 15%;
-    --ring: 252 90% 72%;
-    --primary: 252 88% 72%;
-    --primary-foreground: 30 12% 7%;
-    --secondary: 30 8% 14%;
-    --secondary-foreground: 36 14% 92%;
-    --accent: 330 80% 66%;
-    --accent-foreground: 30 12% 7%;
-    --destructive: 0 70% 60%;
-    --destructive-foreground: 36 14% 92%;
-    --card: 30 12% 10%;
-    --card-foreground: 36 14% 92%;
-    --paper-sheet: 30 14% 12%;
-    --popover: 30 12% 10%;
-    --popover-foreground: 36 14% 92%;
-    --success: 152 55% 56%;
-    --warning: 36 84% 62%;
-    --theme-color: 18 16 14;
-    --shadow-tint: 36 14% 92%;
-  }
-
-  /* ---------- Shared (palette-independent) ---------- */
-
-  /* Default font stack — applied to every palette unless one overrides.
-     Tailwind's font-sans / font-serif / font-mono utilities read these vars
-     (see tailwind.config.js). Swap fonts per-palette by re-declaring inside
-     the palette block (see [data-palette="manuscript"] below). */
+  /* Font stack — Tailwind's font-sans / font-serif / font-mono utilities
+     read these vars (see tailwind.config.js). */
   :root {
     --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system,
       "Segoe UI", Roboto, sans-serif;
@@ -339,15 +111,14 @@
 
   /* Heat colors for the History calendar. Binary: a day has an entry
      (--primary) or it doesn't (--heat-empty). --heat-mood is the inset
-     ring on mood-up days. Re-skins automatically on palette switch. */
+     ring on mood-up days. */
   :root {
     --heat-empty: hsl(var(--muted));
     --heat-mood: hsl(var(--accent));
   }
 
-  /* Shadows derive their tint from each palette's --shadow-tint, so a single
-     declaration covers every palette. Light = real drop shadow; dark = inset
-     top-edge highlight + low ambient (sells elevation on OLED). */
+  /* Shadows derive their tint from --shadow-tint. Light = real drop shadow;
+     dark = inset top-edge highlight + low ambient (sells elevation on OLED). */
   :root {
     --shadow-xs: 0 1px 2px hsl(var(--shadow-tint) / 0.04);
     --shadow-sm: 0 2px 4px -1px hsl(var(--shadow-tint) / 0.06), 0 1px 2px hsl(var(--shadow-tint) / 0.04);

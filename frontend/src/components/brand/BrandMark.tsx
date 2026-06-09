@@ -9,8 +9,8 @@ interface BrandMarkProps {
 // thin outline, 38% corner cut diagonally, two flat triangles (terracotta on
 // top, page-colored underneath). No crease stroke — the color split *is* the
 // fold. The page outline inherits currentColor; the dog-ear is hard-tinted to
-// --primary because that slot holds the brand's warm accent across palettes
-// (--accent is teal in the default ember palette).
+// --primary because that slot holds the brand's warm accent (--accent is teal
+// in the ember palette).
 export function BrandMark({ size = 24, className }: BrandMarkProps) {
   return (
     <svg

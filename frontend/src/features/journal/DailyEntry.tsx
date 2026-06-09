@@ -14,6 +14,7 @@ import {
 } from "@/features/chat/hooks";
 
 import { listEntries } from "./api";
+import { DailyEntrySkeleton } from "./DailyEntrySkeleton";
 import { useEntries, ENTRY_DATES_KEY, entriesKey } from "./hooks";
 import { DailyInputs } from "@/features/daily/DailyInputs";
 import type { DailyInput, DailyInputUpsertBody, TagDayLink } from "@/features/daily/api";
@@ -116,7 +117,7 @@ export function DailyEntry() {
   }, [chatSession, finalizeRetry]);
 
   if (entries.isPending) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <DailyEntrySkeleton />;
   }
   if (entries.isError) {
     return <p className="text-sm text-destructive">Couldn't load today's entries.</p>;

@@ -7,7 +7,7 @@ import {
   Sparkles,
   Target,
 } from "lucide-react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 
 import { cn } from "@/lib/utils";
 import { useMe } from "@/features/auth/useAuth";
@@ -31,6 +31,7 @@ interface Props {
 
 export function NavMenu({ layoutId, onNavigate }: Props) {
   const me = useMe();
+  const reduce = useReducedMotion();
   const isReflectionDay =
     me.data != null &&
     typeof me.data.local_weekday === "number" &&
@@ -74,7 +75,11 @@ export function NavMenu({ layoutId, onNavigate }: Props) {
                     "absolute inset-0 rounded-md",
                     item.primary ? "bg-primary" : "bg-secondary",
                   )}
-                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                  transition={
+                    reduce
+                      ? { duration: 0 }
+                      : { type: "spring", stiffness: 380, damping: 32 }
+                  }
                 />
               ) : item.primary ? (
                 <span className="absolute inset-0 rounded-md bg-primary/10 ring-1 ring-inset ring-primary/30" />

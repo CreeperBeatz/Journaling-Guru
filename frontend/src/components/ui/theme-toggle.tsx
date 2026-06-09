@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Monitor, Moon, Sun } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -26,6 +26,7 @@ interface Props {
 
 export function ThemeToggle({ className }: Props) {
   const { theme, setTheme } = useTheme();
+  const reduce = useReducedMotion();
   const [mounted, setMounted] = useState(false);
 
   // next-themes resolves on the client; render a placeholder until then to
@@ -57,9 +58,9 @@ export function ThemeToggle({ className }: Props) {
       <AnimatePresence mode="wait" initial={false}>
         <motion.span
           key={current}
-          initial={{ opacity: 0, rotate: -90, scale: 0.8 }}
-          animate={{ opacity: 1, rotate: 0, scale: 1 }}
-          exit={{ opacity: 0, rotate: 90, scale: 0.8 }}
+          initial={reduce ? { opacity: 0 } : { opacity: 0, rotate: -90, scale: 0.8 }}
+          animate={reduce ? { opacity: 1 } : { opacity: 1, rotate: 0, scale: 1 }}
+          exit={reduce ? { opacity: 0 } : { opacity: 0, rotate: 90, scale: 0.8 }}
           transition={{ duration: 0.18 }}
           className="inline-flex"
         >

@@ -14,11 +14,10 @@
     <link rel="preconnect" href="/" crossorigin />
     <link rel="dns-prefetch" href="/" />
     <title>Journaling Guru</title>
-    <!-- Anti-flash: read theme + palette preference and apply class/attribute
-         before React hydrates. Mirrors the strategy next-themes documents for
-         class-attribute mode, extended with a data-palette attribute that our
-         CSS overrides key off. The seed theme-color values mirror each
-         palette's --theme-color (kept in sync with src/styles/index.css). -->
+    <!-- Anti-flash: read the theme preference and apply the class before
+         React hydrates. Mirrors the strategy next-themes documents for
+         class-attribute mode. The seed theme-color values mirror
+         --theme-color in src/styles/index.css (keep in sync). -->
     <script>
       (function () {
         try {
@@ -28,8 +27,6 @@
             ? stored
             : prefersDark ? "dark" : "light";
           if (mode === "dark") document.documentElement.classList.add("dark");
-
-          document.documentElement.setAttribute("data-palette", "ember");
 
           var seed = mode === "dark" ? "#14110f" : "#f8f1ed";
           var meta = document.querySelector('meta[name="theme-color"]');

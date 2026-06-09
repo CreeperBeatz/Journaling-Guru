@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Source of truth
 
 - **`PLAN.md`** at the repo root is authoritative for architecture, build phases, schema, and decisions. Read it before designing anything new. Phases (1=skeleton, 2=auth, 3=journal, 4=summaries, 4.1=manual mood/emotions, 5=push, 6a=chat, 6b=voice, 7=prod hardening) are sequential — don't claim a phase done without running its verification block.
-- **`frontend/DESIGN.md`** is authoritative for the visual + motion system (warm-paper aesthetic, ink-violet primary, palette tokens, type stack, motion library). Update it when design changes; do not let code drift from it.
+- **`frontend/DESIGN.md`** is authoritative for the visual + motion system (warm-paper aesthetic, single ember palette — burnt-orange primary, deep-teal accent — type stack, motion library). Update it when design changes; do not let code drift from it.
 
 ## Stack
 
@@ -112,7 +112,7 @@ The chat tables (`chat_sessions.mode='voice'`, `openai_session_id`) are voice-re
 - `AppShell` prefetches keys on mount (questions, today entries, daily inputs, today chat session, summaries stats) — when adding a feature on the protected shell, consider adding its query key to the prefetch fan-out.
 - Service worker is custom (`src/sw/push-handler.ts`) — `vite-plugin-pwa` injects the precache manifest into it. Workbox runtime cache is `NetworkOnly` for `/api/*`.
 - The SPA is a single origin via the Vite proxy in dev (`/api` → `localhost:8080`). `VITE_API_BASE` should stay empty in plain dev — session cookies are `SameSite=Lax` and won't cross origins. `start.sh --tunnel` / `--ngrok` sets `VITE_API_BASE` to the public URL **and** `COOKIE_SECURE=true`. The Vite proxy target is `localhost:8080` regardless, to avoid a tunnel loop.
-- Palette + theme: `<html class="dark" data-palette="...">`. An anti-flash script in `index.html` sets `data-palette` from `localStorage["journai.palette"]` before React hydrates. Theme is `next-themes` with `attribute="class"`, `disableTransitionOnChange`. Do not add unconditional theme-flip transitions.
+- Theme: single palette (ember) — tokens live in the bare `:root`/`.dark` blocks of `src/styles/index.css`; there is no `data-palette` attribute or palette picker. An anti-flash script in `index.html` applies the `dark` class and seeds `<meta name="theme-color">` before React hydrates. Theme is `next-themes` with `attribute="class"`, `disableTransitionOnChange`. Do not add unconditional theme-flip transitions.
 
 ## Conventions and gotchas
 
