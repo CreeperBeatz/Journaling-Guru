@@ -68,48 +68,61 @@ export function WeeklySummary({
   const patchFn = onPatch ?? ((body: PatchReflectionBody) => thisWeekPatch.mutate(body));
   const patching = onPatch ? !!patchPending : thisWeekPatch.isPending;
 
-  // Mirror WeeklySynthesisCard's body-presence check so the regenerate
+  // Monthly weeks: the monthly letter REPLACES the weekly one on this
+  // overview, and replay/regenerate retarget the month.
+  const monthly = data.monthly;
+  const cadence = monthly ? "monthly" : "weekly";
+
+  // Mirror the synthesis cards' body-presence check so the regenerate
   // menu only surfaces when there's an existing letter to redo.
-  const hasAnyBody =
-    (data.charged?.trim() ?? "") !== "" ||
-    (data.drained?.trim() ?? "") !== "" ||
-    (data.grateful?.trim() ?? "") !== "" ||
-    (data.insights?.trim() ?? "") !== "" ||
-    (data.letter?.trim() ?? "") !== "";
+  const hasAnyBody = monthly
+    ? monthly.arc.trim() !== "" ||
+      monthly.recurring.trim() !== "" ||
+      monthly.goals_retro.trim() !== ""
+    : (data.charged?.trim() ?? "") !== "" ||
+      (data.drained?.trim() ?? "") !== "" ||
+      (data.grateful?.trim() ?? "") !== "" ||
+      (data.insights?.trim() ?? "") !== "" ||
+      (data.letter?.trim() ?? "") !== "";
+
+  const onRegenerateLetter = () =>
+    regen.mutate(
+      monthly
+        ? { period_type: "month", period_start: monthly.month_start }
+        : { period_type: "week", period_start: data.week_start },
+    );
 
   return (
     <div className="space-y-6">
       {showHeader ? (
         <header className="space-y-1">
           <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-            Weekly reflection
+            {monthly ? "Monthly reflection" : "Weekly reflection"}
           </p>
           <h1 className="font-serif text-h1 inline-flex items-center gap-2">
             {completedWhen ? (
               <CheckCircle2 className="h-6 w-6 text-accent" />
             ) : null}
-            This week
+            {monthly ? monthLabel(monthly.month_start) : "This week"}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {data.week_start} → {data.week_end}
+            {monthly
+              ? `${monthly.month_start} → ${monthly.month_end}`
+              : `${data.week_start} → ${data.week_end}`}
             {completedWhen ? ` · wrapped ${completedWhen.toLocaleString()}` : ""}
           </p>
         </header>
       ) : null}
 
-      <WeeklySynthesisCard
-        data={data}
-        regenerating={regen.isPending}
-        onRegenerate={
-          showRegenerate
-            ? () =>
-                regen.mutate({
-                  period_type: "week",
-                  period_start: data.week_start,
-                })
-            : undefined
-        }
-      />
+      {monthly ? (
+        <MonthlyLetterCard monthly={monthly} />
+      ) : (
+        <WeeklySynthesisCard
+          data={data}
+          regenerating={regen.isPending}
+          onRegenerate={showRegenerate ? onRegenerateLetter : undefined}
+        />
+      )}
 
       {existingGoals.length > 0 ? (
         <Card>
@@ -152,9 +165,9 @@ export function WeeklySummary({
         saving={patching}
       />
 
-      {data.monthly ? (
+      {monthly ? (
         <MonthSection
-          monthly={data.monthly}
+          monthly={monthly}
           editable={showReplay /* current week only — History is read-only */}
         />
       ) : null}
@@ -171,18 +184,14 @@ export function WeeklySummary({
               className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              {replay.isPending ? "Replaying…" : "Replay weekly reflection"}
+              {replay.isPending ? "Replaying…" : `Replay ${cadence} reflection`}
             </Button>
           ) : null}
           {showRegenerate && hasAnyBody ? (
             <RegenerateMenu
               pending={regen.isPending}
-              onRegenerate={() =>
-                regen.mutate({
-                  period_type: "week",
-                  period_start: data.week_start,
-                })
-              }
+              cadence={cadence}
+              onRegenerate={onRegenerateLetter}
             />
           ) : null}
         </div>
@@ -191,10 +200,20 @@ export function WeeklySummary({
   );
 }
 
-// MonthSection — the "This month" block on monthly weeks: the monthly
-// letter, the intention (editable until the user is happy with it), the
-// distilled direction note once the chat finalized, and a compact
-// ratings row with deltas vs the previous rated month.
+function monthLabel(monthStart: string): string {
+  const [y, m] = monthStart.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+// MonthSection — the month-state block on monthly weeks: the intention
+// (editable until the user is happy with it), the distilled direction
+// note once the chat finalized, and the life check-in with per-domain
+// notes and deltas vs the previous rated month. The monthly letter
+// itself renders at the top of the page (it replaces the weekly one).
 function MonthSection({
   monthly,
   editable,
@@ -223,24 +242,23 @@ function MonthSection({
   };
 
   const prev = monthly.prev_ratings ?? {};
+  const notes = monthly.rating_notes ?? {};
   const ratingRows = monthly.ratings
     ? LIFE_DOMAINS.filter((d) => monthly.ratings![d.key] !== undefined).map((d) => {
         const score = monthly.ratings![d.key];
         const prior = prev[d.key];
-        return { key: d.key, label: d.label, score, delta: prior !== undefined ? score - prior : null };
+        return {
+          key: d.key,
+          label: d.label,
+          score,
+          delta: prior !== undefined ? score - prior : null,
+          note: (notes[d.key] ?? "").trim(),
+        };
       })
     : [];
 
   return (
     <div className="space-y-6">
-      <header className="space-y-1 pt-2">
-        <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-          This month
-        </p>
-      </header>
-
-      <MonthlyLetterCard monthly={monthly} />
-
       <Card className="border-accent/40 bg-accent/5">
         <CardHeader className="pb-3">
           <CardTitle className="font-serif text-base">
@@ -302,23 +320,30 @@ function MonthSection({
             </p>
           </CardHeader>
           <CardContent>
-            <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+            <dl className="space-y-2.5">
               {ratingRows.map((r) => (
-                <div key={r.key} className="flex items-baseline justify-between gap-3">
-                  <dt className="text-sm">{r.label}</dt>
-                  <dd className="font-mono text-sm tabular-nums">
-                    {r.score}
-                    {r.delta !== null && r.delta !== 0 ? (
-                      <span
-                        className={cn(
-                          "ml-1.5 text-[11px]",
-                          r.delta > 0 ? "text-accent" : "text-destructive/80",
-                        )}
-                      >
-                        {r.delta > 0 ? `+${r.delta}` : r.delta}
-                      </span>
-                    ) : null}
-                  </dd>
+                <div key={r.key} className="space-y-0.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-sm">{r.label}</dt>
+                    <dd className="font-mono text-sm tabular-nums">
+                      {r.score}
+                      {r.delta !== null && r.delta !== 0 ? (
+                        <span
+                          className={cn(
+                            "ml-1.5 text-[11px]",
+                            r.delta > 0 ? "text-accent" : "text-destructive/80",
+                          )}
+                        >
+                          {r.delta > 0 ? `+${r.delta}` : r.delta}
+                        </span>
+                      ) : null}
+                    </dd>
+                  </div>
+                  {r.note !== "" ? (
+                    <p className="border-l-2 border-accent/40 pl-2 text-xs italic text-muted-foreground">
+                      {r.note}
+                    </p>
+                  ) : null}
                 </div>
               ))}
             </dl>
@@ -329,14 +354,16 @@ function MonthSection({
   );
 }
 
-// RegenerateMenu — three-dot kebab with a single "Regenerate weekly
+// RegenerateMenu — three-dot kebab with a single "Regenerate <cadence>
 // message" item. Lives at the bottom of WeeklySummary so the destructive-
 // looking option doesn't crowd the letter itself.
 function RegenerateMenu({
   pending,
+  cadence,
   onRegenerate,
 }: {
   pending: boolean;
+  cadence: "weekly" | "monthly";
   onRegenerate: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -392,7 +419,7 @@ function RegenerateMenu({
             <RefreshCw
               className={cn("h-3.5 w-3.5", pending && "animate-spin")}
             />
-            {pending ? "Regenerating…" : "Regenerate weekly message"}
+            {pending ? "Regenerating…" : `Regenerate ${cadence} message`}
           </button>
         </div>
       ) : null}

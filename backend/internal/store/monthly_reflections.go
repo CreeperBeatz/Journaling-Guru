@@ -29,23 +29,27 @@ const monthlyReflectionColumns = `id, user_id,
     to_char(month_end,   'YYYY-MM-DD') AS month_end,
     to_char(week_start,  'YYYY-MM-DD') AS week_start,
     chat_session_id, direction_text, intention_text, intention_set_at,
-    ratings, ratings_set_at, completed_at, created_at, updated_at`
+    ratings, rating_notes, ratings_set_at, completed_at, created_at, updated_at`
 
 func scanMonthlyReflection(row pgx.Row) (*domain.MonthlyReflection, error) {
 	var (
 		mr          domain.MonthlyReflection
 		ratingsJSON []byte
+		notesJSON   []byte
 	)
 	if err := row.Scan(
 		&mr.ID, &mr.UserID,
 		&mr.MonthStart, &mr.MonthEnd, &mr.WeekStart,
 		&mr.ChatSessionID, &mr.DirectionText, &mr.IntentionText, &mr.IntentionSetAt,
-		&ratingsJSON, &mr.RatingsSetAt, &mr.CompletedAt, &mr.CreatedAt, &mr.UpdatedAt,
+		&ratingsJSON, &notesJSON, &mr.RatingsSetAt, &mr.CompletedAt, &mr.CreatedAt, &mr.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 	if len(ratingsJSON) > 0 {
 		_ = json.Unmarshal(ratingsJSON, &mr.Ratings)
+	}
+	if len(notesJSON) > 0 {
+		_ = json.Unmarshal(notesJSON, &mr.RatingNotes)
 	}
 	return &mr, nil
 }
@@ -136,24 +140,34 @@ func (s *MonthlyReflectionStore) SetIntention(
 	return mr, err
 }
 
-// SetRatings overwrites the life check-in jsonb and stamps
-// ratings_set_at. Validation (known keys, 0..10) happens at the handler
-// via domain.ValidateRatings. Returns (nil, nil) when no row exists.
+// SetRatings overwrites the life check-in jsonb (scores + optional
+// per-domain notes) and stamps ratings_set_at. Validation (known keys,
+// 0..10, note length) happens at the handler via domain.ValidateRatings
+// / ValidateRatingNotes. Returns (nil, nil) when no row exists.
 func (s *MonthlyReflectionStore) SetRatings(
-	ctx context.Context, userID string, monthStart time.Time, ratings map[string]int,
+	ctx context.Context, userID string, monthStart time.Time,
+	ratings map[string]int, notes map[string]string,
 ) (*domain.MonthlyReflection, error) {
 	payload, err := json.Marshal(ratings)
 	if err != nil {
 		return nil, err
 	}
+	var notesPayload []byte
+	if len(notes) > 0 {
+		notesPayload, err = json.Marshal(notes)
+		if err != nil {
+			return nil, err
+		}
+	}
 	const q = `
 		UPDATE monthly_reflections
 		   SET ratings        = $3,
+		       rating_notes   = $4,
 		       ratings_set_at = now(),
 		       updated_at     = now()
 		 WHERE user_id = $1 AND month_start = $2
 		RETURNING ` + monthlyReflectionColumns
-	mr, err := scanMonthlyReflection(s.DB.QueryRow(ctx, q, userID, monthStart, payload))
+	mr, err := scanMonthlyReflection(s.DB.QueryRow(ctx, q, userID, monthStart, payload, notesPayload))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

@@ -22,9 +22,11 @@
 
 # This session: the week, and the month of {{.MonthLabel}}
 
-You're talking with {{if .DisplayName}}{{.DisplayName}}{{else}}the user{{end}} about the week from **{{.WeekStart}} through {{.WeekEnd}}** — which also closes out **{{.MonthLabel}}** ({{.MonthStart}} to {{.MonthEnd}}). They have read both letters below. Don't re-summarize either at them. Use them as ground.
+You're talking with {{if .DisplayName}}{{.DisplayName}}{{else}}the user{{end}} about the week from **{{.WeekStart}} through {{.WeekEnd}}** — which also closes out **{{.MonthLabel}}** ({{.MonthStart}} to {{.MonthEnd}}). They have read the MONTHLY letter below. Don't re-summarize it at them. Use it as ground.
 
-# The weekly letter (what they just read)
+# The weekly letter (YOUR notes on the final week — the user has NOT read this)
+
+The user skipped straight to the monthly letter this session. Use this synthesis to ground the brief week-landing pass, but never say "as your letter said" about it — they haven't seen it.
 
 {{- if .Letter.Charged}}
 **Charged:** {{.Letter.Charged}}
@@ -42,7 +44,7 @@ You're talking with {{if .DisplayName}}{{.DisplayName}}{{else}}the user{{end}} a
 **Insights:** {{.Letter.Insights}}
 {{- end}}
 
-# The monthly letter (what they read second)
+# The monthly letter (what the user read)
 
 {{- if .MonthlyLetter.Headline}}
 **Headline:** {{.MonthlyLetter.Headline}}
@@ -71,9 +73,9 @@ You're talking with {{if .DisplayName}}{{.DisplayName}}{{else}}the user{{end}} a
 {{if .Ratings -}}
 # This month's life check-in (0-10 satisfaction sliders, just filled in)
 
-Delta is vs the previous rated month. Treat ±1 as noise; 2+ points is movement. These are conversation starters for the direction check — never verdicts, never a report card.
+Delta is vs the previous rated month. Treat ±1 as noise; 2+ points is movement. Where the user wrote a note, those are their own verbatim words — the richest direction-check material you have; pick up the thread rather than the number. These are conversation starters — never verdicts, never a report card.
 
-{{range .Ratings}}- {{.Label}}: {{.Score}}{{if .DeltaLabel}} ({{.DeltaLabel}} vs last month){{end}}
+{{range .Ratings}}- {{.Label}}: {{.Score}}{{if .DeltaLabel}} ({{.DeltaLabel}} vs last month){{end}}{{if .Note}} — their note: "{{.Note}}"{{end}}
 {{end}}
 {{end -}}
 

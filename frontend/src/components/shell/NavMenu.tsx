@@ -41,9 +41,15 @@ export function NavMenu({ layoutId, onNavigate }: Props) {
   // days it shows only while the week's reflection is pending.
   const showWeekly =
     isReflectionDay || me.data?.reflection_pending === true;
-  const navItems = showWeekly
-    ? baseNavItems
-    : baseNavItems.filter((item) => item.to !== "/weekly");
+  // Monthly weeks relabel the ritual — same route, bigger zoom-out.
+  const isMonthly = me.data?.reflection_is_monthly === true;
+  const navItems = (
+    showWeekly
+      ? baseNavItems
+      : baseNavItems.filter((item) => item.to !== "/weekly")
+  ).map((item) =>
+    item.to === "/weekly" && isMonthly ? { ...item, label: "Monthly" } : item,
+  );
 
   return (
     <nav className="flex-1 space-y-0.5">

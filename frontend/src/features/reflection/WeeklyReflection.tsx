@@ -111,11 +111,12 @@ function IdleScreen({ data }: { data: ReflectionResponse }) {
         <CardContent className="space-y-4 px-6 py-10 text-center">
           <p className="text-sm text-muted-foreground">
             {isMonthly
-              ? "This week's reflection also closes the month. Journaling " +
-                "Guru has written you two letters — one for the week, one " +
-                "looking back over the whole month — followed by a quick " +
-                "life check-in and a conversation about where things are " +
-                "heading. Takes about 15–20 minutes of focused time."
+              ? "This reflection closes the month. Journaling Guru has " +
+                "written you a letter looking back over the whole month, " +
+                "followed by a life check-in — how satisfied you are with " +
+                "the big areas of your life — and a conversation about " +
+                "where things are heading. Takes about 15–20 minutes of " +
+                "focused time."
               : "Journaling Guru has written a letter to you, summarizing how " +
                 "your week looked like. You can then choose to reflect on your " +
                 "week, and set something small to change for the next one. " +
@@ -150,16 +151,17 @@ function monthLabelFor(monthStart: string): string {
 
 // ---------------- LetterReadingView ----------------
 
-// Reading-step sheets on a monthly week: weekly letter → monthly letter
-// → life check-in → chat. Local state only — `step` in the DB stays
-// 1..2; a refresh mid-reading re-shows the weekly sheet, which is
-// acceptable for a reading step and avoids a step-CHECK migration.
-type ReadingSheet = "weekly" | "monthly" | "checkin";
+// Reading-step sheets on a monthly week: monthly letter → life check-in
+// → chat (the weekly letter is skipped — the monthly letter already
+// synthesized it). Local state only — `step` in the DB stays 1..2; a
+// refresh mid-reading re-shows the letter sheet, which is acceptable
+// for a reading step and avoids a step-CHECK migration.
+type ReadingSheet = "monthly" | "checkin";
 
 function LetterReadingView({ data }: { data: ReflectionResponse }) {
   const patch = usePatchReflection();
   const [, setParams] = useSearchParams();
-  const [sheet, setSheet] = useState<ReadingSheet>("weekly");
+  const [sheet, setSheet] = useState<ReadingSheet>("monthly");
   const monthly = data.monthly;
   // Skip the check-in sheet when the user already submitted ratings
   // (refresh mid-flow, or replay — ratings survive replay by design).
@@ -193,14 +195,12 @@ function LetterReadingView({ data }: { data: ReflectionResponse }) {
   const eyebrow = monthly ? "Monthly reflection" : "Weekly reflection";
   let title = "Your letter";
   let metaLine = `${data.week_start} → ${data.week_end} · read it, then we'll talk it through`;
-  if (monthly && sheet === "weekly") {
-    metaLine = `${data.week_start} → ${data.week_end} · the week first, then the month`;
-  } else if (monthly && sheet === "monthly") {
+  if (monthly && sheet === "monthly") {
     title = "Your monthly letter";
     metaLine = `${monthLabelFor(monthly.month_start)} · read it, then a quick check-in`;
   } else if (monthly && sheet === "checkin") {
     title = "A quick check-in";
-    metaLine = "30 seconds of sliders — then we'll talk it through";
+    metaLine = "A couple of minutes — then we'll talk it through";
   }
 
   return (
@@ -213,26 +213,14 @@ function LetterReadingView({ data }: { data: ReflectionResponse }) {
         <p className="text-sm text-muted-foreground">{metaLine}</p>
       </header>
 
-      {!monthly || sheet === "weekly" ? (
-        monthly ? (
-          <LetterCard
-            data={data}
-            saving={false}
-            onContinue={() => setSheet("monthly")}
-            continueLabel="Continue to your monthly letter"
-          />
-        ) : (
-          <LetterCard data={data} saving={patch.isPending} onContinue={advance} />
-        )
+      {!monthly ? (
+        <LetterCard data={data} saving={patch.isPending} onContinue={advance} />
       ) : null}
 
       {monthly && sheet === "monthly" ? (
         <div className="space-y-6">
           <MonthlyLetterCard monthly={monthly} />
-          <div className="flex justify-between">
-            <Button variant="ghost" onClick={() => setSheet("weekly")}>
-              Back
-            </Button>
+          <div className="flex justify-end">
             <Button
               onClick={() => (checkinDone ? void advance() : setSheet("checkin"))}
               disabled={patch.isPending}
@@ -252,7 +240,7 @@ function LetterReadingView({ data }: { data: ReflectionResponse }) {
           <LifeCheckInCard monthly={monthly} onDone={() => void advance()} />
           <div className="flex justify-start">
             <Button variant="ghost" onClick={() => setSheet("monthly")}>
-              Back
+              Back to the letter
             </Button>
           </div>
         </div>

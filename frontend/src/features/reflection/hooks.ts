@@ -113,11 +113,16 @@ export function useSetMonthlyIntention() {
   });
 }
 
-// useSetMonthlyRatings persists the life check-in sliders.
+// useSetMonthlyRatings persists the life check-in (scores + optional
+// per-domain notes).
 export function useSetMonthlyRatings() {
   const qc = useQueryClient();
-  return useMutation<ReflectionResponse, Error, Record<string, number>>({
-    mutationFn: setMonthlyRatings,
+  return useMutation<
+    ReflectionResponse,
+    Error,
+    { ratings: Record<string, number>; notes?: Record<string, string> }
+  >({
+    mutationFn: ({ ratings, notes }) => setMonthlyRatings(ratings, notes),
     onSuccess: (data) => {
       qc.setQueryData(REFLECTION_THIS_WEEK_KEY, data);
     },

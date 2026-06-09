@@ -340,12 +340,11 @@ func (h *ChatHandler) CreateOrResumeWeekly(w http.ResponseWriter, r *http.Reques
 	// the letter while the chat asks them about it. The closing question
 	// lives at the bottom of the bubble so the model's first prompt is
 	// already in the transcript — no separate streamed opener needed.
-	// On combined sessions a short bridge to the monthly letter follows.
+	// Combined sessions seed the MONTHLY letter — that's the only letter
+	// the user read in the wizard (the weekly letter stays model-side
+	// context in the system prompt).
 	if created {
-		body := h.composeWeeklyLetterOpener(r.Context(), sess.UserID, weekStart)
-		if body != "" && session.MonthPeriodStart != nil {
-			body += h.composeMonthlyOpenerAddendum(r.Context(), sess.UserID, *session.MonthPeriodStart)
-		}
+		body := h.composeOpenerForSession(r.Context(), sess.UserID, weekStart, session.MonthPeriodStart)
 		if body != "" {
 			if _, aerr := h.Messages.Append(r.Context(), store.AppendInput{
 				SessionID: session.ID,
@@ -452,26 +451,55 @@ func (h *ChatHandler) resolveMonthlyWeek(
 	return &monthStart
 }
 
-// composeMonthlyOpenerAddendum returns the short bridge appended to the
-// seeded weekly-letter opener on combined sessions: it tells the user
-// this week also closes the month and plants the direction question.
-// Empty when the month label can't be derived (never blocks the opener).
-func (h *ChatHandler) composeMonthlyOpenerAddendum(
+// composeOpenerForSession picks the seeded first assistant bubble by
+// session shape: plain weekly sessions seed the weekly letter; combined
+// sessions seed the MONTHLY letter (the only one the user read in the
+// wizard). Falls back to the weekly letter when the monthly synthesis
+// hasn't landed yet so the bubble is never empty on combined weeks with
+// a pending letter.
+func (h *ChatHandler) composeOpenerForSession(
+	ctx context.Context, userID string, weekStart time.Time, monthPeriodStart *string,
+) string {
+	if monthPeriodStart != nil {
+		if body := h.composeMonthlyLetterOpener(ctx, userID, *monthPeriodStart); body != "" {
+			return body
+		}
+	}
+	return h.composeWeeklyLetterOpener(ctx, userID, weekStart)
+}
+
+// composeMonthlyLetterOpener assembles the monthly letter's paragraphs
+// + direction question into a single assistant bubble. Returns "" when
+// the monthly synthesis hasn't been written yet.
+func (h *ChatHandler) composeMonthlyLetterOpener(
 	ctx context.Context, userID string, monthPeriodStart string,
 ) string {
+	if h.Summaries == nil {
+		return ""
+	}
 	monthStart, err := time.Parse("2006-01-02", monthPeriodStart)
 	if err != nil {
 		return ""
 	}
-	label := monthStart.Format("January")
-	addendum := fmt.Sprintf("\n\nThis week also closes out %s. You've read your monthly letter — when you're ready, we'll zoom out and look at the month together.", label)
-	if h.Summaries != nil {
-		if monthSummary, _ := h.Summaries.GetByPeriod(ctx, userID, string(domain.PeriodMonth), monthStart); monthSummary != nil &&
-			monthSummary.Metadata.ClosingQuestion != "" {
-			addendum += "\n\n" + monthSummary.Metadata.ClosingQuestion
-		}
+	summary, _ := h.Summaries.GetByPeriod(ctx, userID, string(domain.PeriodMonth), monthStart)
+	if summary == nil || !summary.Metadata.HasMonthlySynthesis() {
+		return ""
 	}
-	return addendum
+	m := summary.Metadata
+	var parts []string
+	if m.Arc != "" {
+		parts = append(parts, m.Arc)
+	}
+	if m.Recurring != "" {
+		parts = append(parts, m.Recurring)
+	}
+	if m.GoalsRetro != "" {
+		parts = append(parts, m.GoalsRetro)
+	}
+	if m.ClosingQuestion != "" {
+		parts = append(parts, m.ClosingQuestion)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // ThisWeekChat handles GET /api/reflection/this-week/chat. Returns the
@@ -1055,10 +1083,7 @@ func (h *ChatHandler) Reset(w http.ResponseWriter, r *http.Request) {
 	messages := []domain.ChatMessage{}
 	if session.Scope == domain.ChatScopeWeekly && session.PeriodStart != nil {
 		if weekStart, perr := time.Parse("2006-01-02", *session.PeriodStart); perr == nil {
-			body := h.composeWeeklyLetterOpener(r.Context(), session.UserID, weekStart)
-			if body != "" && session.MonthPeriodStart != nil {
-				body += h.composeMonthlyOpenerAddendum(r.Context(), session.UserID, *session.MonthPeriodStart)
-			}
+			body := h.composeOpenerForSession(r.Context(), session.UserID, weekStart, session.MonthPeriodStart)
 			if body != "" {
 				row, aerr := h.Messages.Append(r.Context(), store.AppendInput{
 					SessionID: session.ID,
@@ -2417,7 +2442,7 @@ func (h *ChatHandler) buildMonthlyCombinedPrompt(
 				if !ok {
 					continue
 				}
-				view := chat.RatingView{Label: d.Label, Score: score}
+				view := chat.RatingView{Label: d.Label, Score: score, Note: current.RatingNotes[d.Key]}
 				if prev, ok := prevRatings[d.Key]; ok {
 					view.DeltaLabel = fmt.Sprintf("%+d", score-prev)
 				}

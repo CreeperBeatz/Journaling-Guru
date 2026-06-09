@@ -26,6 +26,10 @@ export interface User {
   // Weekly nav button visible on carry-over days after a missed
   // reflection day. Optional — omitted when it can't be derived.
   reflection_pending?: boolean;
+  // reflection_is_monthly is server-computed: the current canonical
+  // reflection week hosts a monthly reflection. Relabels the nav button
+  // and switches the /weekly surfaces into their monthly shape.
+  reflection_is_monthly?: boolean;
   // onboarded_at is null until the first-run walkthrough at /onboarding
   // finishes (or is skipped). AppShell uses null to gate the redirect.
   onboarded_at: string | null;

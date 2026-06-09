@@ -593,13 +593,14 @@ type MonthlyReflectionBlock struct {
 	SynthesisPending bool   `json:"synthesis_pending"`
 
 	// Month state.
-	IntentionText      string         `json:"intention_text"`
-	DirectionText      string         `json:"direction_text"`
-	LastMonthIntention string         `json:"last_month_intention"`
-	Ratings            map[string]int `json:"ratings"`      // nil until the check-in is submitted
-	PrevRatings        map[string]int `json:"prev_ratings"` // last completed month's, for slider ghost dots
-	RatingsSetAt       *time.Time     `json:"ratings_set_at"`
-	CompletedAt        *time.Time     `json:"completed_at"`
+	IntentionText      string            `json:"intention_text"`
+	DirectionText      string            `json:"direction_text"`
+	LastMonthIntention string            `json:"last_month_intention"`
+	Ratings            map[string]int    `json:"ratings"`      // nil until the check-in is submitted
+	RatingNotes        map[string]string `json:"rating_notes"` // optional per-domain explanations
+	PrevRatings        map[string]int    `json:"prev_ratings"` // last completed month's, for slider ghost dots
+	RatingsSetAt       *time.Time        `json:"ratings_set_at"`
+	CompletedAt        *time.Time        `json:"completed_at"`
 }
 
 // ReflectionTagRow extends TagAggregate with a delta against the prior
@@ -948,6 +949,7 @@ func (h *SummaryHandler) buildMonthlyBlock(
 		IntentionText: row.IntentionText,
 		DirectionText: row.DirectionText,
 		Ratings:       row.Ratings,
+		RatingNotes:   row.RatingNotes,
 		RatingsSetAt:  row.RatingsSetAt,
 		CompletedAt:   row.CompletedAt,
 	}
@@ -1329,12 +1331,16 @@ func (h *SummaryHandler) SetMonthlyIntention(w http.ResponseWriter, r *http.Requ
 
 type setRatingsRequest struct {
 	Ratings map[string]int `json:"ratings"`
+	// Notes is the optional per-domain "why this score?" explanation,
+	// same keys as Ratings. Trimmed; empty values dropped.
+	Notes map[string]string `json:"notes,omitempty"`
 }
 
 // SetMonthlyRatings handles POST /api/reflection/this-month/ratings.
-// Persists the life check-in sliders (PWI-format, 0..10 per domain).
-// Validation rejects unknown domain keys and out-of-range scores;
-// `belonging` (and any other domain) may simply be omitted.
+// Persists the life check-in (PWI-format 0..10 score per domain, plus
+// an optional free-text note per domain). Validation rejects unknown
+// domain keys, out-of-range scores, and over-long notes; `belonging`
+// (and any other domain) may simply be omitted.
 func (h *SummaryHandler) SetMonthlyRatings(w http.ResponseWriter, r *http.Request) {
 	sess := middleware.SessionFromCtx(r.Context())
 	if sess == nil {
@@ -1350,8 +1356,18 @@ func (h *SummaryHandler) SetMonthlyRatings(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	notes := make(map[string]string, len(req.Notes))
+	for k, v := range req.Notes {
+		if v = strings.TrimSpace(v); v != "" {
+			notes[k] = v
+		}
+	}
+	if err := domain.ValidateRatingNotes(notes); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	h.applyMonthlyMutation(w, r, sess.UserID, func(ctx context.Context, monthStart time.Time) error {
-		_, err := h.MonthlyReflections.SetRatings(ctx, sess.UserID, monthStart, req.Ratings)
+		_, err := h.MonthlyReflections.SetRatings(ctx, sess.UserID, monthStart, req.Ratings, notes)
 		return err
 	})
 }

@@ -31,9 +31,12 @@ type MonthlyReflection struct {
 	IntentionSetAt *time.Time `json:"intention_set_at,omitempty"`
 	// Ratings is the life check-in: domain key → 0..10 (see LifeDomains).
 	// Nil until submitted; the check-in is skippable.
-	Ratings      map[string]int `json:"ratings,omitempty"`
-	RatingsSetAt *time.Time     `json:"ratings_set_at,omitempty"`
-	CompletedAt  *time.Time     `json:"completed_at"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	Ratings map[string]int `json:"ratings,omitempty"`
+	// RatingNotes is the optional per-domain explanation ("why this
+	// score?"), same keys as Ratings. Absent key = no note.
+	RatingNotes  map[string]string `json:"rating_notes,omitempty"`
+	RatingsSetAt *time.Time        `json:"ratings_set_at,omitempty"`
+	CompletedAt  *time.Time        `json:"completed_at"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }

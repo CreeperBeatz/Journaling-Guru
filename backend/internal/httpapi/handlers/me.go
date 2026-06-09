@@ -28,9 +28,12 @@ type meResponse struct {
 	*domain.User
 	LocalWeekday      *int  `json:"local_weekday,omitempty"`
 	ReflectionPending *bool `json:"reflection_pending,omitempty"`
+	// ReflectionIsMonthly is true when the current canonical reflection
+	// week hosts a monthly reflection — the nav relabels Weekly→Monthly.
+	ReflectionIsMonthly *bool `json:"reflection_is_monthly,omitempty"`
 }
 
-func wrapMe(u *domain.User, reflectionPending *bool) any {
+func wrapMe(u *domain.User, reflectionPending, reflectionIsMonthly *bool) any {
 	if u == nil {
 		return nil
 	}
@@ -41,7 +44,12 @@ func wrapMe(u *domain.User, reflectionPending *bool) any {
 		return u
 	}
 	wd := int(d.Weekday())
-	return meResponse{User: u, LocalWeekday: &wd, ReflectionPending: reflectionPending}
+	return meResponse{
+		User:                u,
+		LocalWeekday:        &wd,
+		ReflectionPending:   reflectionPending,
+		ReflectionIsMonthly: reflectionIsMonthly,
+	}
 }
 
 // MeHandler exposes /api/me. The session middleware should sit in front:
@@ -55,6 +63,9 @@ type MeHandler struct {
 	// flag. Both optional — nil leaves the flag unset (degrade open).
 	WeeklyReflections *store.WeeklyReflectionStore
 	DailyInputs       *store.DailyInputStore
+	// MonthlyReflections feeds reflection_is_monthly (nav relabel).
+	// Optional — nil leaves the flag unset.
+	MonthlyReflections *store.MonthlyReflectionStore
 }
 
 // reflectionPending reports whether the current canonical reflection
@@ -91,6 +102,38 @@ func (h *MeHandler) reflectionPending(ctx context.Context, u *domain.User) *bool
 	return &pending
 }
 
+// reflectionIsMonthly reports whether the current canonical reflection
+// week hosts a monthly reflection (same derivation as the reflection
+// endpoint: MonthlyWeekFor window + the completed month's grace-week
+// exclusion). Returns nil when the store isn't wired or anything fails.
+func (h *MeHandler) reflectionIsMonthly(ctx context.Context, u *domain.User) *bool {
+	if u == nil || h.MonthlyReflections == nil {
+		return nil
+	}
+	p, err := timezone.PeriodContaining(
+		time.Now(), u.Timezone, u.DayStartMinutes, u.ReflectionWeekday, domain.PeriodWeek,
+	)
+	if err != nil {
+		return nil
+	}
+	loc, err := time.LoadLocation(u.Timezone)
+	if err != nil || loc == nil {
+		loc = time.UTC
+	}
+	monthly := false
+	if monthStart, _, ok := timezone.MonthlyWeekFor(p.End, loc); ok {
+		monthly = true
+		if existing, err := h.MonthlyReflections.GetByMonthStart(ctx, u.ID, monthStart); err == nil &&
+			existing != nil && existing.CompletedAt != nil &&
+			(existing.WeekStart == nil || *existing.WeekStart != timezone.FormatDate(p.Start)) {
+			// Completed in an earlier hosting week — the grace week is a
+			// plain weekly again.
+			monthly = false
+		}
+	}
+	return &monthly
+}
+
 // Get returns the current user. Returns 401 when no session is attached
 // (which RequireAuth prevents from happening, but we double-check so this
 // handler is safe to mount under OptionalAuth too).
@@ -114,7 +157,7 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 					h.Logger.Warn("replan reminders after tz auto-sync", "err", err, "user_id", sess.UserID)
 				}
 			}
-			writeJSON(w, http.StatusOK, wrapMe(synced, h.reflectionPending(r.Context(), synced)))
+			writeJSON(w, http.StatusOK, wrapMe(synced, h.reflectionPending(r.Context(), synced), h.reflectionIsMonthly(r.Context(), synced)))
 			return
 		}
 	}
@@ -127,7 +170,7 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, wrapMe(u, h.reflectionPending(r.Context(), u)))
+	writeJSON(w, http.StatusOK, wrapMe(u, h.reflectionPending(r.Context(), u), h.reflectionIsMonthly(r.Context(), u)))
 }
 
 type updateMeRequest struct {
@@ -242,5 +285,5 @@ func (h *MeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, wrapMe(u, h.reflectionPending(r.Context(), u)))
+	writeJSON(w, http.StatusOK, wrapMe(u, h.reflectionPending(r.Context(), u), h.reflectionIsMonthly(r.Context(), u)))
 }

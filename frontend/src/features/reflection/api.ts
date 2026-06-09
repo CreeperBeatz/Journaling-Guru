@@ -94,6 +94,7 @@ export interface MonthlyReflectionBlock {
   direction_text: string;
   last_month_intention: string;
   ratings: Record<string, number> | null;      // null until the check-in is submitted
+  rating_notes: Record<string, string> | null; // optional per-domain "why this score?"
   prev_ratings: Record<string, number> | null; // last completed month's, for ghost dots
   ratings_set_at: string | null;
   completed_at: string | null;
@@ -181,15 +182,16 @@ export function setMonthlyIntention(intentionText: string): Promise<ReflectionRe
   });
 }
 
-// setMonthlyRatings persists the life check-in sliders (0..10 per
-// domain key from LIFE_DOMAINS). Partial maps are fine — Belonging is
-// opt-in.
+// setMonthlyRatings persists the life check-in (0..10 score per domain
+// key from LIFE_DOMAINS, plus an optional free-text note per domain).
+// Partial maps are fine — Belonging is opt-in.
 export function setMonthlyRatings(
   ratings: Record<string, number>,
+  notes?: Record<string, string>,
 ): Promise<ReflectionResponse> {
   return api("/api/reflection/this-month/ratings", {
     method: "POST",
-    body: { ratings },
+    body: notes && Object.keys(notes).length > 0 ? { ratings, notes } : { ratings },
   });
 }
 

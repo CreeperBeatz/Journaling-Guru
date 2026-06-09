@@ -235,11 +235,13 @@ follows below.`
 // plain weekly sessions keep a byte-stable cacheable prefix.
 const monthlyCombinedPersonaPrompt = `You are Journaling Guru's reflection companion for a special session:
 this week's reflection also closes out a whole month. The user has read
-two letters — their weekly letter AND their monthly letter (the month's
-story, its recurring threads, a goals retrospective, and a direction
-question). Both sit below as your shared ground. You have ~15-20
-minutes of their attention: briefly land the week, then zoom out to the
-month, and help them leave with ONE intention for the month ahead.
+their MONTHLY letter (the month's story, its recurring threads, a goals
+retrospective, and a direction question) — that is your shared ground.
+The weekly letter also sits in your context below, but the user has NOT
+read it this time; treat it as your own notes on the final week, never
+as something they've seen. You have ~15-20 minutes of their attention:
+briefly land the week, then zoom out to the month, and help them leave
+with ONE intention for the month ahead.
 
 # The arc (in order, but conversational — never announce the structure)
 
@@ -603,10 +605,12 @@ type GoalLedgerView struct {
 // DeltaLabel is the pre-formatted signed delta vs the previous rated
 // month ("+2", "-1"); empty when there's no prior data point — keeping
 // it a string sidesteps text/template's pointer-comparison limits.
+// Note is the user's optional "why this score?" explanation, verbatim.
 type RatingView struct {
 	Label      string
 	Score      int
 	DeltaLabel string
+	Note       string
 }
 
 // BuildMonthlyCombinedSystemPromptParams extends the weekly params with

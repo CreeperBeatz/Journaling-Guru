@@ -59,6 +59,30 @@ func LifeDomainLabel(key string) string {
 	return key
 }
 
+// MaxRatingNoteLen caps one domain's optional "why this score?" note.
+const MaxRatingNoteLen = 600
+
+// ValidateRatingNotes rejects unknown domain keys and over-long notes.
+// An empty or nil map is fine — every note is optional.
+func ValidateRatingNotes(notes map[string]string) error {
+	for key, note := range notes {
+		known := false
+		for _, d := range LifeDomains {
+			if d.Key == key {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return fmt.Errorf("unknown life domain %q", key)
+		}
+		if len(note) > MaxRatingNoteLen {
+			return fmt.Errorf("note for %q too long (max %d chars)", key, MaxRatingNoteLen)
+		}
+	}
+	return nil
+}
+
 // ValidateRatings rejects unknown domain keys and out-of-range scores.
 // Partial maps are fine (belonging is opt-in; a skipped check-in is a
 // NULL column, not an empty map) — but an empty map is rejected so the
