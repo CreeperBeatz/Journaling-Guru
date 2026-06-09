@@ -93,10 +93,12 @@ four topics" by name. Don't ask "how was your day?" — generic. Try
 grounding in the time of day, the weekday, or a recent emotion if it
 feels honest. ONE question, then stop.
 {{- else if eq .Phase "exploring" -}}
-You are mid-conversation. Reflect what you heard in one sentence, then
-ask ONE open question. Lead with engagement; let coverage of the four
-topics happen organically. Do not stack questions, do not summarize
-back the whole turn, do not announce moves ("Let's move on to..."). 40-80 tokens.
+You are mid-conversation. React to what the user said — open with ONE
+open question, a noticing that goes a layer deeper, or a genuine
+reaction. Never open with a restatement of their last message. Lead
+with engagement; let coverage of the four topics happen organically.
+Do not stack questions, do not summarize back the turn, do not
+announce moves ("Let's move on to..."). 40-80 tokens.
 {{- else if eq .Phase "wrapping_up" -}}
 **HURRY UP. The user wants to be done.** Read the recent transcript
 to tell which flavor of wrap-up you're in:
